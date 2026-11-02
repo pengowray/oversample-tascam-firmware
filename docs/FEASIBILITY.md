@@ -37,9 +37,9 @@ The firmware reverse-engineering notes and the patching plan are in
   (SWD debug pads or the processor's USB serial download mode) is the backstop for
   those cases; finding one needs the unit opened. Details are in
   [HOMEBREW.md](HOMEBREW.md#keeping-the-bricking-risk-low).
-- **Open questions that need a unit or Tascam's answers:** the ultrasonic hum that
-  reviewers report in X8 recordings, the analog response from 60 to 96 kHz, and how
-  much CPU the stock firmware leaves free at 192 kHz.
+- **Open questions that need a unit or Tascam's answers:** the analog response
+  from 60 to 96 kHz, how much CPU the stock firmware leaves free at 192 kHz, and
+  whether the ultrasonic hum reported in 2022 is really gone.
 
 ## Hardware
 
@@ -69,6 +69,12 @@ distributes the audio clocks, joins the serial audio from several converter chip
 into one multi-channel (TDM) stream for the processor, and handles extra I/O. Here
 it probably also combines each input's two gain paths into one float value. All DSP
 in this plan runs on the Cortex-M7, which is far faster at it.
+
+The bat app uses the FPGA exactly as the stock firmware sets it up: the same clocks,
+the same 192 kHz sample rate, and the same samples arriving at the processor. The
+FPGA's design is stored in the FPGA's own on-chip flash, programmed at the factory.
+It is probably not in the published update file; the firmware only contains the
+code that can reprogram it from a separate file.
 
 ## Frequency range at 192 kHz
 
@@ -115,12 +121,12 @@ running the clocks at 384 kHz would in theory move the −3 dB point to about
 clocking, the headphone DAC and the firmware's clock setup may not support it.
 Treat 384 kHz as an experiment for a unit with a working recovery path.
 
-**Reported ultrasonic hum.** Reviewers report a steady ultrasonic hum in X8
-recordings, with the included mics and with phantom-powered mics, in 24-bit and
-32-bit modes. No frequency or level has been published. If the hum falls between
-20 and 96 kHz, it will be audible through the heterodyne and could trigger the call
-detector. A notch filter in the bat app can remove a steady hum, once its frequency
-and level have been measured (see the first milestone below).
+**Reported ultrasonic hum, probably fixed.** A 2022 review and a user review
+reported a steady ultrasonic hum in X8 recordings. This project's own X8 has not
+shown it, and a later report said a firmware update fixed it, although no release
+note names the fix. It is still worth one check at 192 kHz with inputs 3/4 terminated
+(see the first milestone below). If any steady tone remains, the call detector
+ignores steady tones, and a notch filter can remove it from the monitor path.
 
 ## Features
 
@@ -226,7 +232,7 @@ In order of value:
    anti-alias filtering), which ADC channels feed each input, what the FPGA does and
    how the processor controls it, how the headphone DAC is clocked, and the free
    flash and RAM.
-6. **The ultrasonic hum.** Its cause and frequency, and whether a hardware revision
+6. **The ultrasonic hum reported in 2022.** Which firmware or hardware revision
    fixed it.
 7. **Higher sample rates.** Whether the clocks, FPGA and DAC can run at 384 kHz for
    an experiment.
@@ -238,7 +244,7 @@ In order of value:
 
 | Question | Why it matters | How to find out |
 |---|---|---|
-| Frequency and level of the ultrasonic hum | Could mask calls or trigger the call detector | Record at 192 kHz with inputs 3/4 terminated, on battery and on USB power; view in Oversample |
+| Whether any ultrasonic hum remains | Would be audible through the heterodyne | Record at 192 kHz with inputs 3/4 terminated, on battery and on USB power; view in Oversample |
 | Analog response from 60 to 96 kHz | Sets the real upper limit | Feed a sine sweep at line level into input 3, record at 192 kHz, compare with the datasheet filter |
 | Free CPU at 192 kHz in the stock firmware | Sets how much DSP fits | Ask Tascam, or measure the RTOS idle time once the firmware is mapped |
 | SDRAM size (64 or 128 MB) and how much the stock firmware leaves free | Sets the look-back buffer length | Read the SDRAM chip markings, ask Tascam, or find the heap setup once the firmware is mapped |
@@ -250,8 +256,8 @@ In order of value:
 
 ## Milestones
 
-1. **Bench measurements with the stock firmware.** Hum, frequency response to
-   96 kHz, noise floor with ultrasonic mics on inputs 3/4, and EXPANDED PRE REC at
+1. **Bench measurements with the stock firmware.** Any remaining hum, frequency
+   response to 96 kHz, noise floor with ultrasonic mics on inputs 3/4, and EXPANDED PRE REC at
    192 kHz. Analyse the recordings in Oversample.
 2. **DSP library.** A `no_std` Rust library with block-based heterodyne,
    heterodyne comb, frequency division, phase vocoder pitch shift, time expansion,
