@@ -334,24 +334,28 @@ stored as raw configuration flash pages.
 ## Step 3 test file: patch code runs on a key press (built 2026-11-02, not yet installed)
 
 The first file with patch code in it: `work/patch/#PortaX8_0219.203`, built by
-`tools/x8patch.py` from the `crates/x8-patch` crate (SHA-256 `ef32509e…44585373`).
+`tools/x8patch.py` from the `crates/x8-patch` crate (SHA-256 `3efd237c…ede5ffec`).
 
-- The patch (1,792 bytes of Rust, `no_std`) is linked at SDRAM 0x81830000 and
-  stored at flash 0x1850000, after the stock image; the file is 1,796 bytes
-  longer than the official one and the updater writes the same number of
-  sectors.
+- The patch (716 bytes of Rust, `no_std`) is linked at SDRAM 0x81830000 and
+  stored at flash 0x1850000, after the stock image. The file is 720 bytes
+  longer than the official one, and the updater writes the same sectors as for
+  the official file (0 to 0x185), so installing it is no riskier than step 2.
+- The MPU maps the patch region as executable, cached memory (region 5), so
+  the code can run there. The framebuffers are uncached (only region 4 covers
+  them), so the patch writes pixels without any cache maintenance.
 - One stock word changes: 0x80da9a20, which held the app screens' key handler
   (0x80dac0d5), now holds the patch's `key_hook` (0x81830011). That address
   occurs nowhere else in the firmware, and only 0x80da98e0 reads the word.
   Update mode installs its own key handler, so the patch never runs there.
 - `key_hook` checks the system mode, then, in a normal start, draws a 16-pixel
-  bar across the middle of both framebuffers in the next of six colours, writes
-  those cache lines back to SDRAM, and jumps to the stock handler with the
-  original arguments.
+  bar across the middle of both framebuffers in the next of six colours, and
+  jumps to the stock handler with the original arguments. Its press counter is
+  a plain load and store: exclusive access (`ldrex`/`strex`) is avoided because
+  the hook runs on one task only.
 - Checked before installing: the packed file passes all checks and the safety
   checks of `pack --base`; the patch was disassembled from the packed file (mode
-  check, framebuffer addresses 0x87e24400 and 0x87e6f400, cache clean, tail call
-  to 0x80dac0d5 with r0 to r3 untouched).
+  check, framebuffer addresses 0x87e24400 and 0x87e6f400, no exclusive access,
+  tail call to 0x80dac0d5 with r0 to r3 untouched and r4 to r8 restored).
 
 To build it again:
 
@@ -367,12 +371,17 @@ python3 tools/x8patch.py "Tascam_X8_official/extracted/#PortaX8_0217.203" target
 B219). In a recording app such as MANUAL, each press of MARK, PLAY or REC, or
 each wheel turn, should draw a coloured bar across the middle of the screen, a
 new colour each time, until the app redraws that part of the screen. The
-buttons should still do what they always did.
+buttons should still do what they always did. Turning the wheel is the best
+test, since it sends many events. No bar at all is not a failure in itself: the
+app may redraw that strip at once. Only a freeze or a restart means the hook
+misbehaved.
 
 **If it goes wrong.** If the unit freezes or restarts when a button is pressed
 in an app, turn it off, hold HOME and REC while turning it on, and install the
 official `#PortaX8_0217.203` from the `UTILITY` folder. Update mode does not run
-the patch.
+the patch. The power button is read by the same task as the other buttons, so
+if that task hangs the unit may not turn off: then remove the batteries and USB
+power, and do the HOME and REC recovery.
 
 ## Firmware map (V2.03, in progress)
 
@@ -468,6 +477,16 @@ install the pointer from, and a place to run the heavier DSP.
 
 Full notes from this part of the work are in `work/notes/audio.md` (not in
 git).
+
+**Memory protection.** The MPU is set up by 0x80e011d0 (regions 0 to 9; later
+regions override earlier ones, and the default map is on for privileged code):
+peripherals from 0x40000000; flash 0x60000000 (512 MiB, cached, no execute);
+ITCM 0x0 (512 KiB, executable); DTCM 0x20000000 (no execute); OCRAM 0x20200000;
+all SDRAM 0x80000000 (128 MiB, uncached, shareable, no execute), overridden by
+cached, executable regions for 0x80000000 (64 MiB), 0x84000000 (32 MiB),
+0x86000000 (4 MiB) and 0x86400000 (2 MiB). So the application and the patch
+region (0x81830000) run from cached SDRAM, while 0x86600000 onwards, including
+the framebuffers at 0x87e00000, is uncached and cannot hold code.
 
 **Phantom power** (checked in 0x80da8e4c and 0x81360ae4; details in
 `work/notes/phantom.md`). The firmware switches it per input, inputs 3 to 6 as

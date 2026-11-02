@@ -8,14 +8,12 @@ mod stock {
     pub const SYSTEM_MODE: *const u8 = 0x8196_9dd9 as *const u8;
     /// The key handler the app screens share (Thumb address).
     pub const APP_KEY_HANDLER: usize = 0x80da_c0d5;
-    /// The two framebuffers: 320 x 480, RGB565.
+    /// The two framebuffers: 320 x 480, RGB565. The MPU maps them uncached
+    /// (only its region 4 covers them), so pixels written here reach SDRAM,
+    /// and the display controller, without a cache clean.
     pub const FRAMEBUFFERS: [usize; 2] = [0x87e0_0000, 0x87e4_b000];
     pub const WIDTH: usize = 320;
 }
-
-/// Arm's data cache clean by address register (SCB DCCMVAC).
-const DCCMVAC: *mut u32 = 0xe000_ef68 as *mut u32;
-const CACHE_LINE: usize = 32;
 
 type KeyHandler = unsafe extern "C" fn(usize, usize, usize, usize) -> usize;
 
@@ -40,7 +38,11 @@ unsafe extern "C" fn key_hook(a: usize, b: usize, c: usize, d: usize) -> usize {
     // SAFETY: a byte the stock firmware sets before the RTOS starts.
     let mode = unsafe { ptr::read_volatile(stock::SYSTEM_MODE) };
     if mode <= 1 {
-        let n = PRESSES.fetch_add(1, Ordering::Relaxed);
+        // A plain load and store, not fetch_add: the hook runs on one task
+        // only, and exclusive access (ldrex/strex) to SDRAM may never succeed,
+        // depending on how the MPU marks it.
+        let n = PRESSES.load(Ordering::Relaxed);
+        PRESSES.store(n.wrapping_add(1), Ordering::Relaxed);
         draw_test_bar(n);
     }
     // SAFETY: the address of the stock handler this hook replaces.
@@ -64,21 +66,7 @@ fn draw_test_bar(n: u32) {
             // SAFETY: inside a framebuffer the stock firmware allocated.
             unsafe { ptr::write_volatile(words.add(i), pair) };
         }
-        clean_dcache(start, bytes);
     }
-}
-
-/// Write the cache lines back to SDRAM, so the display controller, which reads
-/// SDRAM directly, sees the new pixels.
-fn clean_dcache(start: usize, len: usize) {
-    let mut line = start & !(CACHE_LINE - 1);
-    while line < start + len {
-        // SAFETY: a write-only system control register.
-        unsafe { ptr::write_volatile(DCCMVAC, line as u32) };
-        line += CACHE_LINE;
-    }
-    // SAFETY: a data synchronisation barrier has no other effect.
-    unsafe { core::arch::asm!("dsb sy", "isb sy") };
 }
 
 #[panic_handler]
