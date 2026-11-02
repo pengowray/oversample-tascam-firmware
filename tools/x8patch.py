@@ -44,12 +44,14 @@ HEADER_FIELDS = ["magic", "version", "key_hook"]
 
 def elf_image(path):
     """The patch's bytes from PATCH_BASE to the end of its last section, with
-    sections that hold no bytes in the file (.bss) as zeros."""
+    .bss as zeros. .noinit, which the patch writes before reading, is left out
+    of the update file (it must come last)."""
     data = open(path, "rb").read()
     if data[:4] != b"\x7fELF" or data[4] != 1 or data[5] != 1:
         raise ValueError("not a 32-bit little-endian ELF file")
     shoff, = struct.unpack_from("<I", data, 0x20)
-    shentsize, shnum = struct.unpack_from("<HH", data, 0x2E)
+    shentsize, shnum, shstrndx = struct.unpack_from("<HHH", data, 0x2E)
+    names_at = struct.unpack_from("<I", data, shoff + shstrndx * shentsize + 16)[0]
     out = bytearray()
     for i in range(shnum):
         name, kind, flags, addr, offset, size = struct.unpack_from("<IIIIII", data, shoff + i * shentsize)
@@ -57,6 +59,10 @@ def elf_image(path):
             continue
         if not (PATCH_BASE <= addr and addr + size <= PATCH_LIMIT):
             raise ValueError(f"section at 0x{addr:08x} is outside the patch region")
+        section = data[names_at + name:data.index(b"\0", names_at + name)].decode()
+        if section == ".noinit":
+            print(f"patch: .noinit {size:,} bytes at 0x{addr:08x} to 0x{addr + size:08x}, not stored")
+            continue
         end = addr + size - PATCH_BASE
         if len(out) < end:
             out.extend(bytes(end - len(out)))

@@ -60,6 +60,13 @@ mod stock {
     pub const KIND_SWALLOWED: u16 = 9;
     pub const NO_KEY: i32 = 0x4d;
     pub const PLAY: i32 = 0x05;
+
+    /// The RTOS's uITRON calls (ITCM, Thumb addresses). `cre_tsk(id, pk)`
+    /// accepts ids 1 to 23 (the maximum is at 0x20004148), returns -41 when
+    /// the id is taken, and starts the task at once with attribute TA_ACT.
+    /// `dly_tsk(ms)` sleeps the calling task (the kernel tick is 2 ms).
+    pub const CRE_TSK: usize = 0x0002_d4a3;
+    pub const DLY_TSK: usize = 0x0001_a7f5;
     pub const HOME: i32 = 0x06;
     pub const REC: i32 = 0x07;
     pub const MARK: i32 = 0x2b;
@@ -93,17 +100,37 @@ pub struct Header {
 
 #[unsafe(no_mangle)]
 #[unsafe(link_section = ".header")]
-pub static X8_PATCH_HEADER: Header = Header { magic: *b"BATX", version: 3, key_hook };
+pub static X8_PATCH_HEADER: Header = Header { magic: *b"BATX", version: 4, key_hook };
 
 const SAMPLE_RATE: f32 = 192_000.0;
 /// Output samples buffered before the headphones start playing the bat app's
 /// output (85 ms at 192 kHz), so the bursts of processing in task 1 do not run
 /// dry.
 const PRIME_SAMPLES: u32 = 16_384;
-/// Frames processed per call at most, so one call cannot hold task 1 for long.
+/// Frames processed per call at most when processing in task 1 (only if the
+/// DSP task could not be created), so one call cannot hold task 1 for long.
 const MAX_FRAMES_PER_CALL: u32 = 24_576;
 const CHUNK: usize = 1_024;
-const RENDERS_PER_SECOND: u32 = 20;
+const RENDERS_PER_SECOND: u32 = 15;
+
+/// The DSP task: unused ids at start-up (the table at 0x8131dac4 uses 1, 2,
+/// 4 to 7, 9 to 12 and 15 to 22), tried in turn. Priority 16 is below task 1
+/// (15) and every audio and recording task, equal to the settings save task,
+/// and above task 21 (17), which has a 1 MB stack and is probably Qt.
+const TASK_IDS: [i32; 5] = [23, 14, 13, 8, 3];
+const TASK_PRIORITY: u32 = 16;
+const TA_ACT: u32 = 0x02;
+const E_OBJ: i32 = -41;
+
+#[repr(C)]
+struct CreateTask {
+    attributes: u32,
+    extended_info: isize,
+    entry: extern "C" fn(isize),
+    priority: u32,
+    stack_size: usize,
+    stack: *mut u8,
+}
 const SCALE: f32 = 1.0 / 2_147_483_648.0;
 
 // Task 1 only.
@@ -125,6 +152,27 @@ static SAVED_TOUCH: AtomicU32 = AtomicU32::new(0);
 /// Set from task 1 for the work to run on the patch stack.
 static PENDING: AtomicU32 = AtomicU32::new(0);
 const WORK_ENTER: u32 = 1;
+/// The DSP task's id once created, or the error cre_tsk returned (negative).
+static TASK: AtomicU32 = AtomicU32::new(0);
+/// Counts openings of the bat screen; the context running the app empties
+/// the rings when it sees a new one.
+static SESSION: AtomicU32 = AtomicU32::new(0);
+static SESSION_SEEN: AtomicU32 = AtomicU32::new(0);
+/// Button and wheel actions from task 1 for the app, applied by whichever
+/// context runs it: (action << 24) | (value & 0xffffff).
+static ACTIONS: [AtomicU32; 32] = [const { AtomicU32::new(0) }; 32];
+static ACTIONS_WRITE: AtomicU32 = AtomicU32::new(0);
+static ACTIONS_READ: AtomicU32 = AtomicU32::new(0);
+const ACTION_MARK: u32 = 1;
+const ACTION_REC: u32 = 2;
+const ACTION_NEXT_MODE: u32 = 3;
+const ACTION_WHEEL: u32 = 4;
+// CPU share, in 1/1000 of the blocks in the last second (DSP task only).
+static DSP_BLOCKS: AtomicU32 = AtomicU32::new(0);
+static DRAW_BLOCKS: AtomicU32 = AtomicU32::new(0);
+static DSP_PERMILLE: AtomicU32 = AtomicU32::new(0);
+static DRAW_PERMILLE: AtomicU32 = AtomicU32::new(0);
+static LOAD_SECOND: AtomicU32 = AtomicU32::new(0);
 
 // Shared with the audio interrupt.
 static BAT_ACTIVE: AtomicBool = AtomicBool::new(false);
@@ -142,16 +190,29 @@ struct Slot<T>(UnsafeCell<MaybeUninit<T>>);
 // SAFETY: see each use.
 unsafe impl<T> Sync for Slot<T> {}
 
-/// The bat app, built and used only on the patch stack in task 1.
+/// The bat app: built in task 1 on the patch stack, then used only by the
+/// DSP task (or, without one, by task 1).
+#[unsafe(link_section = ".noinit")]
 static APP: Slot<BatApp<'static>> = Slot(UnsafeCell::new(MaybeUninit::uninit()));
+/// The off-screen frame: cached, so drawing is fast, then copied to the
+/// display buffer in one pass.
+#[unsafe(link_section = ".noinit")]
+static FRAME: Slot<[u16; stock::WIDTH * stock::HEIGHT]> = Slot(UnsafeCell::new(MaybeUninit::uninit()));
+const DSP_STACK_BYTES: usize = 48 * 1024;
+#[repr(C, align(8))]
+struct DspStack([u8; DSP_STACK_BYTES]);
+#[unsafe(link_section = ".noinit")]
+static DSP_STACK: Slot<DspStack> = Slot(UnsafeCell::new(MaybeUninit::uninit()));
 /// Where Qt's present function writes while the bat screen is up (it writes
 /// at offsets 0x0, 0x10 and 0x4c of what it takes for the LCDIF registers).
 static DUMMY_LCDIF: Slot<[u32; 32]> = Slot(UnsafeCell::new(MaybeUninit::zeroed()));
 
-/// The stack the patch's heavy work runs on (task 1's own is 6 KB).
-const STACK_WORDS: usize = 16 * 1024;
+/// The stack task 1 runs the patch's heavy work on (its own is 6 KB): building
+/// the app, and processing when there is no DSP task.
+const STACK_WORDS: usize = 10 * 1024;
 #[repr(C, align(8))]
 struct Stack([u32; STACK_WORDS]);
+#[unsafe(link_section = ".noinit")]
 static STACK: Slot<Stack> = Slot(UnsafeCell::new(MaybeUninit::uninit()));
 
 fn system_mode() -> u8 {
@@ -179,9 +240,14 @@ unsafe extern "C" fn key_hook(msg: usize, b: usize, c: usize, d: usize) -> usize
         // SAFETY: the message copy on task 1's stack, 0x14 bytes.
         unsafe { handle_message(msg) };
         let work = PENDING.swap(0, Relaxed);
-        if work != 0 || BAT_ACTIVE.load(Relaxed) {
+        if work == WORK_ENTER {
             // SAFETY: only task 1 runs on the patch stack.
-            unsafe { on_patch_stack(if work == WORK_ENTER { enter_work } else { tick_work }) };
+            unsafe { on_patch_stack(enter_work) };
+        } else if BAT_ACTIVE.load(Relaxed) {
+            if !task_running() {
+                // SAFETY: as above.
+                unsafe { on_patch_stack(tick_work) };
+            }
         } else {
             draw_status_strip();
         }
@@ -278,8 +344,7 @@ unsafe fn handle_message(msg: usize) {
             if mark_triple() {
                 if active { leave_bat_screen() } else { PENDING.store(WORK_ENTER, Relaxed) }
             } else if active {
-                // SAFETY: APP is built before the screen opens.
-                unsafe { app().button(Button::Mark) };
+                queue_action(ACTION_MARK, 0);
             }
         }
         (stock::KIND_BUTTON, stock::HOME) if active => {
@@ -288,31 +353,142 @@ unsafe fn handle_message(msg: usize) {
         }
         (stock::KIND_BUTTON, stock::PLAY) if active => {
             swallow_button();
-            // SAFETY: as above.
-            let app = unsafe { app() };
-            let i = Mode::ALL.iter().position(|&m| m == app.mode()).unwrap_or(0);
-            app.set_mode(Mode::ALL[(i + 1) % Mode::ALL.len()]);
+            queue_action(ACTION_NEXT_MODE, 0);
         }
         (stock::KIND_BUTTON, stock::REC) if active => {
             // REC still reaches the app, which records as usual; the bat
             // screen's recording indicator follows the presses.
-            // SAFETY: as above.
-            unsafe { app().button(Button::Rec) };
+            queue_action(ACTION_REC, 0);
         }
         (stock::KIND_WHEEL, count) if active => {
             // SAFETY: the kind field of the message copy.
             unsafe { ptr::write_volatile(kind_ptr, stock::KIND_SWALLOWED) };
-            // SAFETY: as above.
-            unsafe { app().wheel(count) };
+            queue_action(ACTION_WHEEL, count as u32);
         }
         _ => {}
     }
 }
 
-/// The bat app. Callers must be in task 1, after `enter_work` has built it.
+/// Queue a button or wheel action for the app (task 1).
+fn queue_action(action: u32, value: u32) {
+    let write = ACTIONS_WRITE.load(Relaxed);
+    if write.wrapping_sub(ACTIONS_READ.load(Acquire)) < ACTIONS.len() as u32 {
+        ACTIONS[write as usize % ACTIONS.len()].store(action << 24 | (value & 0xff_ffff), Relaxed);
+        ACTIONS_WRITE.store(write.wrapping_add(1), Release);
+    }
+}
+
+/// Apply the queued actions (the context running the app).
+fn apply_actions(app: &mut BatApp<'static>) {
+    let mut read = ACTIONS_READ.load(Relaxed);
+    while read != ACTIONS_WRITE.load(Acquire) {
+        let a = ACTIONS[read as usize % ACTIONS.len()].load(Relaxed);
+        let value = ((a << 8) as i32) >> 8;
+        match a >> 24 {
+            ACTION_MARK => app.button(Button::Mark),
+            ACTION_REC => app.button(Button::Rec),
+            ACTION_NEXT_MODE => {
+                let i = Mode::ALL.iter().position(|&m| m == app.mode()).unwrap_or(0);
+                app.set_mode(Mode::ALL[(i + 1) % Mode::ALL.len()]);
+            }
+            ACTION_WHEEL => app.wheel(value),
+            _ => {}
+        }
+        read = read.wrapping_add(1);
+        ACTIONS_READ.store(read, Release);
+    }
+}
+
+/// At the start of each opening of the bat screen: empty the rings, from the
+/// consumer's side of the input one and the producer's side of the output one,
+/// and drop actions queued before.
+fn new_session() {
+    let session = SESSION.load(Acquire);
+    if session != SESSION_SEEN.load(Relaxed) {
+        SESSION_SEEN.store(session, Relaxed);
+        IN_READ.store(IN_WRITE.load(Acquire), Release);
+        OUT_WRITE.store(OUT_READ.load(Acquire), Release);
+        ACTIONS_READ.store(ACTIONS_WRITE.load(Acquire), Release);
+    }
+}
+
+fn task_running() -> bool {
+    (TASK.load(Relaxed) as i32) > 0
+}
+
+/// The bat app, once `enter_work` has built it. Only one context uses it at a
+/// time: the DSP task, or task 1 when there is no DSP task.
 unsafe fn app() -> &'static mut BatApp<'static> {
-    // SAFETY: built by enter_work; used only from task 1.
+    // SAFETY: built by enter_work.
     unsafe { (*APP.0.get()).assume_init_mut() }
+}
+
+/// Create the DSP task, trying each free id in turn.
+fn start_task() {
+    // SAFETY: the RTOS's cre_tsk, from task 1.
+    let create: unsafe extern "C" fn(i32, *const CreateTask) -> i32 = unsafe { core::mem::transmute(stock::CRE_TSK) };
+    let pk = CreateTask {
+        attributes: TA_ACT,
+        extended_info: 0,
+        entry: dsp_task,
+        priority: TASK_PRIORITY,
+        stack_size: DSP_STACK_BYTES,
+        stack: DSP_STACK.0.get().cast(),
+    };
+    let mut result = E_OBJ;
+    for id in TASK_IDS {
+        // SAFETY: as above; pk lives until cre_tsk returns, and the stack for
+        // as long as the patch.
+        result = unsafe { create(id, &pk) };
+        if result != E_OBJ {
+            if result == 0 {
+                result = id;
+            }
+            break;
+        }
+    }
+    TASK.store(result as u32, Relaxed);
+}
+
+fn sleep_ms(ms: u32) {
+    // SAFETY: the RTOS's dly_tsk, from the DSP task.
+    let delay: unsafe extern "C" fn(u32) -> i32 = unsafe { core::mem::transmute(stock::DLY_TSK) };
+    unsafe { delay(ms) };
+}
+
+/// The DSP task: runs the app while the bat screen is up, sleeps otherwise.
+extern "C" fn dsp_task(_: isize) {
+    loop {
+        if !BAT_ACTIVE.load(Acquire) {
+            sleep_ms(20);
+            continue;
+        }
+        // SAFETY: built before BAT_ACTIVE is set; only this task uses it.
+        let app = unsafe { app() };
+        new_session();
+        apply_actions(app);
+        let start = BLOCKS.load(Relaxed);
+        process_input(app, u32::MAX);
+        let processed = BLOCKS.load(Relaxed);
+        DSP_BLOCKS.store(DSP_BLOCKS.load(Relaxed).wrapping_add(processed.wrapping_sub(start)), Relaxed);
+        if processed.wrapping_sub(LAST_RENDER.load(Relaxed)) >= blocks_per_second() / RENDERS_PER_SECOND {
+            LAST_RENDER.store(processed, Relaxed);
+            render();
+            DRAW_BLOCKS.store(DRAW_BLOCKS.load(Relaxed).wrapping_add(BLOCKS.load(Relaxed).wrapping_sub(processed)), Relaxed);
+        }
+        let now = BLOCKS.load(Relaxed);
+        let second = now.wrapping_sub(LOAD_SECOND.load(Relaxed));
+        if second >= blocks_per_second() {
+            DSP_PERMILLE.store(DSP_BLOCKS.swap(0, Relaxed) * 1000 / second, Relaxed);
+            DRAW_PERMILLE.store(DRAW_BLOCKS.swap(0, Relaxed) * 1000 / second, Relaxed);
+            LOAD_SECOND.store(now, Relaxed);
+        }
+        // Sleep after every pass, even with input waiting: the audio interrupt
+        // adds 4 frames every 21 us, so the ring is never empty, and Qt (task
+        // 21, priority 17) still runs the hidden app, REC included. 4 ms is 2
+        // or 3 kernel ticks, about 1,000 frames a pass.
+        sleep_ms(4);
+    }
 }
 
 /// Build the app (the first time), start feeding it, and show its screen.
@@ -323,11 +499,9 @@ extern "C" fn enter_work() {
         // SAFETY: init_in_place writes every field; only task 1 uses APP.
         unsafe { BatApp::init_in_place((*APP.0.get()).as_mut_ptr(), SAMPLE_RATE, te) };
         APP_READY.store(true, Relaxed);
+        start_task();
     }
-    // Empty both rings, then let the interrupt fill the input one.
-    IN_READ.store(IN_WRITE.load(Acquire), Release);
-    OUT_WRITE.store(OUT_READ.load(Acquire), Release);
-    BAT_ACTIVE.store(true, Release);
+    SESSION.store(SESSION.load(Relaxed).wrapping_add(1), Release);
 
     // Take over the display: Qt's present function now writes to a dummy,
     // and the display shows the patch's buffer.
@@ -340,7 +514,18 @@ extern "C" fn enter_work() {
         SAVED_TOUCH.store(ptr::read_volatile(stock::TOUCH_ENABLED), Relaxed);
         ptr::write_volatile(stock::TOUCH_ENABLED, 0);
     }
-    render();
+    if task_running() {
+        // The DSP task may still be finishing a chunk from the last opening,
+        // so it draws the first frame; until then the display is blank.
+        for i in 0..stock::WIDTH * stock::HEIGHT / 2 {
+            // SAFETY: the display buffer (see `spare`).
+            unsafe { ptr::write_volatile((spare::DISPLAY as *mut u32).add(i), 0) };
+        }
+    } else {
+        // SAFETY: no other context uses the app without a DSP task.
+        render();
+    }
+    BAT_ACTIVE.store(true, Release);
     // SAFETY: the display controller's next buffer register.
     unsafe { ptr::write_volatile(stock::LCDIF_NEXT_BUF, spare::DISPLAY) };
 }
@@ -370,24 +555,37 @@ fn leave_bat_screen() {
     }
 }
 
-/// Process what the interrupt has gathered, and redraw now and then.
+/// Without a DSP task: process in task 1 and redraw now and then.
 extern "C" fn tick_work() {
     if !BAT_ACTIVE.load(Relaxed) {
         return;
     }
-    // SAFETY: built by enter_work.
+    // SAFETY: built by enter_work; with no DSP task only task 1 uses it.
     let app = unsafe { app() };
+    new_session();
+    apply_actions(app);
+    process_input(app, MAX_FRAMES_PER_CALL);
+    let now = BLOCKS.load(Relaxed);
+    if now.wrapping_sub(LAST_RENDER.load(Relaxed)) >= blocks_per_second() / RENDERS_PER_SECOND {
+        LAST_RENDER.store(now, Relaxed);
+        render();
+    }
+}
+
+/// Process up to `budget` frames from the input ring and queue the output.
+/// Returns the frames processed.
+fn process_input(app: &mut BatApp<'static>, budget: u32) -> u32 {
     let mut in3 = [0.0f32; CHUNK];
     let mut in4 = [0.0f32; CHUNK];
     let mut left = [0.0f32; CHUNK];
     let mut right = [0.0f32; CHUNK];
     let ring = spare::IN_RING as *const [i32; 2];
     let out = spare::OUT_RING as *mut f32;
-    let mut budget = MAX_FRAMES_PER_CALL;
-    while budget > 0 {
+    let mut done = 0;
+    while done < budget {
         let read = IN_READ.load(Relaxed);
         let available = IN_WRITE.load(Acquire).wrapping_sub(read);
-        let n = available.min(CHUNK as u32).min(budget) as usize;
+        let n = available.min(CHUNK as u32).min(budget - done) as usize;
         if n == 0 {
             break;
         }
@@ -408,35 +606,43 @@ extern "C" fn tick_work() {
             unsafe { ptr::write_volatile(out.add(at as usize), y) };
         }
         OUT_WRITE.store(write.wrapping_add(n.min(space as usize) as u32), Release);
-        budget -= n as u32;
+        done += n as u32;
     }
-    let now = BLOCKS.load(Relaxed);
-    if now.wrapping_sub(LAST_RENDER.load(Relaxed)) >= blocks_per_second() / RENDERS_PER_SECOND {
-        LAST_RENDER.store(now, Relaxed);
-        render();
-    }
+    done
 }
 
-/// Draw the app into the patch's display buffer, with a line of figures
-/// across the top for testing.
+/// Draw the app off-screen, with a line of figures across the top for
+/// testing, then copy the frame to the display buffer.
 fn render() {
-    // SAFETY: spare SDRAM (see `spare`), task 1 only.
-    let pixels = unsafe { core::slice::from_raw_parts_mut(spare::DISPLAY as *mut u16, stock::WIDTH * stock::HEIGHT) };
+    // SAFETY: the off-screen frame, used only by the context running the app.
+    let pixels = unsafe { &mut *(*FRAME.0.get()).as_mut_ptr() };
     let mut fb = Rgb565Buffer::new(pixels, stock::WIDTH, stock::HEIGHT);
     // SAFETY: built by enter_work.
     unsafe { app() }.render(&mut fb);
     let mut line = Line::new();
+    let task = TASK.load(Relaxed) as i32;
     let _ = write!(
         line,
-        "rate {} | key {}/s | in {} | out {} | dry {} | lost {}",
-        rate_class(),
+        "{} | key {}/s | dsp {}% draw {}% | in {} out {} | dry {} lost {}",
+        if task > 0 { "task" } else { "no task" },
         CALLS_PER_S.load(Relaxed),
+        DSP_PERMILLE.load(Relaxed) / 10,
+        DRAW_PERMILLE.load(Relaxed) / 10,
         IN_WRITE.load(Relaxed).wrapping_sub(IN_READ.load(Relaxed)),
         OUT_WRITE.load(Relaxed).wrapping_sub(OUT_READ.load(Relaxed)),
         UNDERRUNS.load(Relaxed),
         IN_DROPPED.load(Relaxed),
     );
+    if task <= 0 {
+        let _ = write!(line, " | cre_tsk {task}");
+    }
     draw_strip(&mut fb, &line, Rgb565::new(4, 8, 4));
+    let from = pixels.as_ptr().cast::<u32>();
+    let to = spare::DISPLAY as *mut u32;
+    for i in 0..stock::WIDTH * stock::HEIGHT / 2 {
+        // SAFETY: both buffers hold 320 x 480 pixels.
+        unsafe { ptr::write_volatile(to.add(i), ptr::read(from.add(i))) };
+    }
 }
 
 /// The audio DMA callback: runs the stock one, then, with the bat screen up at

@@ -426,7 +426,18 @@ Start with the headphone volume low.
 a second, so a fault there would show as a freeze as soon as the patch installs
 it (about when the launcher appears).
 
-## Step 5 test file: the bat app on the X8 (built 2026-11-02, not yet installed)
+## Step 5 test file: the bat app on the X8 (installed 2026-11-02: runs, too slow)
+
+**Result.** Installed on the user's X8 on 2026-11-02, without microphones on
+inputs 3 and 4. The bat screen opened with the three MARK presses and drew the
+app (title, status bar, meters, waterfall, last-call panel, mode buttons);
+PLAY changed mode and the wheel worked, both with a noticeable lag; HOME went
+back; nothing crashed. The key hook ran about 15 times a second when idle and
+up to 46 while touching the launcher. The strip showed "lost 1,236,056"
+(input frames dropped because the ring was full) and "dry 63" (output
+underruns), so processing in task 1 did not keep up, and a band of the screen
+blanked for a frame about once a second (the app draws straight into the
+buffer being shown). Step 6 moves the work into a task of its own.
 
 `work/patch3/#PortaX8_0221.203` (B221, SHA-256 `18d396c4…ddc791b2`): the whole
 bat app (`crates/bat-app`) inside the patch, 410 KB in all (128 KB of code, the
@@ -483,6 +494,38 @@ with running unseen.
 opens should still allow HOME and REC at power-on and the official file. If
 the screen stays on the bat display after closing it, turning the unit off and
 on clears everything (nothing is saved).
+
+## Step 6 test file: the bat app in its own RTOS task (built 2026-11-02, not yet installed)
+
+`work/patch4/#PortaX8_0222.203` (B222, SHA-256 `45998666…7a200ac`). Changes
+from step 5:
+
+- **A DSP task.** The first time the bat screen opens, the patch creates an
+  RTOS task with the kernel's `cre_tsk` (0x2d4a2: ids 1 to 23 allowed, -41
+  when taken), trying the ids unused at start-up (23, 14, 13, 8, 3), at
+  priority 16: below task 1 (15) and every audio and recording task, above
+  task 21 (17, a 1 MB stack, probably Qt). It has a 48 KB stack. It processes
+  the input ring, redraws about 15 times a second, and sleeps 4 ms (2 or 3
+  kernel ticks of 2 ms, `dly_tsk` at 0x1a7f4) after every pass so Qt still runs
+  the hidden app. If `cre_tsk` fails, processing falls back to task 1 as in
+  step 5, and the strip shows the error.
+- **Task 1 only queues.** The key hook queues PLAY, the wheel, MARK and REC as
+  actions for the DSP task and no longer runs the app, so buttons get through
+  at once.
+- **Off-screen drawing.** The app draws into a cached frame in the patch
+  region and the frame is copied to the display buffer in one pass, so a
+  half-drawn frame is no longer shown.
+- **Figures.** The strip on the bat screen shows "task" or "no task", the key
+  hook rate, the share of time in processing and drawing (as a percentage of
+  wall time, measured with the audio block count), frames waiting in each
+  ring, underruns and dropped input.
+- **Memory.** The app, the off-screen frame and the stacks (563 KB) are in a
+  `.noinit` section that the update file leaves out (the patch writes them
+  before reading them), so the file is 170 KB longer than the official one.
+
+**What to expect.** As step 5, but with no "lost" input once processing keeps
+up, quick response to PLAY and the wheel, and no blanking. The "dsp" and
+"draw" figures say how much of the processor the app needs at 192 kHz.
 
 ## Firmware map (V2.03, in progress)
 

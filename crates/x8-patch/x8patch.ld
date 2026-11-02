@@ -18,5 +18,9 @@ SECTIONS
   .rodata : { *(.rodata .rodata.*) } > PATCH
   .data : { *(.data .data.*) } > PATCH
   .bss (NOLOAD) : { *(.bss .bss.* COMMON) } > PATCH
+  /* Buffers the patch writes before reading (stacks, the app, the off-screen
+     frame): left out of the update file, so they hold whatever the bootloader
+     copied from flash. */
+  .noinit (NOLOAD) : { *(.noinit .noinit.*) } > PATCH
   /DISCARD/ : { *(.ARM.exidx .ARM.exidx.* .ARM.extab.*) }
 }
