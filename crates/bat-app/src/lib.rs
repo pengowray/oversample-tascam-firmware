@@ -237,6 +237,35 @@ impl Meter {
     }
 }
 
+/// The app's large buffers, which its processing touches only once per
+/// spectrum column or display column: about 136 KB. They are kept outside
+/// [`BatApp`] so that on the X8 the app's own state (about 43 KB, touched for
+/// every sample) can sit in fast on-chip memory while these stay in SDRAM.
+pub struct Buffers {
+    /// Waterfall levels (0 to 255), one column of `WF_H` per `WF_COLUMN_MS`,
+    /// column-major, as a ring: `BatApp::wf_next` is the oldest column.
+    wf: [u8; WF_W * WF_H],
+    /// The last `HISTORY` detector columns, every bin as a level, for
+    /// snapshots, and their centre sample times.
+    history: [u8; HISTORY * BINS],
+    history_centre: [u64; HISTORY],
+    /// The last call, scaled to the snapshot's size, column-major.
+    snapshot: [u8; SNAP_W * SNAP_H],
+}
+
+impl Buffers {
+    /// All zero, for a `static`.
+    pub const fn new() -> Self {
+        Self { wf: [0; WF_W * WF_H], history: [0; HISTORY * BINS], history_centre: [0; HISTORY], snapshot: [0; SNAP_W * SNAP_H] }
+    }
+}
+
+impl Default for Buffers {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 pub struct BatApp<'a> {
     sample_rate: f32,
     mode: Mode,
@@ -275,9 +304,9 @@ pub struct BatApp<'a> {
     /// steady tone, the start of the tone.
     last_call_since: u64,
 
-    /// Waterfall levels (0 to 255), one column of `WF_H` per `WF_COLUMN_MS`,
-    /// column-major, as a ring: `wf_next` is the oldest column.
-    wf: [u8; WF_W * WF_H],
+    /// The waterfall, history and snapshot (see [`Buffers`]).
+    bufs: &'a mut Buffers,
+    /// The oldest column of the waterfall ring.
     wf_next: usize,
     /// Index of the display column being filled (sample time / column length).
     wf_column: u64,
@@ -292,14 +321,8 @@ pub struct BatApp<'a> {
     /// floor for the whole waterfall.
     display_per_row: bool,
 
-    /// The last `HISTORY` detector columns, every bin as a level, for
-    /// snapshots.
-    history: [u8; HISTORY * BINS],
-    history_centre: [u64; HISTORY],
     history_next: usize,
-    /// The last call, scaled to the snapshot's size, column-major, and the
-    /// frequency range it shows.
-    snapshot: [u8; SNAP_W * SNAP_H],
+    /// The frequency range the snapshot shows.
     snapshot_hz: (f32, f32),
 
     meters: [Meter; 2],
@@ -319,11 +342,11 @@ impl<'a> BatApp<'a> {
     /// This returns the whole app (about 250 KB) by value. On the X8, where it
     /// cannot pass through a stack, build it with
     /// [`init_in_place`](Self::init_in_place) instead.
-    pub fn new(sample_rate: f32, te_storage: &'a mut [f32]) -> Self {
+    pub fn new(sample_rate: f32, te_storage: &'a mut [f32], buffers: &'a mut Buffers) -> Self {
         let mut app = core::mem::MaybeUninit::<Self>::uninit();
         // SAFETY: init_in_place writes every field.
         unsafe {
-            Self::init_in_place(app.as_mut_ptr(), sample_rate, te_storage);
+            Self::init_in_place(app.as_mut_ptr(), sample_rate, te_storage, buffers);
             app.assume_init()
         }
     }
@@ -335,7 +358,7 @@ impl<'a> BatApp<'a> {
     ///
     /// `this` must be valid for writes and aligned. Whatever it held is
     /// overwritten without being dropped.
-    pub unsafe fn init_in_place(this: *mut Self, sample_rate: f32, te_storage: &'a mut [f32]) {
+    pub unsafe fn init_in_place(this: *mut Self, sample_rate: f32, te_storage: &'a mut [f32], buffers: &'a mut Buffers) {
         use core::ptr::addr_of_mut as field;
         /// Fill an array field element by element, without a temporary.
         unsafe fn fill<T: Copy, const N: usize>(array: *mut [T; N], value: T) {
@@ -378,7 +401,11 @@ impl<'a> BatApp<'a> {
             field!((*this).marks).write(Recent::new(0));
             field!((*this).last_call).write(None);
             field!((*this).last_call_since).write(0);
-            fill(field!((*this).wf), 0);
+            buffers.wf.fill(0);
+            buffers.history.fill(0);
+            buffers.history_centre.fill(0);
+            buffers.snapshot.fill(0);
+            field!((*this).bufs).write(buffers);
             field!((*this).wf_next).write(0);
             field!((*this).wf_column).write(0);
             fill(field!((*this).wf_accum), f32::MIN);
@@ -387,10 +414,7 @@ impl<'a> BatApp<'a> {
             field!((*this).display_offset_db).write(DEFAULT_DISPLAY_OFFSET_DB);
             field!((*this).display_range_db).write(DEFAULT_DISPLAY_RANGE_DB);
             field!((*this).display_per_row).write(false);
-            fill(field!((*this).history), 0);
-            fill(field!((*this).history_centre), 0);
             field!((*this).history_next).write(0);
-            fill(field!((*this).snapshot), 0);
             field!((*this).snapshot_hz).write((VIEW_LO_HZ, VIEW_HI_HZ));
             field!((*this).meters).write([Meter::new(); 2]);
             field!((*this).recording).write(false);
@@ -709,7 +733,7 @@ impl<'a> BatApp<'a> {
             calls,
             last_call,
             last_call_since,
-            wf,
+            bufs,
             wf_next,
             wf_column,
             wf_accum,
@@ -718,14 +742,12 @@ impl<'a> BatApp<'a> {
             display_offset_db,
             display_range_db,
             display_per_row,
-            history,
-            history_centre,
             history_next,
-            snapshot,
             snapshot_hz,
             sample_rate,
             ..
         } = self;
+        let Buffers { wf, history, history_centre, snapshot } = &mut **bufs;
         let column_len = (*sample_rate * WF_COLUMN_MS * 0.001) as u64;
         analyzer.push(&mono[..len], |col: &Column<'_>| {
             // Only the kinds of detection chosen on the settings screen (bat

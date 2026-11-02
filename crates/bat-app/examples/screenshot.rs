@@ -11,7 +11,7 @@
 //! `MARK=bat,tone,audible,broadband` chooses which kinds of detection are
 //! marked (default: bat).
 
-use bat_app::{BatApp, CallKind, HEIGHT, Mode, Rgb565Buffer, WIDTH};
+use bat_app::{BatApp, Buffers, CallKind, HEIGHT, Mode, Rgb565Buffer, WIDTH};
 
 fn main() {
     let args: Vec<String> = std::env::args().collect();
@@ -46,7 +46,8 @@ fn main() {
 
     let fs = spec.sample_rate as f32;
     let mut storage = vec![0.0f32; spec.sample_rate as usize];
-    let mut app = BatApp::new(fs, &mut storage);
+    let mut buffers = Box::new(Buffers::new());
+    let mut app = BatApp::new(fs, &mut storage, &mut buffers);
     app.set_mode(mode);
     if let (Some(o), Some(r), Some(p)) = (args.get(6), args.get(7), args.get(8)) {
         app.set_display(o.parse().unwrap(), r.parse().unwrap(), p == "1");

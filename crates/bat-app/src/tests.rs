@@ -42,6 +42,11 @@ fn signal() -> Vec<f32> {
     x
 }
 
+/// The app's large buffers, kept for the life of the test.
+fn buffers() -> &'static mut Buffers {
+    std::boxed::Box::leak(std::boxed::Box::new(Buffers::new()))
+}
+
 fn run(app: &mut BatApp, x: &[f32], block: usize) -> Vec<f32> {
     let mut out = vec![0.0; x.len()];
     let mut out_r = vec![0.0; x.len()];
@@ -60,7 +65,7 @@ fn draw(app: &BatApp) -> Vec<u16> {
 #[test]
 fn finds_a_call_and_draws_every_mode_without_panicking() {
     let mut storage = vec![0.0f32; FS as usize];
-    let mut app = BatApp::new(FS, &mut storage);
+    let mut app = BatApp::new(FS, &mut storage, buffers());
     run(&mut app, &signal(), 4096);
     let call = app.last_call().expect("the call was not detected");
     assert!((40_000.0..80_000.0).contains(&call.peak_freq_hz), "{call:?}");
@@ -74,7 +79,7 @@ fn finds_a_call_and_draws_every_mode_without_panicking() {
 #[test]
 fn wheel_and_taps_change_the_heterodyne_frequency() {
     let mut storage = vec![0.0f32; 1024];
-    let mut app = BatApp::new(FS, &mut storage);
+    let mut app = BatApp::new(FS, &mut storage, buffers());
     assert_eq!(app.het_lo_hz(), 45_000.0);
     app.wheel(4);
     assert_eq!(app.het_lo_hz(), 47_000.0);
@@ -88,7 +93,7 @@ fn wheel_and_taps_change_the_heterodyne_frequency() {
 #[test]
 fn tapping_a_mode_button_selects_it() {
     let mut storage = vec![0.0f32; 1024];
-    let mut app = BatApp::new(FS, &mut storage);
+    let mut app = BatApp::new(FS, &mut storage, buffers());
     let r = layout::mode_button(3);
     app.touch(r.center().x, r.center().y);
     assert_eq!(app.mode(), Mode::Te);
@@ -97,7 +102,7 @@ fn tapping_a_mode_button_selects_it() {
 #[test]
 fn time_expansion_starts_on_a_call_and_plays() {
     let mut storage = vec![0.0f32; FS as usize];
-    let mut app = BatApp::new(FS, &mut storage);
+    let mut app = BatApp::new(FS, &mut storage, buffers());
     app.set_mode(Mode::Te);
     // Play the call, then enough quiet for capture to finish.
     let mut x = signal();
@@ -110,7 +115,7 @@ fn time_expansion_starts_on_a_call_and_plays() {
 #[test]
 fn rec_toggles_and_counts_recorded_time() {
     let mut storage = vec![0.0f32; 1024];
-    let mut app = BatApp::new(FS, &mut storage);
+    let mut app = BatApp::new(FS, &mut storage, buffers());
     app.button(Button::Rec);
     assert!(app.is_recording());
     run(&mut app, &noise(0.001, 2 * FS as usize), 4096);
@@ -124,15 +129,15 @@ fn block_size_does_not_change_the_output() {
     let x = signal();
     let mut s1 = vec![0.0f32; FS as usize];
     let mut s2 = vec![0.0f32; FS as usize];
-    let mut a = BatApp::new(FS, &mut s1);
-    let mut b = BatApp::new(FS, &mut s2);
+    let mut a = BatApp::new(FS, &mut s1, buffers());
+    let mut b = BatApp::new(FS, &mut s2, buffers());
     assert_eq!(run(&mut a, &x, 4096), run(&mut b, &x, 333));
 }
 
 #[test]
 fn a_single_call_is_not_shown_as_a_bat() {
     let mut storage = vec![0.0f32; 1024];
-    let mut app = BatApp::new(FS, &mut storage);
+    let mut app = BatApp::new(FS, &mut storage, buffers());
     let mut x = noise(0.003, FS as usize);
     for (v, c) in x[96_000..].iter_mut().zip(chirp(80_000.0, 40_000.0, 0.1, 960)) {
         *v += c;
@@ -144,7 +149,7 @@ fn a_single_call_is_not_shown_as_a_bat() {
 #[test]
 fn settings_screen_opens_changes_and_closes() {
     let mut storage = vec![0.0f32; 1024];
-    let mut app = BatApp::new(FS, &mut storage);
+    let mut app = BatApp::new(FS, &mut storage, buffers());
     assert_eq!(app.lowest_bat_call_hz(), 16_000.0);
     let m = layout::MENU.center();
     app.touch(m.x, m.y);
@@ -183,11 +188,11 @@ fn a_lower_lowest_bat_call_finds_a_14_khz_train() {
         }
     }
     let mut s1 = vec![0.0f32; 1024];
-    let mut app = BatApp::new(FS, &mut s1);
+    let mut app = BatApp::new(FS, &mut s1, buffers());
     run(&mut app, &x, 4096);
     assert!(app.last_call().is_none());
     let mut s2 = vec![0.0f32; 1024];
-    let mut low = BatApp::new(FS, &mut s2);
+    let mut low = BatApp::new(FS, &mut s2, buffers());
     low.change_setting(Setting::LowestBatCall, -1);
     assert_eq!(low.lowest_bat_call_hz(), 14_000.0);
     run(&mut low, &x, 4096);
@@ -216,7 +221,7 @@ fn ms(t: f32) -> usize {
 fn a_steady_tone_is_marked_only_when_its_switch_is_on() {
     let x = broken_tone();
     let mut s1 = vec![0.0f32; 1024];
-    let mut app = BatApp::new(FS, &mut s1);
+    let mut app = BatApp::new(FS, &mut s1, buffers());
     run(&mut app, &x, 4096);
     // The first pieces, before the tone has lasted 150 ms, may pass as bat
     // calls; none of the rest are marked.
@@ -224,7 +229,7 @@ fn a_steady_tone_is_marked_only_when_its_switch_is_on() {
     assert!(app.calls.iter().all(|(_, k)| k == CallKind::Bat));
 
     let mut s2 = vec![0.0f32; 1024];
-    let mut tones = BatApp::new(FS, &mut s2);
+    let mut tones = BatApp::new(FS, &mut s2, buffers());
     tones.set_marked(CallKind::Tone, true);
     run(&mut tones, &x, 4096);
     assert_eq!(tones.last_call_kind(), Some(CallKind::Tone));
@@ -235,7 +240,7 @@ fn a_steady_tone_is_marked_only_when_its_switch_is_on() {
 #[test]
 fn switches_flip_on_a_tap_and_follow_the_wheel() {
     let mut storage = vec![0.0f32; 1024];
-    let mut app = BatApp::new(FS, &mut storage);
+    let mut app = BatApp::new(FS, &mut storage, buffers());
     assert!(app.is_marked(CallKind::Bat));
     assert!(!app.is_marked(CallKind::Tone) && !app.is_marked(CallKind::Audible) && !app.is_marked(CallKind::Broadband));
     app.open_settings();
@@ -269,7 +274,7 @@ fn init_in_place_over_garbage_matches_new() {
     // previous run, the app must behave exactly as one from new().
     let x = signal();
     let mut s1 = vec![0.0f32; 1024];
-    let mut fresh = BatApp::new(FS, &mut s1);
+    let mut fresh = BatApp::new(FS, &mut s1, buffers());
     let out_fresh = run(&mut fresh, &x, 4096);
 
     let mut s2 = vec![0.0f32; 1024];
@@ -278,7 +283,7 @@ fn init_in_place_over_garbage_matches_new() {
     unsafe { core::ptr::write_bytes(slot.as_mut_ptr().cast::<u8>(), 0xa5, core::mem::size_of::<BatApp>()) };
     // SAFETY: init_in_place writes every field.
     let placed = unsafe {
-        BatApp::init_in_place(slot.as_mut_ptr(), FS, &mut s2);
+        BatApp::init_in_place(slot.as_mut_ptr(), FS, &mut s2, buffers());
         slot.assume_init_mut()
     };
     let out_placed = run(placed, &x, 4096);

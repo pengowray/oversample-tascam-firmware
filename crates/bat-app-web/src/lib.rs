@@ -5,7 +5,7 @@
 //! events, and after [`Emulator::render`] copies [`Emulator::frame_ptr`]
 //! (RGBA, 320 × 480) out of the WebAssembly memory into the canvas.
 
-use bat_app::{BatApp, Button, HEIGHT, Mode, Rgb565Buffer, WIDTH};
+use bat_app::{BatApp, Buffers, Button, HEIGHT, Mode, Rgb565Buffer, WIDTH};
 use wasm_bindgen::prelude::*;
 
 #[wasm_bindgen]
@@ -22,7 +22,7 @@ impl Emulator {
         // One second for the time expander, kept for the life of the page.
         let storage: &'static mut [f32] = Box::leak(vec![0.0f32; sample_rate as usize].into_boxed_slice());
         Emulator {
-            app: BatApp::new(sample_rate, storage),
+            app: BatApp::new(sample_rate, storage, Box::leak(Box::new(Buffers::new()))),
             rgb565: vec![0; WIDTH * HEIGHT],
             rgba: vec![255; WIDTH * HEIGHT * 4],
         }

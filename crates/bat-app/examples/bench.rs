@@ -6,7 +6,7 @@
 
 use std::time::Instant;
 
-use bat_app::{BatApp, HEIGHT, Mode, Rgb565Buffer, WIDTH};
+use bat_app::{BatApp, Buffers, HEIGHT, Mode, Rgb565Buffer, WIDTH};
 
 fn main() {
     let fs = 192_000.0;
@@ -27,7 +27,8 @@ fn main() {
     let mut pixels = vec![0u16; WIDTH * HEIGHT];
     for mode in Mode::ALL {
         let mut storage = vec![0.0f32; 96_000];
-        let mut app = BatApp::new(fs, &mut storage);
+        let mut buffers = Box::new(Buffers::new());
+        let mut app = BatApp::new(fs, &mut storage, &mut buffers);
         app.set_mode(mode);
         let (mut l, mut r) = (vec![0.0; 1024], vec![0.0; 1024]);
         let start = Instant::now();

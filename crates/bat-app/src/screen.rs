@@ -188,7 +188,7 @@ fn waterfall(app: &BatApp, fb: Fb) {
         let dst = &mut row[WF_X as usize..WF_X as usize + WF_W];
         for (x, px) in dst.iter_mut().enumerate() {
             let c = (app.wf_next + x) % WF_W;
-            *px = INFERNO_565[app.wf[c * WF_H + r] as usize];
+            *px = INFERNO_565[app.bufs.wf[c * WF_H + r] as usize];
         }
     }
     let right = WF_X + WF_W as i32 - 1;
@@ -299,7 +299,7 @@ fn snapshot(app: &BatApp, fb: Fb) {
         let row = fb.row_mut(SNAP_Y as usize + y);
         let dst = &mut row[SNAP_X as usize..SNAP_X as usize + SNAP_W];
         for (x, px) in dst.iter_mut().enumerate() {
-            *px = INFERNO_565[app.snapshot[x * SNAP_H + y] as usize];
+            *px = INFERNO_565[app.bufs.snapshot[x * SNAP_H + y] as usize];
         }
     }
     // The frequencies at the top and bottom of the snapshot.
