@@ -6,18 +6,28 @@
 //! [`CallClassifier`] sorts each detection with checks that hold for bats in
 //! general, not for one species:
 //!
-//! 1. **Broadband**: the call's range reaches the bottom of the detection
+//! 1. **Steady tone**: the detector reports a long steady tone, such as a
+//!    rat's 22 kHz alarm call, as a run of short pieces wherever its level
+//!    dips. A detection at most 1.5 kHz wide is a piece of a tone when it
+//!    joins a chain of such pieces, each starting within 20 ms of the end of
+//!    the one before and peaking within 1.5 kHz of it, that has lasted
+//!    150 ms or more: longer than any bat call. The tone's frequency is then
+//!    remembered for 2 s after its last piece, and narrow detections within
+//!    1.5 kHz of it in that time are pieces of it too, so the tone does not
+//!    start again as a train of bat calls after each pause. Pieces of the
+//!    chain from before it reached 150 ms can no longer start a train.
+//! 2. **Broadband**: the call's range reaches the bottom of the detection
 //!    band. Clicks and rustles are loudest at low frequencies and reach down
 //!    to it; bat calls stop well above it.
-//! 2. **Too low**: the peak is below the lowest bat frequency (default
+//! 3. **Too low**: the peak is below the lowest bat frequency (default
 //!    16 kHz, which keeps most free-tailed bats; settable). With the
 //!    detector's band starting at 15 kHz, most sounds this low are already
 //!    caught as broadband.
-//! 3. **Audible**: the audible band (2 to 12 kHz) was loud at the same moment
+//! 4. **Audible**: the audible band (2 to 12 kHz) was loud at the same moment
 //!    (default: more than 4 dB above its floor). Bats are silent there; birds,
 //!    voices and footsteps are not.
-//! 4. **Train**: bats call in trains, several calls a second at similar
-//!    frequencies. A call that passes the first three checks is a bat call
+//! 5. **Train**: bats call in trains, several calls a second at similar
+//!    frequencies. A call that passes the first four checks is a bat call
 //!    once a similar call (peak within 5 kHz) passed them in the last 0.6 s,
 //!    and at least one of the two is 18 dB above the floor. Until then it is
 //!    a single.
@@ -41,6 +51,18 @@
 //! (2), and a low-quality recording with loud background sound. A lower
 //! audible band and laxer thresholds gained little recall for many more
 //! false detections, so those defaults stay.
+//!
+//! The steady-tone check was added for a brown rat's 22 kHz alarm call
+//! (Xeno-canto XC960575, 79 s at 96 kHz, resampled to 192 kHz), which the
+//! other checks counted as 476 bat calls out of 560 detections. With it, 435
+//! detections are pieces of a tone and 75 are still counted as bat calls,
+//! mostly the first pieces of a call after a pause of more than 2 s. On the
+//! recordings above it changed nothing except one Xeno-canto recording
+//! (XC823559, "other unknown" sounds beside Myotis calls), where a steady
+//! 16 to 17 kHz tone had been counted as 29 bat calls. Shorter chains (100 ms)
+//! or wider pieces (2.5 kHz) caught a few more rat pieces but also took calls
+//! from horseshoe, sheath-tailed and free-tailed bats, whose steady calls the
+//! detector also splits into pieces.
 
 use crate::detector::CallEvent;
 
@@ -49,14 +71,34 @@ pub const DEFAULT_MAX_AUDIBLE_DB: f32 = 4.0;
 pub const DEFAULT_TRAIN_WINDOW_S: f32 = 0.6;
 pub const DEFAULT_TRAIN_FREQ_HZ: f32 = 5_000.0;
 pub const DEFAULT_TRAIN_MIN_DB: f32 = 18.0;
+/// Widest detection, from its lowest to its highest frequency, that can be a
+/// piece of a steady tone.
+pub const TONE_MAX_WIDTH_HZ: f32 = 1_500.0;
+/// Most a tone's pieces may differ in peak frequency, one to the next.
+pub const TONE_FREQ_HZ: f32 = 1_500.0;
+/// Longest gap between the end of one piece of a tone and the start of the
+/// next.
+pub const TONE_GAP_MS: f32 = 20.0;
+/// A chain of pieces lasting this long is a steady tone: longer than any bat
+/// call.
+pub const TONE_MIN_MS: f32 = 150.0;
+/// How long a tone's frequency is remembered after its last piece.
+pub const TONE_HOLD_S: f32 = 2.0;
 
 /// A range whose bottom is within this of the band's bottom reaches it.
 const EDGE_MARGIN_HZ: f32 = 1_000.0;
 /// Recent calls remembered for trains.
 const RECENT: usize = 16;
+/// Recent narrow detections remembered for chains of tone pieces.
+const PIECES: usize = 8;
+/// Steady tones remembered at once.
+const TONES: usize = 4;
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum CallKind {
+    /// A piece of a steady tone lasting longer than a bat call, such as a
+    /// rat's 22 kHz alarm call.
+    Tone,
     /// Reaches the bottom of the detection band: a click or rustle.
     Broadband,
     /// Peak below the lowest bat frequency.
@@ -84,6 +126,23 @@ struct Recent {
     bat: bool,
 }
 
+/// A narrow detection, kept to see whether it continues a chain.
+#[derive(Clone, Copy, Debug)]
+struct Piece {
+    end: u64,
+    peak_hz: f32,
+    /// Start of the first piece of the chain this piece belongs to.
+    chain_start: u64,
+}
+
+/// A steady tone heard recently.
+#[derive(Clone, Copy, Debug)]
+struct Tone {
+    freq_hz: f32,
+    /// End of its latest piece.
+    end: u64,
+}
+
 #[derive(Clone, Debug)]
 pub struct CallClassifier {
     sample_rate: f32,
@@ -93,8 +152,14 @@ pub struct CallClassifier {
     train_window: u64,
     train_freq_hz: f32,
     train_min_db: f32,
+    tone_gap: u64,
+    tone_min: u64,
+    tone_hold: u64,
     recent: [Option<Recent>; RECENT],
     next: usize,
+    pieces: [Option<Piece>; PIECES],
+    next_piece: usize,
+    tones: [Option<Tone>; TONES],
 }
 
 impl CallClassifier {
@@ -108,8 +173,14 @@ impl CallClassifier {
             train_window: 0,
             train_freq_hz: DEFAULT_TRAIN_FREQ_HZ,
             train_min_db: DEFAULT_TRAIN_MIN_DB,
+            tone_gap: (TONE_GAP_MS * 0.001 * sample_rate) as u64,
+            tone_min: (TONE_MIN_MS * 0.001 * sample_rate) as u64,
+            tone_hold: (TONE_HOLD_S * sample_rate) as u64,
             recent: [None; RECENT],
             next: 0,
+            pieces: [None; PIECES],
+            next_piece: 0,
+            tones: [None; TONES],
         };
         c.set_train_window_s(DEFAULT_TRAIN_WINDOW_S);
         c
@@ -153,11 +224,16 @@ impl CallClassifier {
     pub fn reset(&mut self) {
         self.recent = [None; RECENT];
         self.next = 0;
+        self.pieces = [None; PIECES];
+        self.next_piece = 0;
+        self.tones = [None; TONES];
     }
 
     /// Classify the next detection. Detections must come in time order.
     pub fn classify(&mut self, event: &CallEvent) -> Verdict {
-        let kind = if event.min_freq_hz <= self.band_lo_hz + EDGE_MARGIN_HZ {
+        let kind = if self.is_tone(event) {
+            CallKind::Tone
+        } else if event.min_freq_hz <= self.band_lo_hz + EDGE_MARGIN_HZ {
             CallKind::Broadband
         } else if event.peak_freq_hz < self.min_bat_hz {
             CallKind::TooLow
@@ -199,6 +275,68 @@ impl CallClassifier {
         self.next = (self.next + 1) % RECENT;
         verdict
     }
+
+    /// Whether the detection is a piece of a steady tone; see the module
+    /// documentation. Remembers narrow detections and tones as it goes.
+    fn is_tone(&mut self, event: &CallEvent) -> bool {
+        if event.max_freq_hz - event.min_freq_hz > TONE_MAX_WIDTH_HZ {
+            return false;
+        }
+        let (start, end, peak) = (event.start_sample, event.end_sample, event.peak_freq_hz);
+        let mut tone = false;
+        // Near a tone heard in the last TONE_HOLD_S: follow it as it drifts.
+        for t in self.tones.iter_mut().flatten() {
+            if start.saturating_sub(t.end) <= self.tone_hold && (t.freq_hz - peak).abs() <= TONE_FREQ_HZ {
+                t.freq_hz = peak;
+                t.end = t.end.max(end);
+                tone = true;
+                break;
+            }
+        }
+
+        // The chain this piece continues: the latest narrow detection that
+        // ended just before it at a similar frequency.
+        let mut chain_start = start;
+        let mut latest_end = 0;
+        for p in self.pieces.iter().flatten() {
+            if start.saturating_sub(p.end) <= self.tone_gap
+                && (p.peak_hz - peak).abs() <= TONE_FREQ_HZ
+                && p.end >= latest_end
+            {
+                latest_end = p.end;
+                chain_start = p.chain_start;
+            }
+        }
+        self.pieces[self.next_piece] = Some(Piece { end, peak_hz: peak, chain_start });
+        self.next_piece = (self.next_piece + 1) % PIECES;
+
+        if end.saturating_sub(chain_start) >= self.tone_min {
+            if !tone {
+                // A new tone: replace one that has ended, or the oldest.
+                let slot = (0..TONES)
+                    .min_by_key(|&i| self.tones[i].map_or(0, |t| t.end + 1))
+                    .unwrap_or(0);
+                self.tones[slot] = Some(Tone { freq_hz: peak, end });
+            }
+            tone = true;
+            // The chain's earlier pieces can no longer start a train.
+            for slot in &mut self.recent {
+                if slot.is_some_and(|r| {
+                    r.event.start_sample >= chain_start
+                        && r.event.max_freq_hz - r.event.min_freq_hz <= TONE_MAX_WIDTH_HZ
+                        && (r.event.peak_freq_hz - peak).abs() <= TONE_FREQ_HZ
+                }) {
+                    *slot = None;
+                }
+            }
+        }
+        for t in &mut self.tones {
+            if t.is_some_and(|t| start.saturating_sub(t.end) > self.tone_hold) {
+                *t = None;
+            }
+        }
+        tone
+    }
 }
 
 #[cfg(test)]
@@ -222,6 +360,70 @@ mod tests {
 
     fn classifier() -> CallClassifier {
         CallClassifier::new(FS, 15_000.0)
+    }
+
+    /// A narrow detection, 0.75 kHz wide.
+    fn piece(at_s: f32, len_ms: f32, khz: f32, db: f32) -> CallEvent {
+        let start = (at_s * FS) as u64;
+        CallEvent {
+            start_sample: start,
+            end_sample: start + (len_ms * 0.001 * FS) as u64,
+            peak_freq_hz: khz * 1000.0,
+            peak_db_above_floor: db,
+            audible_db_above_floor: -3.0,
+            min_freq_hz: (khz - 0.375) * 1000.0,
+            max_freq_hz: (khz + 0.375) * 1000.0,
+        }
+    }
+
+    /// Pieces of `len_ms` every `every_ms` from `from_s` to `to_s`.
+    fn pieces(from_s: f32, to_s: f32, len_ms: f32, every_ms: f32, khz: f32) -> std::vec::Vec<CallEvent> {
+        let n = ((to_s - from_s) * 1000.0 / every_ms) as usize;
+        (0..n).map(|i| piece(from_s + i as f32 * every_ms * 0.001, len_ms, khz, 22.0)).collect()
+    }
+
+    #[test]
+    fn a_steady_tone_in_pieces_is_a_tone_and_stays_one_after_a_pause() {
+        let mut c = classifier();
+        // 30 ms pieces with 5 ms gaps, drifting down slowly, as a rat's
+        // 22 kHz call breaks up.
+        let mut kinds = std::vec::Vec::new();
+        for (i, mut e) in pieces(1.0, 2.0, 30.0, 35.0, 22.0).into_iter().enumerate() {
+            e.peak_freq_hz -= i as f32 * 20.0;
+            kinds.push(c.classify(&e).kind);
+        }
+        // The first pieces come before the chain reaches 150 ms; the rest are
+        // pieces of the tone.
+        let bats = kinds.iter().filter(|&&k| k == CallKind::Bat).count();
+        assert!(bats <= 4, "{kinds:?}");
+        assert!(kinds[5..].iter().all(|&k| k == CallKind::Tone), "{kinds:?}");
+        // After a pause of 1 s the tone carries on, slightly lower: still a
+        // tone from its first piece.
+        for e in pieces(3.0, 3.5, 30.0, 35.0, 21.3) {
+            assert_eq!(c.classify(&e).kind, CallKind::Tone);
+        }
+        // A bat sweeping through the same frequencies is still a bat.
+        c.classify(&call(3.6, 25.0, 25.0));
+        assert_eq!(c.classify(&call(3.7, 25.0, 25.0)).kind, CallKind::Bat);
+    }
+
+    #[test]
+    fn a_tone_is_forgotten_after_the_hold_time() {
+        let mut c = classifier();
+        for e in pieces(1.0, 1.5, 30.0, 35.0, 22.0) {
+            c.classify(&e);
+        }
+        let later = 1.5 + TONE_HOLD_S + 0.5;
+        assert_eq!(c.classify(&piece(later, 30.0, 22.0, 22.0)).kind, CallKind::Single);
+    }
+
+    #[test]
+    fn narrow_calls_with_gaps_between_them_are_bat_calls() {
+        // Constant-frequency calls of 50 ms every 100 ms, as a horseshoe bat
+        // makes: narrow, but with gaps longer than the tone check allows.
+        let mut c = classifier();
+        let kinds: std::vec::Vec<_> = pieces(1.0, 2.0, 50.0, 100.0, 70.0).iter().map(|e| c.classify(e).kind).collect();
+        assert!(kinds[1..].iter().all(|&k| k == CallKind::Bat), "{kinds:?}");
     }
 
     #[test]

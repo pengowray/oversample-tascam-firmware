@@ -18,7 +18,7 @@ estimates from the generated code and operation counts, not measurements.
 | `pitch_shift` | `PitchShifter` | Phase vocoder that divides frequencies by a factor (default 10, range 2 to 32) at real-time speed. 1024-point frames, hop 256, latency 1024 samples. | 11 to 16% |
 | `spectrum` | `SpectrumAnalyzer<N>` | Hann-windowed FFT columns in dB (N = 256, 512 or 1024), plus mapping a column to display pixels. | with the detector: 6 to 8% for N = 512, hop 128 |
 | `detector` | `CallDetector<N>` | Finds calls in spectrum columns against a per-bin noise floor, so steady tones and insect noise are ignored. Reports start, end, peak, frequency range and the audible band's level during each call. | (included above) |
-| `classify` | `CallClassifier` | Sorts detections into bat calls and other sounds: broadband clicks, sounds below 16 kHz (settable), sounds with a loud audible part, and singles; a bat call is one in a train of similar calls. | negligible |
+| `classify` | `CallClassifier` | Sorts detections into bat calls and other sounds: steady tones longer than a bat call (such as a rat's 22 kHz alarm call), broadband clicks, sounds below 16 kHz (settable), sounds with a loud audible part, and singles; a bat call is one in a train of similar calls. | negligible |
 | `biquad`, `osc` | `Biquad`, `Butterworth4`, `Nco` | Building blocks: RBJ biquads (low-pass, high-pass, notch), 4th-order Butterworth, and a sine/cosine oscillator. | |
 
 ## Conventions

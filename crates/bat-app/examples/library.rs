@@ -79,7 +79,7 @@ fn main() {
 
     let mut csv = String::from(
         "xc_id,group,genus,species,english,country,type,quality,sample_rate,seconds,status,\
-         detections,bat,broadband,too_low,audible,single,median_peak_khz,median_bat_peak_khz\n",
+         detections,bat,tone,broadband,too_low,audible,single,median_peak_khz,median_bat_peak_khz\n",
     );
     let fs = RATE as f32;
     for name in &names {
@@ -151,7 +151,7 @@ fn main() {
             std::fs::write(Path::new(&dump).join(format!("{}.csv", id.trim_matches('"'))), out).expect("write events");
         }
         let mut classifier = CallClassifier::new(fs, detector.band().0);
-        let (mut bat, mut broadband, mut too_low, mut audible, mut single) = (0, 0, 0, 0, 0i64);
+        let (mut bat, mut tone, mut broadband, mut too_low, mut audible, mut single) = (0, 0, 0, 0, 0, 0i64);
         let mut bat_peaks = Vec::new();
         for e in &events {
             let v = classifier.classify(e);
@@ -160,6 +160,7 @@ fn main() {
                     bat += 1;
                     bat_peaks.push(e.peak_freq_hz / 1000.0);
                 }
+                CallKind::Tone => tone += 1,
                 CallKind::Broadband => broadband += 1,
                 CallKind::TooLow => too_low += 1,
                 CallKind::Audible => audible += 1,
@@ -174,7 +175,7 @@ fn main() {
         let peaks = events.iter().map(|e| e.peak_freq_hz / 1000.0).collect();
         let _ = writeln!(
             row,
-            "ok,{},{bat},{broadband},{too_low},{audible},{single},{:.1},{:.1}",
+            "ok,{},{bat},{tone},{broadband},{too_low},{audible},{single},{:.1},{:.1}",
             events.len(),
             median(peaks),
             median(bat_peaks)
