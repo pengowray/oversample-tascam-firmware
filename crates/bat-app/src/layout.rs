@@ -69,16 +69,31 @@ pub fn mode_button_at(x: i32, y: i32) -> Option<Mode> {
 /// settings screen.
 pub const MENU: Rectangle = Rectangle::new(Point::new(0, 0), Size::new(40, TITLE_H as u32));
 
-/// Settings screen: one panel per setting, with its name and value on the
-/// left, - and + buttons on the right, and a line saying what it does.
+/// Settings screen. Stepped settings come first, one panel each, with the
+/// name and value on the left, - and + buttons on the right, and a line
+/// saying what the setting does. Below them, under a heading, come the
+/// switches: one compact row each, with a colour swatch, a name and a line of
+/// help on the left and the switch on the right.
 pub const SETTINGS_TOP: i32 = 34;
 pub const SETTING_H: i32 = 76;
 const SETTING_GAP: i32 = 8;
 const STEP_W: u32 = 48;
 const STEP_H: u32 = 40;
+/// Baselines of the switches' heading and its help line, below two stepped
+/// settings.
+pub const SWITCHES_HEADING: i32 = 218;
+pub const SWITCHES_HELP: i32 = 232;
+const SWITCHES_TOP: i32 = 240;
+pub const SWITCH_ROW_H: i32 = 38;
+const SWITCH_ROW_GAP: i32 = 4;
+const SWITCH_W: u32 = 44;
+const SWITCH_H: u32 = 24;
+/// Baseline of the note under the last switch.
+pub const SETTINGS_NOTE: i32 = 420;
 /// Closes the settings screen, where the mode buttons are on the main screen.
 pub const DONE: Rectangle = Rectangle::new(Point::new(6, BUTTONS_Y), Size::new(308, BUTTON_H as u32));
 
+/// Panel of stepped setting `i`.
 pub fn setting_row(i: usize) -> Rectangle {
     Rectangle::new(Point::new(6, SETTINGS_TOP + i as i32 * (SETTING_H + SETTING_GAP)), Size::new(308, SETTING_H as u32))
 }
@@ -93,21 +108,43 @@ pub fn setting_plus(i: usize) -> Rectangle {
     Rectangle::new(Point::new(258, r.top_left.y + 10), Size::new(STEP_W, STEP_H))
 }
 
+/// Row of the `j`th switch (counting from 0 after the stepped settings).
+pub fn switch_row(j: usize) -> Rectangle {
+    Rectangle::new(
+        Point::new(6, SWITCHES_TOP + j as i32 * (SWITCH_ROW_H + SWITCH_ROW_GAP)),
+        Size::new(308, SWITCH_ROW_H as u32),
+    )
+}
+
+/// The switch itself, at the right of its row.
+pub fn switch(j: usize) -> Rectangle {
+    let r = switch_row(j);
+    let y = r.top_left.y + (SWITCH_ROW_H - SWITCH_H as i32) / 2;
+    Rectangle::new(Point::new(r.top_left.x + r.size.width as i32 - 10 - SWITCH_W as i32, y), Size::new(SWITCH_W, SWITCH_H))
+}
+
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum SettingsHit {
+    /// A stepped setting's panel, away from its buttons.
     Row(usize),
     Minus(usize),
     Plus(usize),
+    /// Anywhere on a switch's row; flips it. Numbered among all settings.
+    Switch(usize),
     Done,
 }
 
-pub fn settings_hit(x: i32, y: i32, rows: usize) -> Option<SettingsHit> {
+/// What a tap at (x, y) hits, with `stepped` stepped settings followed by
+/// switches up to `rows` settings in all.
+pub fn settings_hit(x: i32, y: i32, stepped: usize, rows: usize) -> Option<SettingsHit> {
     let p = Point::new(x, y);
     if DONE.contains(p) {
         return Some(SettingsHit::Done);
     }
     (0..rows).find_map(|i| {
-        if setting_minus(i).contains(p) {
+        if i >= stepped {
+            switch_row(i - stepped).contains(p).then_some(SettingsHit::Switch(i))
+        } else if setting_minus(i).contains(p) {
             Some(SettingsHit::Minus(i))
         } else if setting_plus(i).contains(p) {
             Some(SettingsHit::Plus(i))

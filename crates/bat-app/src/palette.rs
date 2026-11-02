@@ -32,8 +32,25 @@ pub const METER_RED: Rgb565 = rgb(0xDF252D);
 /// Title bar. Each stock app has its own title colour; this one is not used
 /// by any of them.
 pub const TITLE: Rgb565 = rgb(0x3B2E7E);
-/// Ticks for detected calls and marks under the waterfall.
+/// Ticks under the waterfall for each kind of detection that can be marked,
+/// and the swatch beside each kind's switch on the settings screen. Bat calls
+/// keep the yellow they always had; the others differ from it and from each
+/// other in hue, and stand out from the waterfall's black, purple and orange.
 pub const CALL_TICK: Rgb565 = rgb(0xF7D13D);
+pub const TONE_TICK: Rgb565 = rgb(0x4DD9E8);
+pub const AUDIBLE_TICK: Rgb565 = rgb(0xFF7AC8);
+pub const BROADBAND_TICK: Rgb565 = rgb(0xE0E0E0);
+
+/// Tick colour for a kind of detection.
+pub fn tick_colour(kind: bat_dsp::classify::CallKind) -> Rgb565 {
+    use bat_dsp::classify::CallKind;
+    match kind {
+        CallKind::Bat | CallKind::Single => CALL_TICK,
+        CallKind::Tone => TONE_TICK,
+        CallKind::Audible => AUDIBLE_TICK,
+        CallKind::Broadband | CallKind::TooLow => BROADBAND_TICK,
+    }
+}
 
 /// Resistor colour code by digit, as Oversample colours its frequency marks
 /// (each 10 kHz line takes the colour of its tens digit: 40 kHz is yellow).

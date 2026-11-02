@@ -194,3 +194,71 @@ fn a_lower_lowest_bat_call_finds_a_14_khz_train() {
     let call = low.last_call().expect("the 14 kHz train was not found");
     assert!(call.peak_freq_hz < 17_500.0, "{call:?}");
 }
+
+/// Two seconds of a 22 kHz tone switching off for 5 ms every 35 ms, with
+/// 2 ms fades, as a rat's 22 kHz call breaks up into pieces.
+fn broken_tone() -> Vec<f32> {
+    let mut x = noise(0.003, 2 * FS as usize);
+    let (period, on, fade) = (ms(35.0), ms(30.0), ms(2.0));
+    for (i, v) in x.iter_mut().enumerate().skip(ms(200.0)) {
+        let p = i % period;
+        let g = if p >= on { 0.0 } else { (p.min(on - p) as f32 / fade as f32).min(1.0) };
+        *v += 0.05 * g * (core::f32::consts::TAU * 22_000.0 * i as f32 / FS).sin();
+    }
+    x
+}
+
+fn ms(t: f32) -> usize {
+    (t * 0.001 * FS) as usize
+}
+
+#[test]
+fn a_steady_tone_is_marked_only_when_its_switch_is_on() {
+    let x = broken_tone();
+    let mut s1 = vec![0.0f32; 1024];
+    let mut app = BatApp::new(FS, &mut s1);
+    run(&mut app, &x, 4096);
+    // The first pieces, before the tone has lasted 150 ms, may pass as bat
+    // calls; none of the rest are marked.
+    assert!(app.calls.iter().count() <= 4, "{}", app.calls.iter().count());
+    assert!(app.calls.iter().all(|(_, k)| k == CallKind::Bat));
+
+    let mut s2 = vec![0.0f32; 1024];
+    let mut tones = BatApp::new(FS, &mut s2);
+    tones.set_marked(CallKind::Tone, true);
+    run(&mut tones, &x, 4096);
+    assert_eq!(tones.last_call_kind(), Some(CallKind::Tone));
+    assert!(tones.calls.iter().filter(|&(_, k)| k == CallKind::Tone).count() >= 10);
+    assert!(draw(&tones).iter().any(|&p| p != 0));
+}
+
+#[test]
+fn switches_flip_on_a_tap_and_follow_the_wheel() {
+    let mut storage = vec![0.0f32; 1024];
+    let mut app = BatApp::new(FS, &mut storage);
+    assert!(app.is_marked(CallKind::Bat));
+    assert!(!app.is_marked(CallKind::Tone) && !app.is_marked(CallKind::Audible) && !app.is_marked(CallKind::Broadband));
+    app.open_settings();
+    // Steady tones are the second switch: tapping its row anywhere flips it.
+    let row = layout::switch_row(1);
+    app.touch(row.top_left.x + 20, row.center().y);
+    assert!(app.is_marked(CallKind::Tone));
+    assert_eq!(app.selected_setting(), Setting::Mark(CallKind::Tone));
+    let sw = layout::switch(1).center();
+    assert!(app.is_tappable(sw.x, sw.y));
+    app.touch(sw.x, sw.y);
+    assert!(!app.is_marked(CallKind::Tone));
+    // The wheel switches the selected row on going up and off going down.
+    app.wheel(1);
+    assert!(app.is_marked(CallKind::Tone));
+    app.wheel(1);
+    assert!(app.is_marked(CallKind::Tone));
+    app.wheel(-2);
+    assert!(!app.is_marked(CallKind::Tone));
+    // Bat calls can be switched off too.
+    let bats = layout::switch(0).center();
+    app.touch(bats.x, bats.y);
+    assert!(!app.is_marked(CallKind::Bat));
+    run(&mut app, &signal(), 4096);
+    assert!(app.last_call().is_none());
+}

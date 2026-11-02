@@ -8,8 +8,10 @@
 //! OFFSET, RANGE (dB) and PER_ROW (0 or 1): waterfall contrast, as
 //! `BatApp::set_display` (default: the app's defaults).
 //! The file must be at 192 kHz; channel 1 feeds input 3, channel 2 input 4.
+//! `MARK=bat,tone,audible,broadband` chooses which kinds of detection are
+//! marked (default: bat).
 
-use bat_app::{BatApp, HEIGHT, Mode, Rgb565Buffer, WIDTH};
+use bat_app::{BatApp, CallKind, HEIGHT, Mode, Rgb565Buffer, WIDTH};
 
 fn main() {
     let args: Vec<String> = std::env::args().collect();
@@ -50,6 +52,14 @@ fn main() {
         app.set_display(o.parse().unwrap(), r.parse().unwrap(), p == "1");
     }
     app.set_clock(21 * 3600 + 47 * 60 + 5);
+    if let Ok(kinds) = std::env::var("MARK") {
+        let kinds: Vec<&str> = kinds.split(',').collect();
+        for (name, kind) in
+            [("bat", CallKind::Bat), ("tone", CallKind::Tone), ("audible", CallKind::Audible), ("broadband", CallKind::Broadband)]
+        {
+            app.set_marked(kind, kinds.contains(&name));
+        }
+    }
     let ch = |c: usize| -> Vec<f32> { (0..n).map(|i| samples[i * channels + c.min(channels - 1)]).collect() };
     let (a, b) = (ch(0), ch(1));
     let (mut l, mut r) = (vec![0.0; n], vec![0.0; n]);
@@ -81,6 +91,6 @@ fn main() {
     enc.set_depth(png::BitDepth::Eight);
     enc.write_header().unwrap().write_image_data(&rgb).unwrap();
     if let Some(call) = app.last_call() {
-        eprintln!("last call: {call:?}");
+        eprintln!("last call ({:?}): {call:?}", app.last_call_kind().unwrap());
     }
 }

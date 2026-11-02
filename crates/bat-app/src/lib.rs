@@ -20,7 +20,8 @@ mod layout;
 pub mod palette;
 mod screen;
 
-use bat_dsp::classify::{CallClassifier, CallKind};
+use bat_dsp::classify::CallClassifier;
+pub use bat_dsp::classify::CallKind;
 use bat_dsp::detector::{CallDetector, CallEvent, DEFAULT_AUDIBLE_BAND_HZ, DEFAULT_BAND_LO_HZ};
 use bat_dsp::freq_div::FrequencyDivider;
 use bat_dsp::heterodyne::{DEFAULT_COMB_SPACING_HZ, DEFAULT_CUTOFF_HZ, HetComb, Heterodyne};
@@ -138,10 +139,29 @@ pub enum Setting {
     LowestBatCall,
     /// The input heard in the headphones and analysed.
     ListenTo,
+    /// Whether detections of this kind are marked: a tick under the
+    /// waterfall, the last-call panel, and time expansion. On or off.
+    Mark(CallKind),
 }
 
 impl Setting {
-    pub const ALL: [Setting; 2] = [Setting::LowestBatCall, Setting::ListenTo];
+    pub const ALL: [Setting; 6] = [
+        Setting::LowestBatCall,
+        Setting::ListenTo,
+        Setting::Mark(CallKind::Bat),
+        Setting::Mark(CallKind::Tone),
+        Setting::Mark(CallKind::Audible),
+        Setting::Mark(CallKind::Broadband),
+    ];
+    /// Settings changed with - and +; the rest are switches.
+    pub const STEPPED: usize = 2;
+}
+
+/// Kinds of detection marked when the app starts: bat calls only.
+const MARKED_DEFAULT: u8 = kind_bit(CallKind::Bat);
+
+const fn kind_bit(kind: CallKind) -> u8 {
+    1 << kind as u8
 }
 
 /// Which input feeds the headphones and the detector.
@@ -161,27 +181,28 @@ pub enum TeStatus {
     Playing { progress: f32 },
 }
 
-/// A short list of recent sample times (calls, marks), oldest overwritten.
+/// A short list of recent items (call times and kinds, marks), oldest
+/// overwritten.
 #[derive(Clone, Copy)]
-struct Recent {
-    times: [u64; 16],
+struct Recent<T: Copy> {
+    items: [T; 16],
     len: usize,
     next: usize,
 }
 
-impl Recent {
-    const fn new() -> Self {
-        Self { times: [0; 16], len: 0, next: 0 }
+impl<T: Copy> Recent<T> {
+    const fn new(empty: T) -> Self {
+        Self { items: [empty; 16], len: 0, next: 0 }
     }
 
-    fn push(&mut self, t: u64) {
-        self.times[self.next] = t;
-        self.next = (self.next + 1) % self.times.len();
-        self.len = (self.len + 1).min(self.times.len());
+    fn push(&mut self, item: T) {
+        self.items[self.next] = item;
+        self.next = (self.next + 1) % self.items.len();
+        self.len = (self.len + 1).min(self.items.len());
     }
 
-    fn iter(&self) -> impl Iterator<Item = u64> + '_ {
-        self.times[..self.len].iter().copied()
+    fn iter(&self) -> impl Iterator<Item = T> + '_ {
+        self.items[..self.len].iter().copied()
     }
 }
 
@@ -242,11 +263,14 @@ pub struct BatApp<'a> {
     analyzer: SpectrumAnalyzer<FFT_N>,
     detector: CallDetector<FFT_N>,
     classifier: CallClassifier,
-    /// A bat call was confirmed in the chunk being processed.
-    bat_confirmed: bool,
-    calls: Recent,
-    marks: Recent,
-    last_call: Option<CallEvent>,
+    /// Kinds of detection that are marked, one bit each (`kind_bit`).
+    marked: u8,
+    /// A marked detection came in the chunk being processed.
+    detected: bool,
+    /// Start times and kinds of marked detections.
+    calls: Recent<(u64, CallKind)>,
+    marks: Recent<u64>,
+    last_call: Option<(CallEvent, CallKind)>,
 
     /// Waterfall levels (0 to 255), one column of `WF_H` per `WF_COLUMN_MS`,
     /// column-major, as a ring: `wf_next` is the oldest column.
@@ -312,9 +336,10 @@ impl<'a> BatApp<'a> {
             analyzer,
             detector: CallDetector::new(sample_rate),
             classifier: CallClassifier::new(sample_rate, DEFAULT_BAND_LO_HZ),
-            bat_confirmed: false,
-            calls: Recent::new(),
-            marks: Recent::new(),
+            marked: MARKED_DEFAULT,
+            detected: false,
+            calls: Recent::new((0, CallKind::Bat)),
+            marks: Recent::new(0),
             last_call: None,
             wf: [0; WF_W * WF_H],
             wf_next: 0,
@@ -408,6 +433,22 @@ impl<'a> BatApp<'a> {
                 let i = SOURCES.iter().position(|&s| s == self.source).unwrap_or(0);
                 self.source = SOURCES[step(i, SOURCES.len())];
             }
+            // Turning the wheel up switches on, down switches off.
+            Setting::Mark(kind) if steps != 0 => self.set_marked(kind, steps > 0),
+            Setting::Mark(_) => {}
+        }
+    }
+
+    /// Whether detections of this kind are marked.
+    pub fn is_marked(&self, kind: CallKind) -> bool {
+        self.marked & kind_bit(kind) != 0
+    }
+
+    pub fn set_marked(&mut self, kind: CallKind, on: bool) {
+        if on {
+            self.marked |= kind_bit(kind);
+        } else {
+            self.marked &= !kind_bit(kind);
         }
     }
 
@@ -433,8 +474,14 @@ impl<'a> BatApp<'a> {
         self.recording
     }
 
+    /// The latest marked detection.
     pub fn last_call(&self) -> Option<CallEvent> {
-        self.last_call
+        self.last_call.map(|(e, _)| e)
+    }
+
+    /// The kind of the latest marked detection.
+    pub fn last_call_kind(&self) -> Option<CallKind> {
+        self.last_call.map(|(_, k)| k)
     }
 
     /// Wall-clock time of day, for the status bar.
@@ -485,8 +532,14 @@ impl<'a> BatApp<'a> {
     /// A tap on the touchscreen, in screen pixels.
     pub fn touch(&mut self, x: i32, y: i32) {
         if self.screen == Screen::Settings {
-            match layout::settings_hit(x, y, Setting::ALL.len()) {
+            match layout::settings_hit(x, y, Setting::STEPPED, Setting::ALL.len()) {
                 Some(layout::SettingsHit::Row(i)) => self.setting = i,
+                Some(layout::SettingsHit::Switch(i)) => {
+                    self.setting = i;
+                    if let Setting::Mark(kind) = Setting::ALL[i] {
+                        self.set_marked(kind, !self.is_marked(kind));
+                    }
+                }
                 Some(layout::SettingsHit::Minus(i)) => {
                     self.setting = i;
                     self.change_setting(Setting::ALL[i], -1);
@@ -576,13 +629,13 @@ impl<'a> BatApp<'a> {
             };
         }
 
-        self.bat_confirmed = false;
+        self.detected = false;
         self.analyse(len);
 
-        // Trigger time expansion when a bat call is confirmed. That is just
-        // after the call (the second of a train), within the 50 ms the
-        // expander keeps from before its trigger.
-        if self.bat_confirmed && self.mode == Mode::Te && matches!(self.te.state(), ExpanderState::Idle) {
+        // Trigger time expansion on a marked detection. For a bat call that
+        // is when it is confirmed, just after the call (the second of a
+        // train), within the 50 ms the expander keeps from before its trigger.
+        if self.detected && self.mode == Mode::Te && matches!(self.te.state(), ExpanderState::Idle) {
             self.trigger_te();
         }
 
@@ -612,7 +665,8 @@ impl<'a> BatApp<'a> {
             analyzer,
             detector,
             classifier,
-            bat_confirmed,
+            marked,
+            detected,
             mono,
             calls,
             last_call,
@@ -635,18 +689,19 @@ impl<'a> BatApp<'a> {
         } = self;
         let column_len = (*sample_rate * WF_COLUMN_MS * 0.001) as u64;
         analyzer.push(&mono[..len], |col: &Column<'_>| {
-            // Only confirmed bat calls are marked, shown and trigger time
-            // expansion; see bat_dsp::classify for what the detector also hears.
+            // Only the kinds of detection chosen on the settings screen (bat
+            // calls by default) are marked, shown and trigger time expansion;
+            // see bat_dsp::classify for the kinds.
             if let Some(event) = detector.process(col) {
                 let verdict = classifier.classify(&event);
-                if verdict.kind == CallKind::Bat {
+                if *marked & kind_bit(verdict.kind) != 0 {
                     if let Some(first) = verdict.earlier {
-                        calls.push(first.start_sample);
+                        calls.push((first.start_sample, CallKind::Bat));
                     }
-                    calls.push(event.start_sample);
-                    *last_call = Some(event);
+                    calls.push((event.start_sample, verdict.kind));
+                    *last_call = Some((event, verdict.kind));
                     *snapshot_hz = build_snapshot(&event, *sample_rate, history, history_centre, snapshot);
-                    *bat_confirmed = true;
+                    *detected = true;
                 }
             }
 
@@ -718,7 +773,7 @@ impl<'a> BatApp<'a> {
     /// control on the settings screen.
     pub fn is_tappable(&self, x: i32, y: i32) -> bool {
         if self.screen == Screen::Settings {
-            return layout::settings_hit(x, y, Setting::ALL.len()).is_some();
+            return layout::settings_hit(x, y, Setting::STEPPED, Setting::ALL.len()).is_some();
         }
         layout::MENU.contains(embedded_graphics::prelude::Point::new(x, y))
             || layout::mode_button_at(x, y).is_some()

@@ -13,8 +13,8 @@ use crate::fb::Rgb565Buffer;
 use crate::layout::*;
 use crate::palette::*;
 use crate::{
-    BatApp, DEFAULT_CUTOFF_HZ, Meter, Mode, MonitorSource, Screen, Setting, TeStatus, VIEW_HI_HZ, VIEW_LO_HZ,
-    WF_COLUMN_MS,
+    BatApp, CallKind, DEFAULT_CUTOFF_HZ, Meter, Mode, MonitorSource, Screen, Setting, TeStatus, VIEW_HI_HZ,
+    VIEW_LO_HZ, WF_COLUMN_MS,
 };
 use bat_dsp::heterodyne::DEFAULT_COMB_SPACING_HZ;
 use bat_dsp::time_expansion::{DEFAULT_POST_MS, DEFAULT_PRE_MS};
@@ -243,10 +243,11 @@ fn waterfall(app: &BatApp, fb: Fb) {
         Mode::Fd | Mode::Pitch => {}
     }
 
-    // Detected calls (ticks along the bottom) and marks (along the top).
-    for t in app.calls.iter() {
+    // Marked detections (ticks along the bottom, coloured by kind) and marks
+    // (along the top).
+    for (t, kind) in app.calls.iter() {
         if let Some(x) = sample_x(app, t) {
-            fill(fb, Rectangle::new(Point::new(x, WF_Y + WF_H as i32 - 5), Size::new(2, 5)), CALL_TICK);
+            fill(fb, Rectangle::new(Point::new(x, WF_Y + WF_H as i32 - 5), Size::new(2, 5)), tick_colour(kind));
         }
     }
     for t in app.marks.iter() {
@@ -281,11 +282,14 @@ fn dashed(fb: Fb, x0: i32, x1: i32, y: i32, color: Rgb565) {
 fn snapshot(app: &BatApp, fb: Fb) {
     rounded(fb, SNAP_PANEL, 6, PANEL);
     let top = SNAP_PANEL.top_left.y;
-    text(fb, &SMALL, "LAST CALL", SNAP_TEXT_X, top + 12, LEFT, TEXT_MUTED);
-    let Some(call) = app.last_call else {
-        text(fb, &BODY, "No calls yet", SNAP_TEXT_X, top + 34, LEFT, TEXT_MUTED);
+    let Some((call, kind)) = app.last_call else {
+        let empty = if app.marked == 0 { "No sounds set to mark" } else { "No marked sounds yet" };
+        text(fb, &BODY, empty, SNAP_PANEL.center().x, top + 36, CENTER, TEXT_MUTED);
         return;
     };
+    // The kind of detection, beside a swatch in its tick colour.
+    fill(fb, Rectangle::new(Point::new(SNAP_TEXT_X, top + 5), Size::new(3, 8)), tick_colour(kind));
+    text(fb, &SMALL, last_heading(kind), SNAP_TEXT_X + 6, top + 12, LEFT, TEXT_MUTED);
     for y in 0..SNAP_H {
         let row = fb.row_mut(SNAP_Y as usize + y);
         let dst = &mut row[SNAP_X as usize..SNAP_X as usize + SNAP_W];
@@ -312,7 +316,12 @@ fn snapshot(app: &BatApp, fb: Fb) {
     let lo = call.min_freq_hz / 1000.0;
     let hi = call.max_freq_hz / 1000.0;
     text(fb, &BODY, format_args!("{:.1} kHz", call.peak_freq_hz / 1000.0), SNAP_VALUE_X, y1, LEFT, TEXT);
-    text(fb, &BODY, format_args!("{lo:.0}-{hi:.0} kHz"), SNAP_VALUE_X, y2, LEFT, TEXT);
+    // A narrow range, such as a steady tone's, needs the decimal.
+    if hi - lo < 2.0 {
+        text(fb, &BODY, format_args!("{lo:.1}-{hi:.1} kHz"), SNAP_VALUE_X, y2, LEFT, TEXT);
+    } else {
+        text(fb, &BODY, format_args!("{lo:.0}-{hi:.0} kHz"), SNAP_VALUE_X, y2, LEFT, TEXT);
+    }
     text(fb, &BODY, format_args!("{length_ms:.1} ms"), SNAP_VALUE_X, y3, LEFT, TEXT);
 }
 
@@ -361,34 +370,97 @@ fn mode_buttons(app: &BatApp, fb: Fb) {
     }
 }
 
+/// Name of each switch on the settings screen. The help line under it is
+/// drawn in `settings`, as the clicks' line includes the detection band's
+/// bottom.
+fn mark_name(kind: CallKind) -> &'static str {
+    match kind {
+        CallKind::Bat => "Bat calls",
+        CallKind::Tone => "Steady tones",
+        CallKind::Audible => "Audible sounds",
+        _ => "Clicks and rustles",
+    }
+}
+
+/// Heading of the last-call panel: the kind of the detection it shows, in
+/// the singular of its switch's name.
+fn last_heading(kind: CallKind) -> &'static str {
+    match kind {
+        CallKind::Bat | CallKind::Single => "BAT CALL",
+        CallKind::Tone => "STEADY TONE",
+        CallKind::Audible => "AUDIBLE SOUND",
+        _ => "CLICK OR RUSTLE",
+    }
+}
+
+fn outline_selected(fb: Fb, r: Rectangle) {
+    let outline = PrimitiveStyleBuilder::new().stroke_color(ACCENT).stroke_width(2).build();
+    let _ = RoundedRectangle::new(r, CornerRadii::new(Size::new(6, 6))).into_styled(outline).draw(fb);
+}
+
 fn settings(app: &BatApp, fb: Fb) {
     for (i, setting) in Setting::ALL.iter().enumerate() {
+        let selected = app.selected_setting() == *setting;
+        if let Setting::Mark(kind) = *setting {
+            let r = switch_row(i - Setting::STEPPED);
+            rounded(fb, r, 6, PANEL);
+            if selected {
+                outline_selected(fb, r);
+            }
+            let (x, y) = (r.top_left.x, r.top_left.y);
+            fill(fb, Rectangle::new(Point::new(x + 8, y + 7), Size::new(4, 24)), tick_colour(kind));
+            text(fb, &BODY, mark_name(kind), x + 18, y + 16, LEFT, TEXT);
+            let (hx, hy) = (x + 18, y + 31);
+            match kind {
+                CallKind::Bat => text(fb, &SMALL, "Similar calls repeated several times a second.", hx, hy, LEFT, TEXT_MUTED),
+                CallKind::Tone => text(fb, &SMALL, "150 ms or longer, like a rat's 22 kHz alarm call.", hx, hy, LEFT, TEXT_MUTED),
+                CallKind::Audible => text(fb, &SMALL, "Also loud at 2 to 12 kHz, like birds and voices.", hx, hy, LEFT, TEXT_MUTED),
+                _ => text(
+                    fb,
+                    &SMALL,
+                    format_args!("Reaching down to {:.0} kHz, like handling noise.", app.detector.band().0 / 1000.0),
+                    hx,
+                    hy,
+                    LEFT,
+                    TEXT_MUTED,
+                ),
+            };
+            // On: blue track, knob at the right. Off: grey track, knob at
+            // the left. The white knob's position shows the state.
+            let on = app.is_marked(kind);
+            let sw = switch(i - Setting::STEPPED);
+            let h = sw.size.height;
+            let _ = RoundedRectangle::new(sw, CornerRadii::new(Size::new(h / 2, h / 2)))
+                .into_styled(PrimitiveStyle::with_fill(if on { ACCENT } else { LINE }))
+                .draw(fb);
+            let knob_x = if on { sw.top_left.x + sw.size.width as i32 - h as i32 / 2 } else { sw.top_left.x + h as i32 / 2 };
+            let _ = Circle::with_center(Point::new(knob_x, sw.center().y), h - 6)
+                .into_styled(PrimitiveStyle::with_fill(TEXT))
+                .draw(fb);
+            continue;
+        }
         let r = setting_row(i);
         rounded(fb, r, 6, PANEL);
-        if app.selected_setting() == *setting {
+        if selected {
             // The row the wheel changes.
-            let outline = PrimitiveStyleBuilder::new().stroke_color(ACCENT).stroke_width(2).build();
-            let _ = RoundedRectangle::new(r, CornerRadii::new(Size::new(6, 6))).into_styled(outline).draw(fb);
+            outline_selected(fb, r);
         }
         let (x, y) = (r.top_left.x + 10, r.top_left.y);
         let (label, help) = match setting {
             Setting::LowestBatCall => ("Lowest bat call", "Sounds peaking below this are not counted as bat calls."),
-            Setting::ListenTo => ("Listen to", "Heard in the headphones and shown on the waterfall."),
+            _ => ("Listen to", "Heard in the headphones and shown on the waterfall."),
         };
         text(fb, &BODY, label, x, y + 20, LEFT, TEXT_MUTED);
-        match setting {
-            Setting::LowestBatCall => {
-                text(fb, &VALUE, format_args!("{:.0} kHz", app.lowest_bat_call_hz() / 1000.0), x, y + 44, LEFT, TEXT)
-            }
-            Setting::ListenTo => {
-                let value = match app.source {
-                    MonitorSource::Mix => "Inputs 3 and 4",
-                    MonitorSource::Input3 => "Input 3",
-                    MonitorSource::Input4 => "Input 4",
-                };
-                text(fb, &VALUE, value, x, y + 44, LEFT, TEXT)
-            }
-        };
+        if *setting == Setting::LowestBatCall {
+            text(fb, &VALUE, format_args!("{:.0} kHz", app.lowest_bat_call_hz() / 1000.0), x, y + 44, LEFT, TEXT);
+        } else {
+            let value = match app.source {
+                MonitorSource::Mix => "Inputs 3 and 4",
+                MonitorSource::Input3 => "Input 3",
+                MonitorSource::Input4 => "Input 4",
+            };
+            text(fb, &VALUE, value, x, y + 44, LEFT, TEXT);
+        }
         text(fb, &SMALL, help, x, y + 66, LEFT, TEXT_MUTED);
         for (b, plus) in [(setting_minus(i), false), (setting_plus(i), true)] {
             rounded(fb, b, 4, BUTTON);
@@ -399,9 +471,9 @@ fn settings(app: &BatApp, fb: Fb) {
             }
         }
     }
-    let below = setting_row(Setting::ALL.len() - 1).top_left.y + SETTING_H + 20;
-    text(fb, &BODY, "Settings go back to their defaults", 10, below, LEFT, TEXT_MUTED);
-    text(fb, &BODY, "when the recorder is turned off.", 10, below + 16, LEFT, TEXT_MUTED);
+    text(fb, &BODY_BOLD, "Sounds to mark", 10, SWITCHES_HEADING, LEFT, TEXT);
+    text(fb, &SMALL, "Marked on the waterfall and played in TE if turned on.", 10, SWITCHES_HELP, LEFT, TEXT_MUTED);
+    text(fb, &SMALL, "These settings reset when the recorder is turned off.", 10, SETTINGS_NOTE, LEFT, TEXT_MUTED);
     rounded(fb, DONE, 4, ACCENT);
     text(fb, &BODY_BOLD, "Done", DONE.center().x, DONE.top_left.y + 28, CENTER, TEXT);
 }
