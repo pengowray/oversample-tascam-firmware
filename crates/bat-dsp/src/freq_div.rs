@@ -26,9 +26,9 @@
 //! the noise in the few milliseconds after a call, while the envelope decays,
 //! makes no clicks.
 //!
-//! Each zero-crossing time is interpolated between samples. At 192 kHz the
-//! frequencies in [`ZcPoint`]s are within 1% up to about 70 kHz and within
-//! 2% up to about 87 kHz.
+//! Each zero-crossing time is interpolated between samples. At 192 kHz, for
+//! a tone well above the noise floor, the frequencies in [`ZcPoint`]s are
+//! within 1% up to about 70 kHz and within 2% up to about 87 kHz.
 
 use crate::biquad::{Biquad, Butterworth4};
 use crate::osc::Nco;
@@ -62,7 +62,10 @@ const BUTTERWORTH2_Q: f32 = core::f32::consts::FRAC_1_SQRT_2;
 /// What the divider sends to its output.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum DividerOutput {
-    /// A short half-sine click every `division` cycles.
+    /// A 0.15 ms half-sine click every `division` cycles. For calls above
+    /// `division` × 6.7 kHz (67 kHz at division 10) the clicks come faster
+    /// than their length, and each new click cuts off the one before, as in
+    /// Oversample.
     #[default]
     Clicks,
     /// A square wave that changes sign every `division / 2` cycles, as on
