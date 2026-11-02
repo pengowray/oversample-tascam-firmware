@@ -21,7 +21,8 @@ python3 -m http.server 8742 --directory web
 
 Then open <http://localhost:8742/>. To load a file from the server at start,
 put it in `web/samples/` (ignored by git) and open
-`http://localhost:8742/?wav=samples/NAME.wav`.
+`http://localhost:8742/?wav=samples/NAME.wav`. Add `&mode=te` (or `het`, `comb`,
+`fd`, `pitch`) to start in that listening mode.
 
 `build.sh` needs the `wasm-bindgen` command-line tool at the version pinned in
 `crates/bat-app-web/Cargo.toml` (`cargo install wasm-bindgen-cli --version 0.2.127`).

@@ -203,8 +203,13 @@ document.addEventListener('drop', async (ev) => {
   if (f) openFile(f.name, await f.arrayBuffer());
 });
 
+// ?mode=het|comb|fd|te|pitch starts in that listening mode.
+const params = new URLSearchParams(location.search);
+const modeIndex = ['het', 'comb', 'fd', 'te', 'pitch'].indexOf((params.get('mode') || '').toLowerCase());
+if (modeIndex >= 0) emu.set_mode(modeIndex);
+
 // ?wav=path loads a file from this server, for testing.
-const wavParam = new URLSearchParams(location.search).get('wav');
+const wavParam = params.get('wav');
 if (wavParam) {
   fetch(wavParam)
     .then((r) => { if (!r.ok) throw new Error(`${r.status} ${r.statusText}`); return r.arrayBuffer(); })
