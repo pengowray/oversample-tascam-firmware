@@ -426,6 +426,64 @@ Start with the headphone volume low.
 a second, so a fault there would show as a freeze as soon as the patch installs
 it (about when the launcher appears).
 
+## Step 5 test file: the bat app on the X8 (built 2026-11-02, not yet installed)
+
+`work/patch3/#PortaX8_0221.203` (B221, SHA-256 `18d396c4…ddc791b2`): the whole
+bat app (`crates/bat-app`) inside the patch, 410 KB in all (128 KB of code, the
+app's 179 KB of state and a 64 KB stack, in the patch region). The updater
+writes flash sectors up to 0x18b, past the stock image but far below the
+settings. It replaces test 2.
+
+How it fits in the stock firmware:
+
+- **Opening and closing.** Three MARK presses within 1.5 s open the bat screen;
+  HOME or three more MARK presses close it. MARK and REC still reach the stock
+  app as well (a mark, or start and stop recording); PLAY steps through the
+  listening modes (HET, COMB, FD, TE, PITCH) and the wheel adjusts the current
+  mode, both swallowed while the bat screen is up.
+- **Audio.** While the bat screen is up at 192 kHz, `audio_hook` copies inputs
+  3 and 4 of every block into a ring buffer, and plays the app's output from a
+  second ring buffer at the stock headphone gain, once 16,384 samples (85 ms)
+  are buffered. Below 192 kHz it leaves the audio alone.
+- **Processing.** `key_hook` runs the app on each call from task 1 (the patch
+  does not create a task), on the patch's own 64 KB stack because task 1's is
+  6 KB (from the RTOS task table at 0x8131dac4: entries of id, attributes, 0,
+  entry, priority, stack size, stack base). The RTOS task switch only saves and
+  restores the stack pointer, so this is safe. Each call processes up to
+  24,576 frames and redraws about 20 times a second.
+- **Display.** Qt's present function (0x80e2b574) writes the display
+  controller's next-buffer register through one literal, 0x80e2b71c, read by
+  nothing else. While the bat screen is up the patch points that literal at a
+  dummy block of RAM, so Qt keeps drawing and presenting unseen, and sets the
+  next-buffer register to its own buffer. Closing restores the literal and
+  Qt's last buffer. Touch polling is stopped meanwhile (the word at
+  0x8198edbc), so touches cannot reach Qt's hidden buttons, and restored after.
+- **Memory outside the patch region:** the display buffer, the time
+  expander's 0.5 s of storage and both ring buffers are in SDRAM after Qt's
+  framebuffers (0x87eb0000 to 0x88000000), which no stock code refers to and
+  the MPU maps uncached.
+- **Status line.** With the bat screen closed, the strip across the top of
+  Qt's screens shows whether the audio is hooked, the rate class and the key
+  hook rate. With it open, a strip across the top of the bat screen shows the
+  rate class, the key hook rate, the frames waiting in each ring, and counts
+  of output underruns and dropped input.
+
+**What to expect.** In MANUAL at 192 kHz with microphones on inputs 3 and 4:
+three MARK presses show the bat screen with a moving waterfall; the
+headphones play the heterodyne after a short delay; PLAY changes mode; the
+wheel retunes; HOME returns to MANUAL. Recording in MANUAL carries on as normal
+underneath.
+
+**Not known until tried:** how often task 1 calls the hook (it sets the
+latency and whether processing keeps up: watch "dry" and "lost" in the top
+strip); whether the display switch shows tearing; and how the stock app copes
+with running unseen.
+
+**If it goes wrong.** As for the earlier tests: a freeze when the bat screen
+opens should still allow HOME and REC at power-on and the official file. If
+the screen stays on the bat display after closing it, turning the unit off and
+on clears everything (nothing is saved).
+
 ## Firmware map (V2.03, in progress)
 
 Found with `tools/x8ram.py` (unpacks the RAM runs) and a headless Ghidra 10.4
