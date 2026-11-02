@@ -123,10 +123,10 @@ bootloader, and refuses changes to the start-up and update-mode code listed in
 **Bootloader.** It uses SDK drivers for clocks, SEMC (the SDRAM controller), LPSPI,
 LPUART, GPIO and eLCDIF. Its only messages are display errors ("Display
 initialization failed", "Error: LCD INIT ERR SPI ERR"). It sets up the SDRAM and the
-display, then starts the main application. It has no SD card driver. The main
-application is built to run from SDRAM up to at least address 0x818072E5 (its
-default interrupt handler), so the bootloader probably copies almost all of the
-main application into SDRAM. This is not yet confirmed in the bootloader code.
+display, then starts the main application. It has no SD card driver. It copies
+everything from flash image offset 0x20000 onwards into SDRAM at 0x80000000 and
+jumps to it without checking anything (found by the qubero hex editor project,
+`crates/core/src/formats/tascamfw.rs` in its repository).
 
 **Main application.** Its vector table is at flash image offset 0x20000: initial
 stack pointer 0x20011CC8 (DTCM), reset handler 0x8173206D (flash image offset
@@ -149,7 +149,12 @@ From disassembly of the main application. Addresses are the running addresses.
 
 1. The reset handler (0x8173206C) sets up the stack, the FlexRAM split between ITCM
    and DTCM, and the vector table, then runs the C library start-up, which calls
-   `main()` at 0x80DF0F78. The start-up code looks like Arm Compiler's C library.
+   `main()` at 0x80DF0F78. Both programs were built with IAR Embedded Workbench for
+   Arm. The application's start-up follows IAR's init table: it zeroes seven
+   ranges, unpacks three LZ77-packed runs into SDRAM, the ITCM and the DTCM, then
+   runs the C++ constructors. (The init table and both of IAR's packing formats
+   were worked out by the qubero project; see `crates/core/src/codec/iar.rs` in
+   its repository.)
 2. `main()` initialises the hardware, turns the unit off if the battery is too low,
    and sets up DMA. Then it checks four boot button combinations with the function
    at 0x80DAD730 and stores the result as the **system mode** (a byte at
@@ -338,6 +343,11 @@ prove the SD card recovery path.
   mapped first.
 - Calling stock functions: declare them as `extern "C"` function pointers at the
   addresses found in Ghidra, with one address table per firmware version.
+- Code that runs from the ITCM, probably including the audio interrupt handlers,
+  is stored LZ77-packed in flash and unpacked at start-up. Patching it means
+  unpacking that run, editing it and packing it again (qubero decodes the format;
+  an encoder is still needed). Patching the code in SDRAM that calls it avoids
+  this.
 
 **Step 4: audio hook.** Redirect one call (a `BL` instruction) in the monitor mix
 routine to a Rust function `bat_process(input, output, frames)`. The first test

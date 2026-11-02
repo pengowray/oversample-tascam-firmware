@@ -243,8 +243,8 @@ In order of value:
    report, and which production batches or firmware versions reduced it.
 7. **Higher sample rates.** Whether the clocks, FPGA and DAC can run at 384 kHz for
    an experiment.
-8. **Build integration.** Their compiler (IAR, GCC or Arm Compiler) and whether they
-   would link a Rust static library. Any toolchain that follows the Arm hard-float
+8. **Build integration.** Whether they would link a Rust static library into their
+   IAR Embedded Workbench build (the firmware shows IAR's start-up code). Any toolchain that follows the Arm hard-float
    calling convention can link it.
 
 ## Unknowns and how to settle them
