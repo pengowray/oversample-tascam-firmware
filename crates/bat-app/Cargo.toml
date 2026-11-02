@@ -1,0 +1,12 @@
+[package]
+name = "bat-app"
+version = "0.1.0"
+edition.workspace = true
+license.workspace = true
+description = "The X8 bat app: listening modes, call detection and its 320x480 screen, no_std. Runs on the recorder or in the web emulator."
+
+[dependencies]
+bat-dsp = { path = "../bat-dsp" }
+embedded-graphics = "0.8.2"
+u8g2-fonts = "0.8.0"
+libm = "0.2.16"
