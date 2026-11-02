@@ -132,8 +132,18 @@ The two changed strings, 5 bytes each, no code:
 
 Either change showing on the unit proves the patched image is running. A label
 drawn as an image would not change, which is why there are two. The letters S, O,
-N, A and R all appear in other text on both screens, so the fonts have them even
-if they hold only the characters the stock text uses.
+N, A and R all appear in other text on both screens, so the fonts probably have
+them even if they hold only the characters the stock text uses; a name drawn
+blank or partly is still a visible change. A third "TUNER", on a button in the
+MUSIC app (offset 0x13d259c), is left as it is.
+
+**The INFORMATION screen should still show V2.03.** The image holds its own
+version and build as numbers (203 and 217, big-endian, at offset 0x20400), and
+the test file leaves them alone; only the update file's header says 218. So
+SONAR, not the version shown, is the sign that the test worked. Whether the
+updater compares a new file with those numbers or with the last file installed
+is unknown, so whether the official build 217 file is accepted again afterwards
+is unknown too; the recovery file (build 219) avoids the question.
 
 Checked before installing: unpacking the test file gives the official flash image
 with only those letters and the last byte of the trailer sum changed, and the
@@ -165,8 +175,14 @@ To install one, following Tascam's update procedure:
 5. Press MARK. The screen shows the installed version and build and the file's
    version and build. Check that it shows build 0218 (or 0219 for the recovery
    file) before going on.
+   If it shows ERROR 94 (Old Version), ERROR 95 (Checksum Error) or ERROR 100
+   (Update File Error) instead, turn the unit off: nothing has been written yet.
+   ERROR 94 would mean the updater compares something other than the build
+   number; ERROR 95 or 100 would mean it checks more than sum32. Either is worth
+   reporting here before trying anything else.
 6. Press MARK again to install. Don't touch the power or the card until the unit
-   turns itself off.
+   turns itself off. Errors 96 to 99 (flash erase, blank, write and verify) come
+   during writing; after one of those the unit may need hardware recovery.
 7. Delete the file from the `UTILITY` folder afterwards.
 
 Then install the recovery file the same way. If the tuner's name goes back to
