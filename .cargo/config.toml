@@ -1,0 +1,4 @@
+[target.thumbv7em-none-eabihf]
+# The i.MX RT1062 is a Cortex-M7 with a double-precision FPU (FPv5-D16).
+# Without this, f64 maths would be done in software.
+rustflags = ["-C", "target-cpu=cortex-m7"]

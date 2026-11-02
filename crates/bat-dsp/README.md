@@ -1,0 +1,73 @@
+# bat-dsp
+
+Real-time bat detector DSP for microcontrollers, written for the TASCAM
+Portacapture X8 (NXP i.MX RT1062, Cortex-M7 at 600 MHz, recording at 192 kHz).
+`no_std`, `f32`, no allocation. Dependencies: `libm` and `microfft`.
+
+## Modules
+
+CPU figures are per channel at 192 kHz on a 600 MHz Cortex-M7. They are
+estimates from the generated code and operation counts, not measurements.
+
+| Module | Type | What it does | CPU (estimate) |
+|---|---|---|---|
+| `heterodyne` | `Heterodyne` | Mixes the input with a local oscillator and low-passes it, so a call at f is heard at \|f − LO\|. Default cutoff 15 kHz. | 1 to 2% |
+| `heterodyne` | `HetComb<N>` | Up to N heterodynes mixed, LOs spaced across the band (default spacing 30 kHz). | 1 to 2% per LO |
+| `freq_div` | `FrequencyDivider` | Zero-crossing frequency division: a click (or square-wave step) every `division` cycles of the ultrasonic signal, so a call at f is heard at f / division. Also reports zero-crossing frequency points for an Anabat-style plot. | about 3% |
+| `time_expansion` | `TimeExpander` | Keeps a ring buffer in caller-provided storage; on a trigger, captures a window (default 50 ms before, 250 ms after) and plays it back slowed by a factor (default 10). | under 2% while playing |
+| `pitch_shift` | `PitchShifter` | Phase vocoder that divides frequencies by a factor (default 10, range 2 to 32) at real-time speed. 1024-point frames, hop 256, latency 1024 samples. | 11 to 16% |
+| `spectrum` | `SpectrumAnalyzer<N>` | Hann-windowed FFT columns in dB (N = 256, 512 or 1024), plus mapping a column to display pixels. | with the detector: 6 to 8% for N = 512, hop 128 |
+| `detector` | `CallDetector<N>` | Finds bat calls in spectrum columns against a per-bin noise floor, so steady tones and insect noise are ignored. Reports start, end, peak and frequency range of each call. | (included above) |
+| `biquad`, `osc` | `Biquad`, `Butterworth4`, `Nco` | Building blocks: RBJ biquads (low-pass, high-pass, notch), 4th-order Butterworth, and a sine/cosine oscillator. | |
+
+## Conventions
+
+- `process(&mut self, input, output)` with equal lengths. The output is the same
+  whichever way the input is split into blocks; every module has a test for this.
+- The sample rate is fixed in the constructor. Settings that a user changes while
+  listening have setters that do not click.
+- Buffers whose size depends on time (the time expander's storage) are passed in
+  by the caller, so they can live in a static or in SDRAM.
+- Some structs are large: `PitchShifter` is about 29 KB, and
+  `SpectrumAnalyzer<1024>` with `CallDetector<1024>` about 14 KB. On the target,
+  construct them in a static or in place, not on a small stack.
+
+## Build and test
+
+```bash
+cargo test -p bat-dsp
+```
+
+```bash
+cargo clippy -p bat-dsp --all-targets
+```
+
+```bash
+cargo build -p bat-dsp --release --target thumbv7em-none-eabihf
+```
+
+`.cargo/config.toml` at the repository root sets `target-cpu=cortex-m7`, so f64
+maths uses the hardware FPU. Add the target once with
+`rustup target add thumbv7em-none-eabihf`.
+
+## Known limits
+
+- **Pitch shift:** fast FM calls (2 to 7 ms sweeps) keep their level on average,
+  but a single call can come out 6 dB quieter to 3 dB louder, and the sweep is
+  smeared by about ±2 bins. This is probably a limit of 1024-point frames.
+- **Time expansion:** no fade at the window edges, so a window that ends in the
+  middle of a call can click.
+- **Call detector:** a call is reported 2 ms (the merge gap) after it ends. A steady
+  sound that switches on keeps `is_active()` true for up to 100 ms before it
+  counts as background. Digital silence followed by sound gives one false event.
+- **Frequency division:** the noise floor starts high, so the divider is silent
+  for about 0.1 s after construction or reset. A steady tone lasting several
+  seconds eventually counts as noise.
+
+## Next
+
+- Measure real cycle counts on a Teensy 4.1 (same chip family) with the DWT cycle
+  counter, and compare the outputs with Oversample's `oversample-core` on recorded
+  X8 files.
+- Fades for the time expander window.
+- A C interface (`staticlib`) so TASCAM's firmware, or a patch, can call it.

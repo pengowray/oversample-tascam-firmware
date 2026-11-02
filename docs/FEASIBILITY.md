@@ -11,10 +11,10 @@ The firmware reverse-engineering notes and the patching plan are in
 ## Summary
 
 - **The MVP is feasible.** The MVP is: record inputs 3/4 as a 192 kHz WAV while
-  listening on headphones through heterodyne or pitch shift. Any one listening mode
-  on both channels needs about 2 to 12% of the 600 MHz Cortex-M7 (*estimate*):
-  heterodyne about 2 to 4%, phase-vocoder pitch shift about 12%. The FPGA is not
-  needed for any bat feature.
+  listening on headphones through heterodyne or pitch shift. On the 600 MHz
+  Cortex-M7, heterodyne needs about 1 to 2% per channel and phase-vocoder pitch
+  shift about 11 to 16% per channel (*estimates*; see `crates/bat-dsp`). The FPGA
+  is not needed for any bat feature.
 - **The usable range is up to about 90 kHz, with some loss above 50 kHz.** At
   192 kHz the AK5704's built-in digital filter is 1 dB below its 1 kHz level at
   51 kHz, 3 dB below at 65 kHz and 6 dB below at 78 kHz. That covers most
@@ -145,14 +145,14 @@ In this table, "monitor path" means the audio the X8 sends to the headphones.
 | Live heterodyne | Yes | About 1 to 2% CPU per channel (*estimate*). |
 | Heterodyne comb: several heterodyne oscillators at once, mixed together, so calls at different frequencies are all audible | Yes | About 4 to 8% CPU per channel for 4 oscillators (*estimate*). |
 | Frequency division (zero-crossing, the older detector method) | Yes | Under 1% CPU. |
-| Pitch shift (phase vocoder) | Yes | About 6% CPU per channel (*estimate*). |
+| Pitch shift (phase vocoder) | Yes | About 11 to 16% CPU per channel (*estimate*). Listening in mono halves it. |
 | Time expansion of detected calls, for listening | Yes | Under 1% CPU. Recording to the SD card continues while the expanded call plays. |
 | Playback of a recorded 192 kHz file through heterodyne, pitch shift, frequency division or time expansion | Yes, same hook as live listening | The stock VSA and KEY playback do not work with 96 or 192 kHz files. The bat app would process the playback audio in the monitor path, the same way as live input. |
 | Look-back buffer of 5 to 10 s | Partly stock | The FIELD app's EXPANDED PRE REC keeps about 8 s before REC is pressed. Not yet checked at 192 kHz. |
 | Processed audio recorded as an extra track | Probably | The X8's multi-track apps record a master file (the stereo mix) alongside the track files. If the bat audio replaces the mix, the stock recorder may save it as the master file with no extra work. Needs checking. |
 | Mono notes track from input 1 | Yes, as WAV | At 96 and 192 kHz the stock firmware does not record MP3. An MP3 notes file would need the notes channel resampled to 48 kHz first. |
 | Spectrogram waterfall | Yes | Computing it is under 1% CPU. Drawing it is the real work, because the stock UI is built with Qt for MCUs. |
-| Call snapshots: detect a call, then show it zoomed for a few seconds | Yes | Detection is under 1% CPU. |
+| Call snapshots: detect a call, then show it zoomed for a few seconds | Yes | Detection, including its spectrum, is about 6 to 8% CPU (*estimate*). The waterfall can reuse the detector's spectrum columns. |
 | Zero-crossing frequency-time plot (Anabat style) | Yes | Cheaper to draw than a waterfall. |
 | Unattended bat recorder | Later | The stock AUTO REC setting starts recording when the input level crosses a threshold. A recording schedule is missing. Battery life on 4 AA cells is short, so overnight use needs USB power. |
 | Settings and metadata sent from a phone app as audio pulses, picked up by the X8's mics | Yes, later | Decoding the pulses is simple DSP. The work is in applying the settings inside the firmware. |
@@ -171,10 +171,10 @@ several times slower when it misses the cache.
 | Heterodyne | complex mix and 4th-order low-pass filter, about 40 cycles per sample | 1 to 2% |
 | Heterodyne comb, 4 oscillators | 4 × the heterodyne | 4 to 8% |
 | Frequency division (zero-crossing ÷ 10) | about 20 cycles per sample | under 1% |
-| Pitch shift, phase vocoder | 1,024-point FFT, 256 samples between frames: 750 frames per second, about 50,000 cycles per frame | about 6% |
+| Pitch shift, phase vocoder | 1,024-point FFT, 256 samples between frames: 750 frames per second, about 90,000 to 130,000 cycles per frame | 11 to 16% |
 | Time expansion | copy and interpolate at the output rate | under 1% |
 | Spectrogram for the waterfall | 512-point FFT, 100 columns per second | under 1%, plus drawing |
-| Call detection | energy in a frequency band, per spectrogram column | under 1% |
+| Call detection | 512-point FFT every 128 samples (1,500 columns per second) and a per-bin noise floor | 6 to 8% |
 
 The cycle counts can be measured before touching the X8: a Teensy 4.1 uses the
 i.MX RT1062, from the same chip family, at the same clock speed.
@@ -266,7 +266,7 @@ In order of value:
 1. **Bench measurements with the stock firmware.** Any remaining hum, frequency
    response to 96 kHz, noise floor with ultrasonic mics on inputs 3/4, and EXPANDED PRE REC at
    192 kHz. Analyse the recordings in Oversample.
-2. **DSP library.** A `no_std` Rust library with block-based heterodyne,
+2. **DSP library (started: `crates/bat-dsp`).** A `no_std` Rust library with block-based heterodyne,
    heterodyne comb, frequency division, phase vocoder pitch shift, time expansion,
    spectrogram columns and a call detector. Test it on a desktop against
    `oversample-core` and against X8 recordings, and measure cycle counts on a
