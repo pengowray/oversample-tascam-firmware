@@ -222,6 +222,11 @@ def main(argv):
                    help="allow changes to start-up and update-mode code (the bootloader stays refused)")
     a = sub.add_parser("selftest", help="unpack and repack each file and compare bytes")
     a.add_argument("updates", nargs="+")
+    a = sub.add_parser("replace", help="replace text at given offsets of a flash image, same length only")
+    a.add_argument("image")
+    a.add_argument("out")
+    a.add_argument("--at", action="append", required=True, metavar="OFFSET:OLD:NEW",
+                   help="for example 0x13814f4:TUNER:SONAR; repeat for more")
     args = p.parse_args(argv)
 
     if args.cmd in ("diff", "pack") and getattr(args, "base", None):
@@ -283,6 +288,23 @@ def main(argv):
         info, _ = parse(out)
         print_info(info)
         print(f"wrote {args.update}")
+        return 0
+
+    if args.cmd == "replace":
+        image = bytearray(open(args.image, "rb").read())
+        for spec in args.at:
+            offset, old, new = spec.split(":", 2)
+            offset, old, new = int(offset, 0), old.encode(), new.encode()
+            if len(old) != len(new):
+                print(f"refused: {spec}: the new text must be as long as the old")
+                return 1
+            if image[offset:offset + len(old)] != old:
+                print(f"refused: {spec}: found {bytes(image[offset:offset + len(old)])!r} at 0x{offset:x}")
+                return 1
+            image[offset:offset + len(new)] = new
+            print(f"0x{offset:07x}: {old.decode()} -> {new.decode()}")
+        open(args.out, "wb").write(image)
+        print(f"wrote {args.out}")
         return 0
 
     if args.cmd == "selftest":

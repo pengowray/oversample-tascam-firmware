@@ -100,13 +100,80 @@ python3 tools/x8fw.py diff "Tascam_X8_official/extracted/#PortaX8_0217.203" work
 python3 tools/x8fw.py pack work/v203-patched.bin "work/#PortaX8_0218.203" --base "Tascam_X8_official/extracted/#PortaX8_0217.203" --build 218
 ```
 
+`replace` changes text at given offsets of a flash image, keeping its length, and
+refuses if the old text is not there:
+
+```bash
+python3 tools/x8fw.py replace work/v203.bin work/v203-patched.bin --at 0x13814f4:TUNER:SONAR
+```
+
 `pack` recomputes sum32 in the header and in the flash image's last 4 bytes. With
 `--base`, it lists every changed byte range, refuses changes to the boot header and
 bootloader, and refuses changes to the start-up and update-mode code listed in
 [Keeping the bricking risk low](#keeping-the-bricking-risk-low) unless
 `--allow-boot-path` is given. Files in `work/` are ignored by git.
 
-## Flash image layout (V2.03)
+## Step 2 test files (built 2026-11-02, not yet installed)
+
+Two update files for step 2 of the [plan](#plan): one to test that the X8 accepts
+a repacked update file, and one to put the stock firmware back.
+
+| File | What it is | SHA-256 |
+|---|---|---|
+| `work/test-update/#PortaX8_0218.203` | V2.03 with "TUNER" changed to "SONAR" in two places, build 218 | `2f8c67fa…ed96ae25` |
+| `work/recovery/#PortaX8_0219.203` | V2.03 unchanged, build 219 | `af92b2f9…a65826ba` |
+
+The two changed strings, 5 bytes each, no code:
+
+| Flash image offset | Where the string is | Expected on screen |
+|---|---|---|
+| 0x13814f4 | The launcher's list of app names, beside MANUAL, FIELD, PODCAST, METRONOME and LAUNCHER | The TUNER app's name on the LAUNCHER screen |
+| 0x149bc0c | The tuner app's own strings, beside CALIBRATOR and OSCILLATOR | The tuner app's title |
+
+Either change showing on the unit proves the patched image is running. A label
+drawn as an image would not change, which is why there are two. The letters S, O,
+N, A and R all appear in other text on both screens, so the fonts have them even
+if they hold only the characters the stock text uses.
+
+Checked before installing: unpacking the test file gives the official flash image
+with only those letters and the last byte of the trailer sum changed, and the
+header differs only in the build number and sum32. The recovery file's flash image
+is the official one byte for byte. `pack --base` found no change to the
+bootloader or the known start-up and update-mode code.
+
+To build them again:
+
+```bash
+python3 tools/x8fw.py replace work/v203.bin work/v203-sonar.bin --at 0x13814f4:TUNER:SONAR --at 0x149bc0c:TUNER:SONAR
+```
+
+```bash
+python3 tools/x8fw.py pack work/v203-sonar.bin "work/test-update/#PortaX8_0218.203" --base "Tascam_X8_official/extracted/#PortaX8_0217.203" --build 218
+```
+
+```bash
+python3 tools/x8fw.py pack work/v203.bin "work/recovery/#PortaX8_0219.203" --base "Tascam_X8_official/extracted/#PortaX8_0217.203" --build 219
+```
+
+To install one, following Tascam's update procedure:
+
+1. Power the unit from USB or the AC adapter, not batteries.
+2. Turn on SD CARD READER (GENERAL SETTINGS, OTHER SETTINGS) and copy one update
+   file into the `UTILITY` folder on the card. Only one update file at a time.
+3. Eject the card on the computer, press DISCONNECT, and turn the unit off.
+4. Hold HOME and REC while turning the unit on, until UPDATE MODE shows.
+5. Press MARK. The screen shows the installed version and build and the file's
+   version and build. Check that it shows build 0218 (or 0219 for the recovery
+   file) before going on.
+6. Press MARK again to install. Don't touch the power or the card until the unit
+   turns itself off.
+7. Delete the file from the `UTILITY` folder afterwards.
+
+Then install the recovery file the same way. If the tuner's name goes back to
+TUNER, recovery from the SD card is proven on that unit. Any later patched file
+needs build 220 or higher.
+
+
 
 | Flash image offset | Address when running | Contents |
 |---|---|---|
@@ -326,7 +393,8 @@ with the flash image from `x8fw.py unpack`.
 
 **Step 2: a patch with no code change.** Change one visible string, raise the build
 number, pack the update file with `x8fw.py pack --base`, and install it with the
-official update procedure. This confirms that the updater accepts a repacked update
+official update procedure. The files are built; see [Step 2 test
+files](#step-2-test-files-built-2026-11-02-not-yet-installed). This confirms that the updater accepts a repacked update
 file. Then install the official image repacked with a still higher build number, to
 prove the SD card recovery path.
 
