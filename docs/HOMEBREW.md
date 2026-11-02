@@ -344,8 +344,9 @@ framebuffers at 0x87e00000.
 **Display.** The LCDIF is set up by the function at 0x80e2b82c: 320 x 480,
 RGB565 (the format the bat app draws), first buffer at 0x87e00000. The zeroed
 range there is 681 KB, room for two 300 KB frames. The LCDIF interrupt
-(0x80e2b7c8) counts finished frames at 0x81910748; the function at 0x80e2b574
-waits for the PXP and sets the next buffer. Qt for MCUs draws through the PXP.
+(0x80e2b7c8) counts finished frames at 0x81910748. The function at 0x80e2b574
+waits for the PXP to finish and then writes the LCDIF's control register; how the
+second buffer is switched in is not read yet. Qt for MCUs draws through the PXP.
 
 **Audio.** All the audio runs through SAI1, set up by the ITCM function at
 0x2aa48:
