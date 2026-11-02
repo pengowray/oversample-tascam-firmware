@@ -16,8 +16,11 @@ rustup target add wasm32-unknown-unknown
 ```
 
 ```bash
-python3 -m http.server 8742 --directory web
+python3 web/serve.py
 ```
+
+(`serve.py` is Python's built-in server with caching turned off, so a rebuilt
+module is always picked up.)
 
 Then open <http://localhost:8742/>. To load a file from the server at start,
 put it in `web/samples/` (ignored by git) and open
