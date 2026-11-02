@@ -39,7 +39,8 @@ The firmware reverse-engineering notes and the patching plan are in
   [HOMEBREW.md](HOMEBREW.md#keeping-the-bricking-risk-low).
 - **Open questions that need a unit or Tascam's answers:** the analog response
   from 60 to 96 kHz, how much CPU the stock firmware leaves free at 192 kHz, and
-  whether the ultrasonic hum reported in 2022 is really gone.
+  whether the reported ultrasonic hum (from radio interference) shows up on a
+  given unit.
 
 ## Hardware
 
@@ -121,12 +122,18 @@ running the clocks at 384 kHz would in theory move the −3 dB point to about
 clocking, the headphone DAC and the firmware's clock setup may not support it.
 Treat 384 kHz as an experiment for a unit with a working recovery path.
 
-**Reported ultrasonic hum, probably fixed.** A 2022 review and a user review
-reported a steady ultrasonic hum in X8 recordings. This project's own X8 has not
-shown it, and a later report said a firmware update fixed it, although no release
-note names the fix. It is still worth one check at 192 kHz with inputs 3/4 terminated
-(see the first milestone below). If any steady tone remains, the call detector
-ignores steady tones, and a notch filter can remove it from the monitor path.
+**Reported ultrasonic hum: reduced, not gone.** A 2022 review and a user review
+reported a steady ultrasonic hum in X8 recordings. Owner discussions (for example
+on Airwiggles, not yet checked first-hand) say it comes from radio-frequency
+interference picked up from nearby phones and Wi-Fi, that early production units
+show it most, and that firmware updates reduced it without removing it. This
+project's own X8 has not shown it. For bat work:
+
+- Check each unit once: record at 192 kHz with inputs 3/4 terminated, with and
+  without a phone next to it, and look for steady lines in Oversample.
+- Keep phones away from the recorder, or in flight mode, during surveys.
+- The call detector ignores steady tones, and a notch filter can remove a tone
+  from the monitor path.
 
 ## Features
 
@@ -232,8 +239,8 @@ In order of value:
    anti-alias filtering), which ADC channels feed each input, what the FPGA does and
    how the processor controls it, how the headphone DAC is clocked, and the free
    flash and RAM.
-6. **The ultrasonic hum reported in 2022.** Which firmware or hardware revision
-   fixed it.
+6. **The ultrasonic hum.** Its frequency, whether it is radio interference as owners
+   report, and which production batches or firmware versions reduced it.
 7. **Higher sample rates.** Whether the clocks, FPGA and DAC can run at 384 kHz for
    an experiment.
 8. **Build integration.** Their compiler (IAR, GCC or Arm Compiler) and whether they
@@ -244,7 +251,7 @@ In order of value:
 
 | Question | Why it matters | How to find out |
 |---|---|---|
-| Whether any ultrasonic hum remains | Would be audible through the heterodyne | Record at 192 kHz with inputs 3/4 terminated, on battery and on USB power; view in Oversample |
+| Whether a unit shows the ultrasonic hum | Would be audible through the heterodyne | Record at 192 kHz with inputs 3/4 terminated, with and without a phone nearby, on battery and on USB power; view in Oversample |
 | Analog response from 60 to 96 kHz | Sets the real upper limit | Feed a sine sweep at line level into input 3, record at 192 kHz, compare with the datasheet filter |
 | Free CPU at 192 kHz in the stock firmware | Sets how much DSP fits | Ask Tascam, or measure the RTOS idle time once the firmware is mapped |
 | SDRAM size (64 or 128 MB) and how much the stock firmware leaves free | Sets the look-back buffer length | Read the SDRAM chip markings, ask Tascam, or find the heap setup once the firmware is mapped |
