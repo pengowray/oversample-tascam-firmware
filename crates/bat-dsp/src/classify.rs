@@ -139,6 +139,8 @@ struct Piece {
 #[derive(Clone, Copy, Debug)]
 struct Tone {
     freq_hz: f32,
+    /// Start of the chain of pieces that made it a tone.
+    start: u64,
     /// End of its latest piece.
     end: u64,
 }
@@ -160,6 +162,11 @@ pub struct CallClassifier {
     pieces: [Option<Piece>; PIECES],
     next_piece: usize,
     tones: [Option<Tone>; TONES],
+    /// Start of the tone the latest detection belongs to, if it is a piece
+    /// of one.
+    tone_since: u64,
+    /// The latest detection was a piece of a steady tone.
+    last_was_tone: bool,
 }
 
 impl CallClassifier {
@@ -181,6 +188,8 @@ impl CallClassifier {
             pieces: [None; PIECES],
             next_piece: 0,
             tones: [None; TONES],
+            tone_since: 0,
+            last_was_tone: false,
         };
         c.set_train_window_s(DEFAULT_TRAIN_WINDOW_S);
         c
@@ -227,11 +236,21 @@ impl CallClassifier {
         self.pieces = [None; PIECES];
         self.next_piece = 0;
         self.tones = [None; TONES];
+        self.last_was_tone = false;
+    }
+
+    /// When the latest detection was a piece of a steady tone, where the tone
+    /// started: the first piece of the chain that made it a tone. Pauses of
+    /// up to 2 s, after which pieces still count as the same tone, are
+    /// included.
+    pub fn tone_start(&self) -> Option<u64> {
+        self.last_was_tone.then_some(self.tone_since)
     }
 
     /// Classify the next detection. Detections must come in time order.
     pub fn classify(&mut self, event: &CallEvent) -> Verdict {
-        let kind = if self.is_tone(event) {
+        self.last_was_tone = self.is_tone(event);
+        let kind = if self.last_was_tone {
             CallKind::Tone
         } else if event.min_freq_hz <= self.band_lo_hz + EDGE_MARGIN_HZ {
             CallKind::Broadband
@@ -289,6 +308,7 @@ impl CallClassifier {
             if start.saturating_sub(t.end) <= self.tone_hold && (t.freq_hz - peak).abs() <= TONE_FREQ_HZ {
                 t.freq_hz = peak;
                 t.end = t.end.max(end);
+                self.tone_since = t.start;
                 tone = true;
                 break;
             }
@@ -316,7 +336,8 @@ impl CallClassifier {
                 let slot = (0..TONES)
                     .min_by_key(|&i| self.tones[i].map_or(0, |t| t.end + 1))
                     .unwrap_or(0);
-                self.tones[slot] = Some(Tone { freq_hz: peak, end });
+                self.tones[slot] = Some(Tone { freq_hz: peak, start: chain_start, end });
+                self.tone_since = chain_start;
             }
             tone = true;
             // The chain's earlier pieces can no longer start a train.
@@ -397,11 +418,14 @@ mod tests {
         let bats = kinds.iter().filter(|&&k| k == CallKind::Bat).count();
         assert!(bats <= 4, "{kinds:?}");
         assert!(kinds[5..].iter().all(|&k| k == CallKind::Tone), "{kinds:?}");
-        // After a pause of 1 s the tone carries on, slightly lower: still a
-        // tone from its first piece.
+        // The tone has lasted from its first piece.
+        assert_eq!(c.tone_start(), Some((1.0 * FS) as u64));
+        // After a pause of 1 s the tone carries on, slightly lower: still the
+        // same tone from its first piece.
         for e in pieces(3.0, 3.5, 30.0, 35.0, 21.3) {
             assert_eq!(c.classify(&e).kind, CallKind::Tone);
         }
+        assert_eq!(c.tone_start(), Some((1.0 * FS) as u64));
         // A bat sweeping through the same frequencies is still a bat.
         c.classify(&call(3.6, 25.0, 25.0));
         assert_eq!(c.classify(&call(3.7, 25.0, 25.0)).kind, CallKind::Bat);

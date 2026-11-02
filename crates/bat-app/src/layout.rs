@@ -25,11 +25,15 @@ pub const METER_MIN_DB: f32 = -72.0;
 
 /// Waterfall: time runs right to left, newest at the right edge, one pixel
 /// column per 10 ms (2.9 s across). Frequency runs up, 15 to 96 kHz, about
-/// one 375 Hz FFT bin per pixel row.
+/// one 375 Hz FFT bin (384 Hz) per pixel row.
 pub const WF_X: i32 = 28;
 pub const WF_Y: i32 = 98;
 pub const WF_W: usize = 288;
-pub const WF_H: usize = 218;
+pub const WF_H: usize = 211;
+/// Strip under the waterfall for the ticks of marked sounds, on black, so
+/// every tick colour shows whatever the waterfall's colours are.
+pub const TICKS_Y: i32 = WF_Y + WF_H as i32 + 1;
+pub const TICK_H: i32 = 6;
 /// Time labels under the waterfall.
 pub const RULER_BASELINE: i32 = 328;
 

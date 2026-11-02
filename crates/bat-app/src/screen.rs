@@ -243,11 +243,11 @@ fn waterfall(app: &BatApp, fb: Fb) {
         Mode::Fd | Mode::Pitch => {}
     }
 
-    // Marked detections (ticks along the bottom, coloured by kind) and marks
-    // (along the top).
+    // Marked detections (ticks in the strip under the waterfall, coloured by
+    // kind) and marks (along the top).
     for (t, kind) in app.calls.iter() {
         if let Some(x) = sample_x(app, t) {
-            fill(fb, Rectangle::new(Point::new(x, WF_Y + WF_H as i32 - 5), Size::new(2, 5)), tick_colour(kind));
+            fill(fb, Rectangle::new(Point::new(x, TICKS_Y), Size::new(2, TICK_H as u32)), tick_colour(kind));
         }
     }
     for t in app.marks.iter() {
@@ -264,7 +264,7 @@ fn waterfall(app: &BatApp, fb: Fb) {
             break;
         }
         let tall = k % 2 == 0;
-        fill(fb, Rectangle::new(Point::new(x, WF_Y + WF_H as i32), Size::new(1, if tall { 4 } else { 2 })), LINE);
+        fill(fb, Rectangle::new(Point::new(x, TICKS_Y + TICK_H), Size::new(1, if tall { 4 } else { 2 })), LINE);
     }
     text(fb, &SMALL, "now", right, RULER_BASELINE, RIGHT, TEXT_MUTED);
     text(fb, &SMALL, "-1 s", right - px_per_s, RULER_BASELINE, CENTER, TEXT_MUTED);
@@ -283,8 +283,13 @@ fn snapshot(app: &BatApp, fb: Fb) {
     rounded(fb, SNAP_PANEL, 6, PANEL);
     let top = SNAP_PANEL.top_left.y;
     let Some((call, kind)) = app.last_call else {
-        let empty = if app.marked == 0 { "No sounds set to mark" } else { "No marked sounds yet" };
-        text(fb, &BODY, empty, SNAP_PANEL.center().x, top + 36, CENTER, TEXT_MUTED);
+        let cx = SNAP_PANEL.center().x;
+        if app.marked == 0 {
+            text(fb, &BODY, "No sounds set to mark", cx, top + 30, CENTER, TEXT_MUTED);
+            text(fb, &SMALL, "Open the menu at the top left to switch them on.", cx, top + 46, CENTER, TEXT_MUTED);
+        } else {
+            text(fb, &BODY, "No marked sounds yet", cx, top + 36, CENTER, TEXT_MUTED);
+        }
         return;
     };
     // The kind of detection, beside a swatch in its tick colour.
@@ -303,7 +308,8 @@ fn snapshot(app: &BatApp, fb: Fb) {
     text(fb, &SMALL, format_args!("{:.0} kHz", lo / 1000.0), SNAP_X + 2, SNAP_Y + SNAP_H as i32 - 2, LEFT, TEXT);
     let fs = app.sample_rate;
     let ago_s = app.samples.saturating_sub(call.end_sample) as f32 / fs;
-    let length_ms = (call.end_sample - call.start_sample) as f32 / fs * 1000.0;
+    // A steady tone's length is the whole tone so far, not its latest piece.
+    let length_ms = (call.end_sample - app.last_call_since) as f32 / fs * 1000.0;
     if ago_s < 60.0 {
         text(fb, &SMALL, format_args!("{:.0} s ago", libm::floorf(ago_s)), 308, top + 12, RIGHT, TEXT_MUTED);
     } else {
@@ -322,7 +328,11 @@ fn snapshot(app: &BatApp, fb: Fb) {
     } else {
         text(fb, &BODY, format_args!("{lo:.0}-{hi:.0} kHz"), SNAP_VALUE_X, y2, LEFT, TEXT);
     }
-    text(fb, &BODY, format_args!("{length_ms:.1} ms"), SNAP_VALUE_X, y3, LEFT, TEXT);
+    if length_ms >= 1000.0 {
+        text(fb, &BODY, format_args!("{:.1} s", length_ms / 1000.0), SNAP_VALUE_X, y3, LEFT, TEXT);
+    } else {
+        text(fb, &BODY, format_args!("{length_ms:.1} ms"), SNAP_VALUE_X, y3, LEFT, TEXT);
+    }
 }
 
 fn value_line(app: &BatApp, fb: Fb) {
@@ -471,9 +481,10 @@ fn settings(app: &BatApp, fb: Fb) {
             }
         }
     }
-    text(fb, &BODY_BOLD, "Sounds to mark", 10, SWITCHES_HEADING, LEFT, TEXT);
-    text(fb, &SMALL, "Marked on the waterfall and played in TE if turned on.", 10, SWITCHES_HELP, LEFT, TEXT_MUTED);
-    text(fb, &SMALL, "These settings reset when the recorder is turned off.", 10, SETTINGS_NOTE, LEFT, TEXT_MUTED);
+    // Lined up with the text in the panels above.
+    text(fb, &BODY_BOLD, "Sounds to mark", 16, SWITCHES_HEADING, LEFT, TEXT);
+    text(fb, &SMALL, "Marked on the waterfall and played in TE if switched on.", 16, SWITCHES_HELP, LEFT, TEXT_MUTED);
+    text(fb, &SMALL, "These settings reset when the recorder is turned off.", 16, SETTINGS_NOTE, LEFT, TEXT_MUTED);
     rounded(fb, DONE, 4, ACCENT);
     text(fb, &BODY_BOLD, "Done", DONE.center().x, DONE.top_left.y + 28, CENTER, TEXT);
 }

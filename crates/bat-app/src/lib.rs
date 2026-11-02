@@ -271,6 +271,9 @@ pub struct BatApp<'a> {
     calls: Recent<(u64, CallKind)>,
     marks: Recent<u64>,
     last_call: Option<(CallEvent, CallKind)>,
+    /// Where the last call's length is measured from: its start, or for a
+    /// steady tone, the start of the tone.
+    last_call_since: u64,
 
     /// Waterfall levels (0 to 255), one column of `WF_H` per `WF_COLUMN_MS`,
     /// column-major, as a ring: `wf_next` is the oldest column.
@@ -341,6 +344,7 @@ impl<'a> BatApp<'a> {
             calls: Recent::new((0, CallKind::Bat)),
             marks: Recent::new(0),
             last_call: None,
+            last_call_since: 0,
             wf: [0; WF_W * WF_H],
             wf_next: 0,
             wf_column: 0,
@@ -670,6 +674,7 @@ impl<'a> BatApp<'a> {
             mono,
             calls,
             last_call,
+            last_call_since,
             wf,
             wf_next,
             wf_column,
@@ -700,6 +705,7 @@ impl<'a> BatApp<'a> {
                     }
                     calls.push((event.start_sample, verdict.kind));
                     *last_call = Some((event, verdict.kind));
+                    *last_call_since = classifier.tone_start().unwrap_or(event.start_sample);
                     *snapshot_hz = build_snapshot(&event, *sample_rate, history, history_centre, snapshot);
                     *detected = true;
                 }
