@@ -315,64 +315,98 @@ pub struct BatApp<'a> {
 impl<'a> BatApp<'a> {
     /// `te_storage` holds the time expander's ring buffer: one second
     /// (`sample_rate` samples) is plenty for the default 300 ms window.
+    ///
+    /// This returns the whole app (about 250 KB) by value. On the X8, where it
+    /// cannot pass through a stack, build it with
+    /// [`init_in_place`](Self::init_in_place) instead.
     pub fn new(sample_rate: f32, te_storage: &'a mut [f32]) -> Self {
-        let mut analyzer = SpectrumAnalyzer::new(sample_rate);
-        analyzer.set_hop(FFT_HOP);
-        let mut app = Self {
-            sample_rate,
-            mode: Mode::Het,
-            source: MonitorSource::Mix,
-            screen: Screen::Main,
-            setting: 0,
-            min_bat_index: MIN_BAT_DEFAULT,
-            samples: 0,
-            het: Heterodyne::new(sample_rate, 45_000.0),
-            comb: HetComb::new(sample_rate, 25_000.0, DEFAULT_COMB_SPACING_HZ, COMB_COUNT),
-            comb_first_hz: 25_000.0,
-            fd: FrequencyDivider::new(sample_rate),
-            fd_index: 2,
-            te: TimeExpander::new(sample_rate, te_storage),
-            te_index: 2,
-            te_trigger: None,
-            pitch: PitchShifter::new(sample_rate),
-            pitch_index: 2,
-            analyzer,
-            detector: CallDetector::new(sample_rate),
-            classifier: CallClassifier::new(sample_rate, DEFAULT_BAND_LO_HZ),
-            marked: MARKED_DEFAULT,
-            detected: false,
-            calls: Recent::new((0, CallKind::Bat)),
-            marks: Recent::new(0),
-            last_call: None,
-            last_call_since: 0,
-            wf: [0; WF_W * WF_H],
-            wf_next: 0,
-            wf_column: 0,
-            wf_accum: [f32::MIN; WF_H],
-            row_floor: [-110.0; WF_H],
-            row_floor_set: false,
-            display_offset_db: DEFAULT_DISPLAY_OFFSET_DB,
-            display_range_db: DEFAULT_DISPLAY_RANGE_DB,
-            display_per_row: false,
-            history: [0; HISTORY * BINS],
-            history_centre: [0; HISTORY],
-            history_next: 0,
-            snapshot: [0; SNAP_W * SNAP_H],
-            snapshot_hz: (VIEW_LO_HZ, VIEW_HI_HZ),
-            meters: [Meter::new(); 2],
-            recording: false,
-            recorded_samples: 0,
-            clock_s: 0,
-            mono: [0.0; CHUNK],
-            out: [0.0; CHUNK],
-            te_out: [0.0; CHUNK],
-        };
-        // Each call reaches about one of the comb's oscillators, and the comb
-        // scales its sum by 1 / count, so restore that to match HET's level.
-        app.comb.set_gain(COMB_COUNT as f32);
-        app.apply_settings();
-        app.apply_lowest_bat_call();
-        app
+        let mut app = core::mem::MaybeUninit::<Self>::uninit();
+        // SAFETY: init_in_place writes every field.
+        unsafe {
+            Self::init_in_place(app.as_mut_ptr(), sample_rate, te_storage);
+            app.assume_init()
+        }
+    }
+
+    /// Build the app at `this`, field by field, so that no more than its
+    /// largest part (the pitch shifter, about 23 KB) passes through the stack.
+    ///
+    /// # Safety
+    ///
+    /// `this` must be valid for writes and aligned. Whatever it held is
+    /// overwritten without being dropped.
+    pub unsafe fn init_in_place(this: *mut Self, sample_rate: f32, te_storage: &'a mut [f32]) {
+        use core::ptr::addr_of_mut as field;
+        /// Fill an array field element by element, without a temporary.
+        unsafe fn fill<T: Copy, const N: usize>(array: *mut [T; N], value: T) {
+            let first = array.cast::<T>();
+            for i in 0..N {
+                unsafe { first.add(i).write(value) };
+            }
+        }
+        // SAFETY: every write is to a field of `this`; each field is written
+        // before anything reads it, and the references below are taken only
+        // once every field is written.
+        unsafe {
+            field!((*this).sample_rate).write(sample_rate);
+            field!((*this).mode).write(Mode::Het);
+            field!((*this).source).write(MonitorSource::Mix);
+            field!((*this).screen).write(Screen::Main);
+            field!((*this).setting).write(0);
+            field!((*this).min_bat_index).write(MIN_BAT_DEFAULT);
+            field!((*this).samples).write(0);
+            field!((*this).het).write(Heterodyne::new(sample_rate, 45_000.0));
+            field!((*this).comb).write(HetComb::new(sample_rate, 25_000.0, DEFAULT_COMB_SPACING_HZ, COMB_COUNT));
+            field!((*this).comb_first_hz).write(25_000.0);
+            field!((*this).fd).write(FrequencyDivider::new(sample_rate));
+            field!((*this).fd_index).write(2);
+            field!((*this).te).write(TimeExpander::new(sample_rate, te_storage));
+            field!((*this).te_index).write(2);
+            field!((*this).te_trigger).write(None);
+            field!((*this).pitch).write(PitchShifter::unconfigured());
+            (*field!((*this).pitch)).init(sample_rate);
+            field!((*this).pitch_index).write(2);
+            field!((*this).analyzer).write(SpectrumAnalyzer::unconfigured());
+            (*field!((*this).analyzer)).init(sample_rate);
+            (*field!((*this).analyzer)).set_hop(FFT_HOP);
+            field!((*this).detector).write(CallDetector::unconfigured());
+            (*field!((*this).detector)).init(sample_rate);
+            field!((*this).classifier).write(CallClassifier::new(sample_rate, DEFAULT_BAND_LO_HZ));
+            field!((*this).marked).write(MARKED_DEFAULT);
+            field!((*this).detected).write(false);
+            field!((*this).calls).write(Recent::new((0, CallKind::Bat)));
+            field!((*this).marks).write(Recent::new(0));
+            field!((*this).last_call).write(None);
+            field!((*this).last_call_since).write(0);
+            fill(field!((*this).wf), 0);
+            field!((*this).wf_next).write(0);
+            field!((*this).wf_column).write(0);
+            fill(field!((*this).wf_accum), f32::MIN);
+            fill(field!((*this).row_floor), -110.0);
+            field!((*this).row_floor_set).write(false);
+            field!((*this).display_offset_db).write(DEFAULT_DISPLAY_OFFSET_DB);
+            field!((*this).display_range_db).write(DEFAULT_DISPLAY_RANGE_DB);
+            field!((*this).display_per_row).write(false);
+            fill(field!((*this).history), 0);
+            fill(field!((*this).history_centre), 0);
+            field!((*this).history_next).write(0);
+            fill(field!((*this).snapshot), 0);
+            field!((*this).snapshot_hz).write((VIEW_LO_HZ, VIEW_HI_HZ));
+            field!((*this).meters).write([Meter::new(); 2]);
+            field!((*this).recording).write(false);
+            field!((*this).recorded_samples).write(0);
+            field!((*this).clock_s).write(0);
+            fill(field!((*this).mono), 0.0);
+            fill(field!((*this).out), 0.0);
+            fill(field!((*this).te_out), 0.0);
+
+            let app = &mut *this;
+            // Each call reaches about one of the comb's oscillators, and the comb
+            // scales its sum by 1 / count, so restore that to match HET's level.
+            app.comb.set_gain(COMB_COUNT as f32);
+            app.apply_settings();
+            app.apply_lowest_bat_call();
+        }
     }
 
     pub fn sample_rate(&self) -> f32 {

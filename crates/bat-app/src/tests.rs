@@ -262,3 +262,27 @@ fn switches_flip_on_a_tap_and_follow_the_wheel() {
     run(&mut app, &signal(), 4096);
     assert!(app.last_call().is_none());
 }
+
+#[test]
+fn init_in_place_over_garbage_matches_new() {
+    // Built over memory full of 0xA5 bytes, as a static might hold after a
+    // previous run, the app must behave exactly as one from new().
+    let x = signal();
+    let mut s1 = vec![0.0f32; 1024];
+    let mut fresh = BatApp::new(FS, &mut s1);
+    let out_fresh = run(&mut fresh, &x, 4096);
+
+    let mut s2 = vec![0.0f32; 1024];
+    let mut slot = std::boxed::Box::<BatApp>::new_uninit();
+    // SAFETY: filling the slot's bytes before building into it.
+    unsafe { core::ptr::write_bytes(slot.as_mut_ptr().cast::<u8>(), 0xa5, core::mem::size_of::<BatApp>()) };
+    // SAFETY: init_in_place writes every field.
+    let placed = unsafe {
+        BatApp::init_in_place(slot.as_mut_ptr(), FS, &mut s2);
+        slot.assume_init_mut()
+    };
+    let out_placed = run(placed, &x, 4096);
+    assert_eq!(out_fresh, out_placed);
+    assert_eq!(draw(&fresh), draw(placed));
+    assert_eq!(fresh.last_call(), placed.last_call());
+}
