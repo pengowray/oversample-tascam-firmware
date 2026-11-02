@@ -1,0 +1,5 @@
+# TASCAM firmware, manuals and drivers: not ours to publish
+Tascam_X8_official/
+# Unpacked images and other working files
+work/
+__pycache__/
