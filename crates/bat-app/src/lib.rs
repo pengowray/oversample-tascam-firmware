@@ -20,7 +20,8 @@ mod layout;
 pub mod palette;
 mod screen;
 
-use bat_dsp::detector::{CallDetector, CallEvent};
+use bat_dsp::classify::{CallClassifier, CallKind};
+use bat_dsp::detector::{CallDetector, CallEvent, DEFAULT_BAND_LO_HZ};
 use bat_dsp::freq_div::FrequencyDivider;
 use bat_dsp::heterodyne::{DEFAULT_COMB_SPACING_HZ, DEFAULT_CUTOFF_HZ, HetComb, Heterodyne};
 use bat_dsp::pitch_shift::PitchShifter;
@@ -212,7 +213,9 @@ pub struct BatApp<'a> {
 
     analyzer: SpectrumAnalyzer<FFT_N>,
     detector: CallDetector<FFT_N>,
-    detector_was_active: bool,
+    classifier: CallClassifier,
+    /// A bat call was confirmed in the chunk being processed.
+    bat_confirmed: bool,
     calls: Recent,
     marks: Recent,
     last_call: Option<CallEvent>,
@@ -277,7 +280,8 @@ impl<'a> BatApp<'a> {
             pitch_index: 2,
             analyzer,
             detector: CallDetector::new(sample_rate),
-            detector_was_active: false,
+            classifier: CallClassifier::new(sample_rate, DEFAULT_BAND_LO_HZ),
+            bat_confirmed: false,
             calls: Recent::new(),
             marks: Recent::new(),
             last_call: None,
@@ -467,15 +471,15 @@ impl<'a> BatApp<'a> {
             };
         }
 
+        self.bat_confirmed = false;
         self.analyse(len);
 
-        // Trigger time expansion at the start of a call.
-        let active = self.detector.is_active();
-        if active && !self.detector_was_active && self.mode == Mode::Te && matches!(self.te.state(), ExpanderState::Idle)
-        {
+        // Trigger time expansion when a bat call is confirmed. That is just
+        // after the call (the second of a train), within the 50 ms the
+        // expander keeps from before its trigger.
+        if self.bat_confirmed && self.mode == Mode::Te && matches!(self.te.state(), ExpanderState::Idle) {
             self.trigger_te();
         }
-        self.detector_was_active = active;
 
         let mono = &self.mono[..len];
         let out = &mut self.out[..len];
@@ -502,6 +506,8 @@ impl<'a> BatApp<'a> {
         let Self {
             analyzer,
             detector,
+            classifier,
+            bat_confirmed,
             mono,
             calls,
             last_call,
@@ -524,10 +530,19 @@ impl<'a> BatApp<'a> {
         } = self;
         let column_len = (*sample_rate * WF_COLUMN_MS * 0.001) as u64;
         analyzer.push(&mono[..len], |col: &Column<'_>| {
+            // Only confirmed bat calls are marked, shown and trigger time
+            // expansion; see bat_dsp::classify for what the detector also hears.
             if let Some(event) = detector.process(col) {
-                calls.push(event.start_sample);
-                *last_call = Some(event);
-                *snapshot_hz = build_snapshot(&event, *sample_rate, history, history_centre, snapshot);
+                let verdict = classifier.classify(&event);
+                if verdict.kind == CallKind::Bat {
+                    if let Some(first) = verdict.earlier {
+                        calls.push(first.start_sample);
+                    }
+                    calls.push(event.start_sample);
+                    *last_call = Some(event);
+                    *snapshot_hz = build_snapshot(&event, *sample_rate, history, history_centre, snapshot);
+                    *bat_confirmed = true;
+                }
             }
 
             // Waterfall: the loudest level per pixel over each display column.

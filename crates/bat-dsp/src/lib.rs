@@ -22,6 +22,7 @@
 extern crate std;
 
 pub mod biquad;
+pub mod classify;
 pub mod detector;
 pub mod freq_div;
 pub mod heterodyne;

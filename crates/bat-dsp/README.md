@@ -17,7 +17,8 @@ estimates from the generated code and operation counts, not measurements.
 | `time_expansion` | `TimeExpander` | Keeps a ring buffer in caller-provided storage; on a trigger, captures a window (default 50 ms before, 250 ms after) and plays it back slowed by a factor (default 10). | under 2% while playing |
 | `pitch_shift` | `PitchShifter` | Phase vocoder that divides frequencies by a factor (default 10, range 2 to 32) at real-time speed. 1024-point frames, hop 256, latency 1024 samples. | 11 to 16% |
 | `spectrum` | `SpectrumAnalyzer<N>` | Hann-windowed FFT columns in dB (N = 256, 512 or 1024), plus mapping a column to display pixels. | with the detector: 6 to 8% for N = 512, hop 128 |
-| `detector` | `CallDetector<N>` | Finds bat calls in spectrum columns against a per-bin noise floor, so steady tones and insect noise are ignored. Reports start, end, peak and frequency range of each call. | (included above) |
+| `detector` | `CallDetector<N>` | Finds calls in spectrum columns against a per-bin noise floor, so steady tones and insect noise are ignored. Reports start, end, peak, frequency range and the audible band's level during each call. | (included above) |
+| `classify` | `CallClassifier` | Sorts detections into bat calls and other sounds: broadband clicks, sounds below 20 kHz, sounds with a loud audible part, and singles; a bat call is one in a train of similar calls. | negligible |
 | `biquad`, `osc` | `Biquad`, `Butterworth4`, `Nco` | Building blocks: RBJ biquads (low-pass, high-pass, notch), 4th-order Butterworth, and a sine/cosine oscillator. | |
 
 ## Conventions

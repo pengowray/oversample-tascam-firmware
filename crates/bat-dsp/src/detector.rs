@@ -65,6 +65,9 @@ const MAX_BINS: usize = 576;
 const WORDS: usize = MAX_BINS / 64;
 /// Gaps up to this many bins inside a call's range are bridged.
 const RANGE_GAP_BINS: usize = 2;
+/// The audible band checked during a call: bats are silent here, while
+/// birds, voices, footsteps, pecking and other everyday sounds are not.
+pub const AUDIBLE_BAND_HZ: (f32, f32) = (2_000.0, 12_000.0);
 
 /// Time after construction or reset during which the detector only learns
 /// the floor and reports nothing.
@@ -86,6 +89,11 @@ pub struct CallEvent {
     pub peak_freq_hz: f32,
     /// How far the call rose above the floor at that frequency, in dB.
     pub peak_db_above_floor: f32,
+    /// How far the audible band ([`AUDIBLE_BAND_HZ`]) rose above its own
+    /// floor during the call, averaged across the band, in the loudest
+    /// column. Near 0 for a bat call; high when an audible sound came at the
+    /// same moment, which usually means the detection was that sound.
+    pub audible_db_above_floor: f32,
     /// Lowest bin frequency of the call's range: the unbroken stretch of
     /// frequencies through the peak that came within the range setting
     /// (default 20 dB) of the peak, and above the threshold, during the call.
@@ -119,6 +127,8 @@ struct Call {
     peak_freq_hz: f32,
     /// Bin of the peak.
     peak_bin: usize,
+    /// Highest average excess across the audible band in any column.
+    audible_db: f32,
     /// For each level, the bins whose averaged excess reached
     /// `threshold_db + level * RANGE_STEP_DB` in any column of the call, as a
     /// bit set.
@@ -141,6 +151,7 @@ impl Call {
             peak_db: f32::MIN,
             peak_freq_hz: 0.0,
             peak_bin: 0,
+            audible_db: f32::MIN,
             reached: [[0; WORDS]; RANGE_LEVELS],
         }
     }
@@ -516,6 +527,16 @@ where
             call.peak_bin = scan.peak_bin;
             call.peak_freq_hz = peak_position(db, scan.peak_bin) * bin_hz;
         }
+        // Average excess across the audible band.
+        let (a0, a1) = (
+            (AUDIBLE_BAND_HZ.0 / bin_hz) as usize,
+            ((AUDIBLE_BAND_HZ.1 / bin_hz) as usize).min(N / 2),
+        );
+        if a1 > a0 {
+            let (mean, spread) = (self.mean.as_ref(), self.spread.as_ref());
+            let sum: f32 = (a0..a1).map(|k| db[k] - mean[k] - spread[k]).sum();
+            call.audible_db = call.audible_db.max(sum / (a1 - a0) as f32);
+        }
         let (lo, hi) = self.band_bins;
         for (k, &e) in excess.iter().enumerate().take(hi + 1).skip(lo) {
             if e > threshold {
@@ -580,6 +601,7 @@ where
             end_sample: c.end,
             peak_freq_hz: c.peak_freq_hz,
             peak_db_above_floor: c.peak_db,
+            audible_db_above_floor: c.audible_db,
             min_freq_hz: a as f32 * self.bin_hz,
             max_freq_hz: b as f32 * self.bin_hz,
         })

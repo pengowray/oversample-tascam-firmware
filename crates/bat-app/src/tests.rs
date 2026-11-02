@@ -29,11 +29,15 @@ fn noise(amp: f32, n: usize) -> Vec<f32> {
         .collect()
 }
 
-/// One second of noise with a 5 ms call at 0.5 s, on both inputs.
+/// One second of noise with a train of three 5 ms calls, 80 ms apart from
+/// 0.5 s, on both inputs. A single call is not shown: it takes a train.
 fn signal() -> Vec<f32> {
     let mut x = noise(0.003, FS as usize);
-    for (v, c) in x[96_000..].iter_mut().zip(chirp(80_000.0, 40_000.0, 0.1, 960)) {
-        *v += c;
+    for k in 0..3 {
+        let at = 96_000 + k * 15_360;
+        for (v, c) in x[at..].iter_mut().zip(chirp(80_000.0, 40_000.0, 0.1, 960)) {
+            *v += c;
+        }
     }
     x
 }
@@ -123,4 +127,16 @@ fn block_size_does_not_change_the_output() {
     let mut a = BatApp::new(FS, &mut s1);
     let mut b = BatApp::new(FS, &mut s2);
     assert_eq!(run(&mut a, &x, 4096), run(&mut b, &x, 333));
+}
+
+#[test]
+fn a_single_call_is_not_shown_as_a_bat() {
+    let mut storage = vec![0.0f32; 1024];
+    let mut app = BatApp::new(FS, &mut storage);
+    let mut x = noise(0.003, FS as usize);
+    for (v, c) in x[96_000..].iter_mut().zip(chirp(80_000.0, 40_000.0, 0.1, 960)) {
+        *v += c;
+    }
+    run(&mut app, &x, 4096);
+    assert!(app.last_call().is_none());
 }

@@ -7,6 +7,7 @@
 //! file), then a summary. A call whose range reaches 25 kHz or more below its
 //! peak is marked "wide": usually a separate sound at the same moment.
 
+use bat_dsp::classify::{CallClassifier, CallKind};
 use bat_dsp::detector::CallDetector;
 use bat_dsp::spectrum::SpectrumAnalyzer;
 
@@ -54,6 +55,25 @@ fn main() {
     events.extend(detector.flush());
 
     let s = |x: u64| x as f32 / fs;
+    if let Ok(path) = std::env::var("CSV") {
+        use std::io::Write;
+        let mut f = std::fs::File::create(path).expect("create csv");
+        writeln!(f, "start_s,length_ms,peak_khz,min_khz,max_khz,db,audible_db").unwrap();
+        for e in &events {
+            writeln!(
+                f,
+                "{:.4},{:.2},{:.2},{:.2},{:.2},{:.1},{:.1}",
+                s(e.start_sample),
+                (s(e.end_sample) - s(e.start_sample)) * 1000.0,
+                e.peak_freq_hz / 1000.0,
+                e.min_freq_hz / 1000.0,
+                e.max_freq_hz / 1000.0,
+                e.peak_db_above_floor,
+                e.audible_db_above_floor
+            )
+            .unwrap();
+        }
+    }
     let mut wide = 0;
     let mut shown = 0;
     for e in &events {
@@ -75,6 +95,34 @@ fn main() {
         }
     }
     println!("{} calls in the file, {} shown, {} wide", events.len(), shown, wide);
+
+    // Sort the detections as the bat app does.
+    let (band_lo, _) = detector.band();
+    let mut classifier = CallClassifier::new(fs, band_lo);
+    let mut kinds: std::collections::BTreeMap<String, i64> = std::collections::BTreeMap::new();
+    let mut bats: Vec<u64> = Vec::new();
+    for e in &events {
+        let v = classifier.classify(e);
+        *kinds.entry(format!("{:?}", v.kind)).or_insert(0) += 1;
+        if let Some(first) = v.earlier {
+            bats.push(first.start_sample);
+        }
+        if v.kind == CallKind::Bat {
+            bats.push(e.start_sample);
+        }
+    }
+    // A train's first call is reported as Single, then handed back as a bat
+    // call when the second arrives.
+    let handed_back = bats.len() as i64 - kinds.get("Bat").copied().unwrap_or(0);
+    *kinds.entry("Single".to_string()).or_insert(0) -= handed_back;
+    kinds.insert("Bat".to_string(), bats.len() as i64);
+    println!("by kind: {kinds:?}");
+    let minutes = s(events.last().map_or(0, |e| e.end_sample)) / 60.0;
+    println!("bat calls: {} ({:.1} a minute)", bats.len(), bats.len() as f32 / minutes.max(1e-6));
+    if let Ok(path) = std::env::var("BATS") {
+        let list: Vec<String> = bats.iter().map(|&t| format!("{:.4}", s(t))).collect();
+        std::fs::write(path, list.join("\n")).expect("write bats");
+    }
 
     // How the calls spread by peak frequency and by length.
     let bands = [(0.0, 20.0), (20.0, 30.0), (30.0, 40.0), (40.0, 60.0), (60.0, 200.0)];
