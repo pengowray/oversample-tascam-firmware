@@ -522,6 +522,12 @@ dependencies = [
 [[package]]
 name = "x8-patch"
 version = "0.1.0"
+dependencies = [
+ "bat-app",
+ "bat-dsp",
+ "embedded-graphics",
+ "u8g2-fonts",
+]
 
 [[package]]
 name = "zlib-rs"

@@ -10,3 +10,9 @@ publish = false
 name = "x8-patch"
 test = false
 bench = false
+
+[dependencies]
+bat-dsp = { path = "../bat-dsp" }
+bat-app = { path = "../bat-app" }
+embedded-graphics = "0.8.2"
+u8g2-fonts = "0.8.0"

@@ -331,7 +331,17 @@ The FPGA configuration data has not been located. The standard Lattice bitstream
 preamble (0xFFFFBDB3) does not appear in the flash image, so the data is probably
 stored as raw configuration flash pages.
 
-## Step 3 test file: patch code runs on a key press (built 2026-11-02, not yet installed)
+## Step 3 test file: patch code runs on a key press (installed 2026-11-02: works)
+
+**Result.** Installed on the user's X8 on 2026-11-02. The bar appeared and
+flickered from the end of the boot screen onwards, over the main menu and in
+the apps, with no key pressed; everything kept working (apps open, buttons
+work) and nothing crashed. Opening the HOLD dialog paused it. So the stock
+"key handler" is called by task 1 for every message it handles, not only key
+presses, many times a second, and it is the launcher's handler as well as the
+apps'; the HOLD dialog installs its own handler while it is up. Patch code at
+0x81830000 runs, and the hook is a regular call in task 1 that a patch can use
+for its own screen updates.
 
 The first file with patch code in it: `work/patch/#PortaX8_0219.203`, built by
 `tools/x8patch.py` from the `crates/x8-patch` crate (SHA-256 `3efd237c…ede5ffec`).
@@ -382,6 +392,39 @@ official `#PortaX8_0217.203` from the `UTILITY` folder. Update mode does not run
 the patch. The power button is read by the same task as the other buttons, so
 if that task hangs the unit may not turn off: then remove the batteries and USB
 power, and do the HOME and REC recovery.
+
+## Step 4 test file: live heterodyne (built 2026-11-02, not yet installed)
+
+`work/patch2/#PortaX8_0220.203` (B220, SHA-256 `7e06ff40…c2b00b0b`), built the
+same way from `crates/x8-patch` (header version 2, 43.7 KB including fonts). The
+updater writes the same sectors as for the official file.
+
+- `key_hook` (still the key handler word) checks the system mode, then on its
+  first call after the stock audio setup replaces the audio DMA callback (the
+  word at 0x2001024c, checked to hold 0x2adfd first) with `audio_hook`.
+- `audio_hook` reads the ring index, calls the stock callback, then, at 192 kHz
+  with the heterodyne on, mixes inputs 3 and 4 (words 12k and 12k + 6) for the
+  4 frames, heterodynes them (45 kHz to start, bat-dsp's `Heterodyne`), gains
+  them by 8 with a ceiling of -6 dBFS, multiplies by the stock headphone gain
+  (0x29ed8, so the volume setting and mute still apply) and writes both output
+  words of each frame.
+- Three MARK presses within 1.5 s toggle the heterodyne. While it is on, the
+  wheel tunes it in 1 kHz steps (15 to 95 kHz) and those turns are swallowed.
+- A 13-pixel status strip across the top shows: heterodyne state and
+  frequency, whether the audio callback was replaced, the rate class (2 is
+  176.4/192 kHz), how many times a second the key hook runs, and the last
+  input event (kind and code: kind 0 code 2b is MARK, kind 2 is the wheel).
+
+**What to expect.** The status strip from the end of the boot screen on,
+flickering, saying "audio hooked". In MANUAL set to 192 kHz with microphones on
+inputs 3 and 4: "rate 2"; three quick MARK presses turn "HET ON" and the
+headphones play the heterodyned inputs; the wheel changes the kHz shown and the
+pitch; three more MARK presses turn it off and the stock monitoring returns.
+Start with the headphone volume low.
+
+**If it goes wrong.** As for step 3. The audio callback runs about 48,000 times
+a second, so a fault there would show as a freeze as soon as the patch installs
+it (about when the launcher appears).
 
 ## Firmware map (V2.03, in progress)
 
