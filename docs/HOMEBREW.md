@@ -328,6 +328,50 @@ The FPGA configuration data has not been located. The standard Lattice bitstream
 preamble (0xFFFFBDB3) does not appear in the flash image, so the data is probably
 stored as raw configuration flash pages.
 
+## Firmware map (V2.03, in progress)
+
+Found with `tools/x8ram.py` (unpacks the RAM runs) and a headless Ghidra 10.4
+project set up by `tools/ghidra/x8_setup.py`; `tools/ghidra/q.sh` decompiles
+functions and lists references from the command line. Ghidra's auto-analysis of
+the whole application takes about 20 minutes.
+
+**RAM at start-up** (from IAR's init table at 0x817847ac): ITCM code
+0x400 to 0x31a92 (202 KB, includes the RTOS's PendSV and SysTick handlers, the
+eDMA interrupt handlers and the audio processing), DTCM data from 0x20000000,
+initialised SDRAM data at 0x81900000, and seven zeroed ranges, including the
+framebuffers at 0x87e00000.
+
+**Display.** The LCDIF is set up by the function at 0x80e2b82c: 320 x 480,
+RGB565 (the format the bat app draws), first buffer at 0x87e00000. The zeroed
+range there is 681 KB, room for two 300 KB frames. The LCDIF interrupt
+(0x80e2b7c8) counts finished frames at 0x81910748; the function at 0x80e2b574
+waits for the PXP and sets the next buffer. Qt for MCUs draws through the PXP.
+
+**Audio.** All the audio runs through SAI1, set up by the ITCM function at
+0x2aa48:
+
+| What | Where |
+|---|---|
+| Input DMA | eDMA channel 9 (DMAMUX source 19, SAI1 receive) from RDR0 (0x403840a0), 12 bytes per request, into three 384-byte blocks at 0x2000e340 |
+| Output DMA | eDMA channel 8 (DMAMUX source 20, SAI1 transmit) from three 64-byte blocks at 0x200104c0 to TDR0 (0x40384020) |
+| DMA descriptors | Scatter-gather rings in OCRAM: input at 0x20204000, output at 0x20204c00 |
+| eDMA handles | `s_EDMAHandle[]` at 0x20010628; the channel 8 and 9 handles at 0x20010234 and 0x2001024c (callback pointer first, then user data) |
+| Audio callback | 0x2adfc (ITCM), registered on channel 9 by `EDMA_SetCallback`. Each time an input block arrives it runs one processing routine on that block and the output block after the one playing, then moves both ring indices on (they are at 0x20010264 and 0x20010268) |
+| Processing routines | Chosen by a mode byte at 0x2a2ca: 2 runs 0x12368, 3 runs 0x13a68, 4 runs 0x81595d34, 5 runs 0x81337020, 6 runs 0x12a90, anything else runs 0x11380 (the largest, about 800 lines of floating-point code). A second byte at 0x2a2cb, probably the sample rate class, sets 8 or 16 descriptors per input block |
+| Who sets the modes | ITCM functions at 0x158b8, 0x15c78, 0x15d7a and 0x15f50 |
+
+**Hook idea.** The audio callback is a pointer in RAM (the channel 9 handle at
+0x2001024c), not in code. Patched code that runs once the audio is set up could
+store its own function there: one that calls the stock callback and then runs
+the bat DSP on the same input block, writing the headphone part of the output
+block. That needs no change to the packed ITCM code. Still to find: which input
+slots hold inputs 3 and 4 (and at which gain), which output slots go to the
+headphones, the block length in frames at 192 kHz, and stock code that runs
+regularly (or when an app opens) to install the hook from.
+
+**Not mapped yet:** the buttons, the wheel and the touch screen; the recording
+apps' screens; the WAV writer.
+
 ## Keeping the bricking risk low
 
 **What can still brick a unit, even when following the rules below:**
