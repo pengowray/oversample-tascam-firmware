@@ -803,8 +803,35 @@ polls them all, every 3 RTOS ticks (tick length not confirmed).
 0x80dfbe94 installs the update screen's key handler in the same slot. A hook in
 any of them must check the system mode byte first (rule 2 below).
 
-**Not mapped yet:** the recording apps' screens beyond the app number; the WAV
-writer; how to start a new RTOS task (the task table is near 0x8131db00).
+**Apps and the launcher** (details in `work/notes/launcher.md`; the TUNER
+tile code at 0x81732be8 checked). The launcher's tiles are compiled Qt code:
+a ninth entry is not possible without code, but a tile's label is data (the
+per-language pointers at 0x813b0e48) and each tile's handler ends by calling
+0x80d6946c(bridge, 6, n, 0) (TUNER: n = 7, at 0x81732c08, then `b.w` at
+0x81732c10). The C core keeps the current app in the byte at **0x81e8ca90**
+(settings+0x214), in its own numbering: 0 launcher, 1 ASMR, 2 MANUAL, 3 MUSIC,
+4 VOICE, 5 FIELD, 6 PODCAST, 7 TUNER, 8 METRONOME, 9 POCKET STUDIO, 10 and 11
+its tuner and metronome (MANUAL, MUSIC, FIELD, TUNER, METRONOME and POCKET
+STUDIO firm; ASMR, VOICE and PODCAST from indirect evidence). The settings load
+writes it too, so a patch should poll it. Recording only works in the
+recording apps (C 1 to 6 and 9); TUNER runs its own DSP mode and cannot
+record. The sample rate is one global setting. Holding HOME (code 0xae) sends
+the launcher's number (0); a short HOME press only stops the transport.
+
+**Recording** (details in `work/notes/recording.md`). The recorder state is
+the byte at **0x8196a3e5**: 0 stopped, 2 standby, 3 recording, 4 paused, 5
+closing the file, 7 leaving standby, 8 self-timer (1 and 6 medium
+confidence). The frames in the current take are `[0x819140c4] + [0x81914178]
+- [0x81913f60]` (or the frozen copy at 0x8191448c when the byte at 0x81913f70
+is non-zero), at `[0x81914120]` Hz; the record rate setting in Hz is at
+0x81cbe678. From record standby until the take ends, the stock firmware
+installs a separate key handler for the recording screen, 0x80dd3f9d, from the
+literal at **0x80dd3a24** (the only place it occurs), so the app key handler
+hook does not see keys while recording; that literal can be redirected the same
+way. MARK's pop-up codes are the CAUTION message number + 4: 7 "No File",
+9 "No Card", 0x1e "File Protected", 0x1f "File Length", 0x15 "MARK FULL".
+
+**Not mapped yet:** how Qt reads the recording time; the WAV writer.
 
 ## Keeping the bricking risk low
 
