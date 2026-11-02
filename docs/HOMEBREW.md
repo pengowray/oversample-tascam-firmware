@@ -79,8 +79,32 @@ The updater's error messages, from the main application's strings:
 | ERROR 99 | Flash Verify Error |
 | ERROR 100 | Update File Error |
 
-The updater rejects older firmware with "Old Version". The exact rule is unknown,
-so give a patched update file a higher build number than the installed firmware.
+**The version check (found in V2.03).** The function at 0x80e23dd0 checks an
+update file's 32-byte header. It accepts two names: `DR-TURBO`, the main
+firmware, and `TURBOCPL`, another part not yet identified. It checks that the
+total length field matches the file's size. For `DR-TURBO` it then compares the
+header's version (bytes 8 and 9, big-endian) with the version compiled into the
+running firmware (a RAM structure returned by 0x80de7ec4; all 15 uses of it only
+read it), and refuses the file if its version is lower (code at 0x80e23e60). The
+three refusals return -9 (unknown name), -7 (wrong length) and -8 (lower
+version); -8 is almost certainly ERROR 94 Old Version. **The build number is never
+compared;** it is only shown on the update screen (`B%03d`, code at
+0x80dfc4f8). The checksum is checked elsewhere.
+
+What this means:
+
+- An update file with the same version as the installed firmware is always
+  accepted, whatever its build. The official V2.03 file can be installed again
+  over any patched V2.03.
+- A patched file that keeps the image's own version (203) leaves the official file
+  installable afterwards, because the version check reads the running image, not
+  the last file's header.
+- An older release, such as V2.01 over V2.03, is refused, unless it is repacked
+  with a header version of 203 or more. After that, the unit reports V2.01 and
+  takes V2.03 again normally. This has not been tried.
+- If Tascam releases V2.04 and a unit has it, a patch built on V2.03 needs a header
+  version of 204 or more to install. The image would still report V2.03, so V2.04
+  would install over it again.
 
 ### Tool
 
@@ -121,7 +145,7 @@ a repacked update file, and one to put the stock firmware back.
 | File | What it is | SHA-256 |
 |---|---|---|
 | `work/test-update/#PortaX8_0218.203` | V2.03 with "TUNER" changed to "SONAR" in two places, build 218 | `2f8c67fa…ed96ae25` |
-| `work/recovery/#PortaX8_0219.203` | V2.03 unchanged, build 219 | `af92b2f9…a65826ba` |
+| `work/recovery/#PortaX8_0219.203` | V2.03 unchanged, build 219. Not needed: the official file `#PortaX8_0217.203` does the same job, since only the version is compared | `af92b2f9…a65826ba` |
 
 The two changed strings, 5 bytes each, no code:
 
@@ -140,10 +164,9 @@ MUSIC app (offset 0x13d259c), is left as it is.
 **The INFORMATION screen should still show V2.03.** The image holds its own
 version and build as numbers (203 and 217, big-endian, at offset 0x20400), and
 the test file leaves them alone; only the update file's header says 218. So
-SONAR, not the version shown, is the sign that the test worked. Whether the
-updater compares a new file with those numbers or with the last file installed
-is unknown, so whether the official build 217 file is accepted again afterwards
-is unknown too; the recovery file (build 219) avoids the question.
+SONAR, not the version shown, is the sign that the test worked. Because the
+updater compares only versions, the official V2.03 file installs over the test
+firmware afterwards.
 
 Checked before installing: unpacking the test file gives the official flash image
 with only those letters and the last byte of the trailer sum changed, and the
@@ -177,17 +200,17 @@ To install one, following Tascam's update procedure:
    file) before going on.
    If it shows ERROR 94 (Old Version), ERROR 95 (Checksum Error) or ERROR 100
    (Update File Error) instead, turn the unit off: nothing has been written yet.
-   ERROR 94 would mean the updater compares something other than the build
-   number; ERROR 95 or 100 would mean it checks more than sum32. Either is worth
-   reporting here before trying anything else.
+   ERROR 94 would mean the version check found in the code is not the whole
+   rule; ERROR 95 or 100 would mean the updater checks more than sum32 and the
+   length. Either is worth reporting here before trying anything else.
 6. Press MARK again to install. Don't touch the power or the card until the unit
    turns itself off. Errors 96 to 99 (flash erase, blank, write and verify) come
    during writing; after one of those the unit may need hardware recovery.
 7. Delete the file from the `UTILITY` folder afterwards.
 
-Then install the recovery file the same way. If the tuner's name goes back to
-TUNER, recovery from the SD card is proven on that unit. Any later patched file
-needs build 220 or higher.
+Then install the official file, `#PortaX8_0217.203`, the same way. If the tuner's
+name goes back to TUNER, going back to stock from the SD card is proven on that
+unit.
 
 
 
@@ -325,9 +348,9 @@ stored as raw configuration flash pages.
    SD card. If the bat app crashes the unit, take the card out, delete the file on a
    computer, and the unit starts as stock.
 4. Never write to flash from patched code.
-5. Keep an official update file on the SD card, repacked with a build number higher
-   than the patched firmware's, ready to install from update mode. Whether the
-   updater accepts an equal or lower build number is not known yet.
+5. Keep the official update file on the SD card's computer copy, ready to install
+   from update mode. It installs over a patched image with the same version (see
+   the version check under [Update file format](#update-file-format)).
 6. Install updates on USB power, not batteries.
 7. Optionally, run the hook code in an emulator (for example Unicorn) on the real
    firmware image before flashing it, to catch crashes on a desktop.
@@ -409,10 +432,10 @@ with the flash image from `x8fw.py unpack`.
 
 **Step 2: a patch with no code change.** Change one visible string, raise the build
 number, pack the update file with `x8fw.py pack --base`, and install it with the
-official update procedure. The files are built; see [Step 2 test
-files](#step-2-test-files-built-2026-11-02-not-yet-installed). This confirms that the updater accepts a repacked update
-file. Then install the official image repacked with a still higher build number, to
-prove the SD card recovery path.
+official update procedure. This confirms that the updater accepts a repacked update
+file. Then install the official file again, to prove the SD card recovery path. The
+files are built; see [Step 2 test
+files](#step-2-test-files-built-2026-11-02-not-yet-installed).
 
 **Step 3: add code.**
 

@@ -259,7 +259,7 @@ In order of value:
 | Where the two gain paths are combined (FPGA or processor) | Decides where the bat code reads samples | Firmware analysis, or ask Tascam |
 | Display resolution and framebuffer format | Needed for the waterfall | Firmware analysis, or ask Tascam |
 | A hardware recovery path | Needed if an update is interrupted; a backstop for patch testing | Open a unit and look for SWD pads and BOOT_MODE resistors; or ask Tascam |
-| Whether SD card recovery works after a patched update | Makes code patches low risk | Install a string-only patch, then the official file repacked with a higher build number |
+| Whether SD card recovery works after a patched update | Makes code patches low risk | Install a string-only patch, then the official file again (the updater compares only the version, so it is accepted) |
 
 ## Milestones
 

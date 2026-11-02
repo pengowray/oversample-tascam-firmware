@@ -216,7 +216,8 @@ def main(argv):
     a.add_argument("update")
     a.add_argument("--base", help="official update file the image was patched from; enables the safety checks")
     a.add_argument("--version", type=int, help="e.g. 203 for V2.03 (default: the base file's)")
-    a.add_argument("--build", type=int, required=True, help="must be higher than the installed firmware's build")
+    a.add_argument("--build", type=int, required=True,
+                   help="shown on the update screen; the updater does not compare it, so use a new number to tell files apart")
     a.add_argument("--date", help="YYYY-MM-DD (default: the base file's)")
     a.add_argument("--allow-boot-path", action="store_true",
                    help="allow changes to start-up and update-mode code (the bootloader stays refused)")
@@ -257,9 +258,16 @@ def main(argv):
             return 1
         version = args.version if args.version is not None else base_info["version"]
         date = args.date or base_info["date"]
-        if (version, args.build) <= (base_info["version"], base_info["build"]):
-            print(f"warning: version {version} build {args.build} is not higher than the base file's; "
-                  "the updater may reject it as Old Version")
+        # The updater refuses a file whose version is lower than the running
+        # firmware's own version (V2.03 code at 0x80e23e60); the build is not
+        # compared. Keeping the base file's version lets the official file
+        # be installed again afterwards.
+        if version < base_info["version"]:
+            print(f"warning: version {version} is lower than the base file's {base_info['version']}; "
+                  "a unit running the base firmware will refuse it as Old Version")
+        elif version > base_info["version"]:
+            print(f"note: version {version} is higher than the base file's; the image itself still reports "
+                  f"{base_info['version']}, so the official file stays installable afterwards")
     elif args.cmd == "diff":
         print("diff needs an official update file as the first argument")
         return 1
