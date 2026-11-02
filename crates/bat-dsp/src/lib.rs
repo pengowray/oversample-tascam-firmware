@@ -32,3 +32,6 @@ pub mod time_expansion;
 
 #[cfg(test)]
 pub(crate) mod test_util;
+
+#[cfg(test)]
+mod pipeline_tests;

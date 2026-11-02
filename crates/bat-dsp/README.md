@@ -60,9 +60,20 @@ maths uses the hardware FPU. Add the target once with
 - **Call detector:** a call is reported 2 ms (the merge gap) after it ends. A steady
   sound that switches on keeps `is_active()` true for up to 100 ms before it
   counts as background. Digital silence followed by sound gives one false event.
+  A loud call with an abrupt start or end reports a frequency range much wider
+  than the call (25 to 95 kHz for a 40 to 80 kHz sweep 42 dB above the floor),
+  because the FFT window's side lobes also clear the threshold. Measuring the
+  range relative to each column's peak would fix this.
 - **Frequency division:** the noise floor starts high, so the divider is silent
   for about 0.1 s after construction or reset. A steady tone lasting several
   seconds eventually counts as noise.
+
+## Tests
+
+Each module has its own tests, and `pipeline_tests.rs` chains the spectrum
+analyzer, the call detector and the time expander as the X8 app will: a 5 ms
+sweep in noise is detected once, triggers the expander within a few
+milliseconds, and plays back 10 times slower and lower.
 
 ## Next
 
