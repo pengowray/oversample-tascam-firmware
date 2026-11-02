@@ -61,7 +61,11 @@ fn a_detected_call_triggers_time_expansion_and_plays_back_10_times_slower() {
     let ms = |s: u64, at: usize| (s as f32 - at as f32) / FS * 1000.0;
     assert!(ms(ev.start_sample, call_at).abs() < 2.0, "start off by {} ms", ms(ev.start_sample, call_at));
     assert!(ms(ev.end_sample, call_at + call_len).abs() < 2.0, "end off by {} ms", ms(ev.end_sample, call_at + call_len));
-    assert!((ev.min_freq_hz - 40_000.0).abs() < 5_000.0 && (ev.max_freq_hz - 80_000.0).abs() < 5_000.0, "{ev:?}");
+    // The range covers the part of the sweep within 20 dB of its peak. With
+    // this envelope, the first and last 10% of the sweep are more than 20 dB
+    // down, so that is about 44 to 76 kHz.
+    assert!((40_000.0..48_000.0).contains(&ev.min_freq_hz), "{ev:?}");
+    assert!((72_000.0..80_000.0).contains(&ev.max_freq_hz), "{ev:?}");
 
     // The detector became active within a few milliseconds of the call starting.
     let trig = r.trigger_block.expect("expander was never triggered");
