@@ -3,3 +3,4 @@ Tascam_X8_official/
 # Unpacked images and other working files
 work/
 __pycache__/
+target/
