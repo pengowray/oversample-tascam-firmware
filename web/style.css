@@ -55,10 +55,15 @@ header p { margin: 4px 0 0; color: var(--muted); }
 main {
   display: grid;
   grid-template-columns: max-content minmax(280px, 420px);
-  gap: 24px;
+  grid-template-areas: "device input" "device settings";
+  grid-template-rows: auto 1fr;
+  gap: 16px 24px;
   padding: 16px 24px 24px;
   align-items: start;
 }
+.device { grid-area: device; }
+.panel.input { grid-area: input; }
+.panel.settings { grid-area: settings; }
 
 .device {
   background: var(--device);
@@ -154,14 +159,18 @@ input[type="radio"], input[type="checkbox"] { accent-color: var(--accent); width
 .keys { border-collapse: collapse; width: 100%; }
 .keys td { padding: 3px 8px 3px 0; vertical-align: top; }
 .keys td:first-child { white-space: nowrap; width: 1%; }
+.swatch { display: inline-block; width: 18px; height: 4px; vertical-align: middle; }
+.swatch.dashed { background: repeating-linear-gradient(90deg, #0092e5 0 4px, transparent 4px 8px); }
+.swatch.resistor { background: linear-gradient(90deg, #ff0000 0 25%, #ffa500 25% 50%, #ffff00 50% 75%, #008000 75%); }
 
 body.dropping main { outline: 3px dashed var(--accent); outline-offset: -8px; }
 
 @media (max-width: 760px) {
   header, main { padding-left: 16px; padding-right: 16px; }
-  main { grid-template-columns: 1fr; }
+  /* On a phone, the input comes first: opening a file is the first thing to do. */
+  main { grid-template-columns: 1fr; grid-template-areas: "input" "device" "settings"; grid-template-rows: auto; }
   .device { grid-template-columns: 1fr; justify-items: center; width: auto; }
   .controls .hw button { width: auto; }
   .controls { grid-auto-flow: row; }
-  .controls .hw { flex-direction: row; flex-wrap: wrap; justify-content: center; }
+  .controls .hw { display: grid; grid-template-columns: 1fr 1fr; }
 }

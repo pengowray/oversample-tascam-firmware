@@ -45,12 +45,13 @@ pub const SNAP_VALUE_X: i32 = 222;
 /// The current mode's setting.
 pub const VALUE_BASELINE: i32 = 420;
 
-/// Mode buttons along the bottom: 60 × 46 px each.
+/// Mode buttons along the bottom: 59 × 46 px each, spanning the same
+/// 6..314 px as the panels above them.
 pub const BUTTONS_Y: i32 = 430;
-pub const BUTTON_W: i32 = 60;
+pub const BUTTON_W: i32 = 59;
 pub const BUTTON_H: i32 = 46;
-const BUTTON_X0: i32 = 4;
-const BUTTON_PITCH: i32 = 63;
+const BUTTON_X0: i32 = 6;
+const BUTTON_PITCH: i32 = 62;
 
 pub fn mode_button(i: usize) -> Rectangle {
     Rectangle::new(

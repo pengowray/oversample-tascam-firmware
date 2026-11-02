@@ -51,6 +51,11 @@ function screenPoint(ev) {
   const r = canvas.getBoundingClientRect();
   return [Math.floor((ev.clientX - r.left) * W / r.width), Math.floor((ev.clientY - r.top) * H / r.height)];
 }
+// Show a pointer where a tap does something (mode buttons; the waterfall in HET and COMB).
+canvas.addEventListener('pointermove', (ev) => {
+  const [x, y] = screenPoint(ev);
+  canvas.style.cursor = emu.is_tappable(x, y) ? 'pointer' : 'default';
+});
 canvas.addEventListener('pointerdown', (ev) => {
   resumeAudio();
   const [x, y] = screenPoint(ev);
@@ -137,7 +142,7 @@ $('volume').addEventListener('input', setVolume);
 setVolume();
 
 setInterval(() => {
-  $('load').textContent = `Processing uses ${Math.round(load * 100)}% of real time on this computer.`;
+  if (load > 0) $('load').textContent = `This computer runs the bat app ${Math.round(1 / load)} times faster than real time.`;
 }, 500);
 
 // ---- Inputs -----------------------------------------------------------------
@@ -145,6 +150,10 @@ setInterval(() => {
 function fmt(seconds) {
   const s = Math.floor(seconds);
   return `${Math.floor(s / 60)}:${String(s % 60).padStart(2, '0')}`;
+}
+// Length of a file: seconds with a tenth below a minute, else m:ss.
+function length(seconds) {
+  return seconds < 60 ? `${seconds.toFixed(1)} s` : fmt(seconds);
 }
 
 async function openFile(name, arrayBuffer) {
@@ -172,9 +181,11 @@ async function openFile(name, arrayBuffer) {
   pos = 0;
   source = 'file';
   playing = true;
-  const channels = buffer.numberOfChannels > 1 ? 'stereo, channels 1 and 2 as inputs 3 and 4' : 'mono, used for inputs 3 and 4';
-  $('input-status').textContent = `${name}: ${fmt(buffer.duration)}, ${channels}.`;
+  const channels = buffer.numberOfChannels > 1 ? 'stereo' : 'mono, played as both inputs';
+  $('input-status').textContent = `${name}, ${length(buffer.duration)}, ${channels}.`;
   $('transport').hidden = false;
+  // Once a file is open, opening another is no longer the main action.
+  $('file').parentElement.classList.remove('primary');
 }
 
 $('file').addEventListener('change', async (ev) => {
@@ -233,7 +244,7 @@ function stopMic() {
   if (source === 'mic') {
     source = file ? 'file' : 'none';
     $('transport').hidden = !file;
-    $('input-status').textContent = file ? `${file.name}: ${fmt(file.length / RATE)}.` : 'No input yet. Open a file, drop one on the page, or use the microphone.';
+    $('input-status').textContent = file ? `${file.name}, ${length(file.length / RATE)}.` : 'No input yet. Open a file, drop one on the page, or use the microphone.';
   }
 }
 

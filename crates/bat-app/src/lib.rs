@@ -52,6 +52,12 @@ const FFT_HOP: usize = 128;
 /// Detector columns kept for call snapshots: 256 × 0.67 ms = 170 ms, longer
 /// than the longest call the detector reports (100 ms).
 const HISTORY: usize = 256;
+/// Bins per spectrum column.
+const BINS: usize = FFT_N / 2 + 1;
+/// A snapshot shows the call's own frequency range plus this much either
+/// side, and at least `SNAP_MIN_SPAN_HZ` in all.
+const SNAP_FREQ_MARGIN_HZ: f32 = 5_000.0;
+const SNAP_MIN_SPAN_HZ: f32 = 20_000.0;
 /// Audio is processed in pieces of this many samples.
 const CHUNK: usize = 256;
 /// Margin shown either side of a call in its snapshot.
@@ -216,12 +222,15 @@ pub struct BatApp<'a> {
     /// Display floor in dB, following the background level.
     floor_db: f32,
 
-    /// The last `HISTORY` detector columns at snapshot height, for snapshots.
-    history: [u8; HISTORY * SNAP_H],
+    /// The last `HISTORY` detector columns, every bin as a level, for
+    /// snapshots.
+    history: [u8; HISTORY * BINS],
     history_centre: [u64; HISTORY],
     history_next: usize,
-    /// The last call, stretched to the snapshot's width, column-major.
+    /// The last call, scaled to the snapshot's size, column-major, and the
+    /// frequency range it shows.
     snapshot: [u8; SNAP_W * SNAP_H],
+    snapshot_hz: (f32, f32),
 
     meters: [Meter; 2],
     recording: bool,
@@ -265,10 +274,11 @@ impl<'a> BatApp<'a> {
             wf_column: 0,
             wf_accum: [f32::MIN; WF_H],
             floor_db: -110.0,
-            history: [0; HISTORY * SNAP_H],
+            history: [0; HISTORY * BINS],
             history_centre: [0; HISTORY],
             history_next: 0,
             snapshot: [0; SNAP_W * SNAP_H],
+            snapshot_hz: (VIEW_LO_HZ, VIEW_HI_HZ),
             meters: [Meter::new(); 2],
             recording: false,
             recorded_samples: 0,
@@ -488,6 +498,7 @@ impl<'a> BatApp<'a> {
             history_centre,
             history_next,
             snapshot,
+            snapshot_hz,
             sample_rate,
             ..
         } = self;
@@ -496,7 +507,7 @@ impl<'a> BatApp<'a> {
             if let Some(event) = detector.process(col) {
                 calls.push(event.start_sample);
                 *last_call = Some(event);
-                build_snapshot(&event, *sample_rate, history, history_centre, snapshot);
+                *snapshot_hz = build_snapshot(&event, *sample_rate, history, history_centre, snapshot);
             }
 
             // Waterfall: the loudest level per pixel over each display column.
@@ -525,11 +536,9 @@ impl<'a> BatApp<'a> {
                 *a = a.max(p);
             }
 
-            // Snapshot history at snapshot height.
-            let mut sp = [0.0f32; SNAP_H];
-            col.to_pixels(VIEW_HI_HZ, VIEW_LO_HZ, &mut sp);
-            let base = *history_next * SNAP_H;
-            for (dst, &db) in history[base..base + SNAP_H].iter_mut().zip(&sp) {
+            // Snapshot history: every bin.
+            let base = *history_next * BINS;
+            for (dst, &db) in history[base..base + BINS].iter_mut().zip(col.db) {
                 *dst = level(db, *floor_db);
             }
             history_centre[*history_next] = col.centre_sample;
@@ -546,6 +555,21 @@ impl<'a> BatApp<'a> {
     pub fn render(&self, fb: &mut Rgb565Buffer<'_>) {
         screen::draw(self, fb);
     }
+
+    /// Whether a tap at (x, y) would do something: a mode button, or the
+    /// waterfall in HET or COMB mode, where a tap tunes.
+    pub fn is_tappable(&self, x: i32, y: i32) -> bool {
+        layout::mode_button_at(x, y).is_some()
+            || (matches!(self.mode, Mode::Het | Mode::Comb) && layout::waterfall_freq_at(x, y).is_some())
+    }
+
+    /// Seconds of time-expansion playback still to come, while playing.
+    pub fn te_seconds_left(&self) -> f32 {
+        match self.te.state() {
+            ExpanderState::Playing { progress } => (1.0 - progress) * self.te.playback_len() as f32 / self.sample_rate,
+            _ => 0.0,
+        }
+    }
 }
 
 /// Map a level in dB to 0..=255 for the colour map.
@@ -554,36 +578,73 @@ fn level(db: f32, floor_db: f32) -> u8 {
     (t.clamp(0.0, 1.0) * 255.0) as u8
 }
 
-/// Copy the history columns around `event` into `snapshot`, stretched to
-/// `SNAP_W` columns.
+/// Draw the call in `event` from the history into `snapshot`: the call's
+/// time plus `SNAP_MARGIN_MS` either side across, its frequency range plus
+/// `SNAP_FREQ_MARGIN_HZ` either side up, interpolated between columns and
+/// bins. Returns the frequency range shown, low and high.
 fn build_snapshot(
     event: &CallEvent,
     sample_rate: f32,
-    history: &[u8; HISTORY * SNAP_H],
+    history: &[u8; HISTORY * BINS],
     centres: &[u64; HISTORY],
     snapshot: &mut [u8; SNAP_W * SNAP_H],
-) {
+) -> (f32, f32) {
     let margin = (SNAP_MARGIN_MS * 0.001 * sample_rate) as u64;
     let from = event.start_sample.saturating_sub(margin);
     let to = event.end_sample + margin;
     // History slots in time order that fall in the window.
-    let mut slots = [0usize; HISTORY];
-    let mut count = 0;
     let mut order: [usize; HISTORY] = core::array::from_fn(|i| i);
     order.sort_unstable_by_key(|&i| centres[i]);
+    let mut slots = [0usize; HISTORY];
+    let mut count = 0;
     for &i in &order {
         if centres[i] >= from && centres[i] <= to {
             slots[count] = i;
             count += 1;
         }
     }
+
+    let mut lo = event.min_freq_hz - SNAP_FREQ_MARGIN_HZ;
+    let mut hi = event.max_freq_hz + SNAP_FREQ_MARGIN_HZ;
+    if hi - lo < SNAP_MIN_SPAN_HZ {
+        let centre = 0.5 * (lo + hi);
+        lo = centre - 0.5 * SNAP_MIN_SPAN_HZ;
+        hi = centre + 0.5 * SNAP_MIN_SPAN_HZ;
+    }
+    if lo < VIEW_LO_HZ {
+        hi += VIEW_LO_HZ - lo;
+        lo = VIEW_LO_HZ;
+    }
+    if hi > VIEW_HI_HZ {
+        lo = (lo - (hi - VIEW_HI_HZ)).max(VIEW_LO_HZ);
+        hi = VIEW_HI_HZ;
+    }
     if count == 0 {
-        return;
+        snapshot.fill(0);
+        return (lo, hi);
     }
+
+    let bin_hz = sample_rate / FFT_N as f32;
+    let at = |slot: usize, bin: f32| -> f32 {
+        let b0 = (bin as usize).min(BINS - 1);
+        let b1 = (b0 + 1).min(BINS - 1);
+        let t = bin - b0 as f32;
+        let row = &history[slot * BINS..(slot + 1) * BINS];
+        row[b0] as f32 * (1.0 - t) + row[b1] as f32 * t
+    };
     for x in 0..SNAP_W {
-        let src = slots[x * count / SNAP_W];
-        snapshot[x * SNAP_H..(x + 1) * SNAP_H].copy_from_slice(&history[src * SNAP_H..(src + 1) * SNAP_H]);
+        let pos = if count > 1 { x as f32 * (count - 1) as f32 / (SNAP_W - 1) as f32 } else { 0.0 };
+        let i0 = (pos as usize).min(count - 1);
+        let i1 = (i0 + 1).min(count - 1);
+        let tx = pos - i0 as f32;
+        for y in 0..SNAP_H {
+            let hz = hi - y as f32 * (hi - lo) / (SNAP_H - 1) as f32;
+            let bin = (hz / bin_hz).max(0.0);
+            let v = at(slots[i0], bin) * (1.0 - tx) + at(slots[i1], bin) * tx;
+            snapshot[x * SNAP_H + y] = v as u8;
+        }
     }
+    (lo, hi)
 }
 
 #[cfg(test)]

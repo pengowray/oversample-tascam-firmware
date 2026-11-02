@@ -76,7 +76,7 @@ pub fn draw(app: &BatApp, fb: Fb) {
 
 fn title_bar(fb: Fb) {
     fill(fb, Rectangle::new(Point::zero(), Size::new(320, TITLE_H as u32)), TITLE);
-    text(fb, &BODY_BOLD, "BAT", 160, 17, CENTER, TEXT);
+    text(fb, &BODY_BOLD, "BAT DETECTOR", 160, 17, CENTER, TEXT);
     // Battery, as in the stock title bars. The emulator always shows it full.
     let outline = PrimitiveStyleBuilder::new().stroke_color(TEXT).stroke_width(1).build();
     let _ = Rectangle::new(Point::new(288, 7), Size::new(21, 11)).into_styled(outline).draw(fb);
@@ -214,10 +214,15 @@ fn waterfall(app: &BatApp, fb: Fb) {
             if let Some(t) = app.te_trigger {
                 let pre = (DEFAULT_PRE_MS * 0.001 * app.sample_rate) as u64;
                 let post = (DEFAULT_POST_MS * 0.001 * app.sample_rate) as u64;
-                let x0 = sample_x(app, t.saturating_sub(pre)).unwrap_or(WF_X);
-                let x1 = sample_x(app, t + post).unwrap_or(right);
-                if sample_x(app, t + post).is_some() || sample_x(app, t.saturating_sub(pre)).is_some() {
+                let start = sample_x(app, t.saturating_sub(pre));
+                let end = sample_x(app, t + post);
+                if start.is_some() || end.is_some() {
+                    let (x0, x1) = (start.unwrap_or(WF_X), end.unwrap_or(right));
+                    // A bar along the top and a line at each end of the window.
                     fill(fb, Rectangle::new(Point::new(x0, WF_Y), Size::new((x1 - x0 + 1) as u32, 3)), ACCENT);
+                    for x in [start, end].into_iter().flatten() {
+                        fill(fb, Rectangle::new(Point::new(x, WF_Y), Size::new(1, WF_H as u32)), ACCENT);
+                    }
                 }
             }
         }
@@ -264,9 +269,6 @@ fn snapshot(app: &BatApp, fb: Fb) {
     let top = SNAP_PANEL.top_left.y;
     text(fb, &SMALL, "LAST CALL", SNAP_TEXT_X, top + 12, LEFT, TEXT_MUTED);
     let Some(call) = app.last_call else {
-        // The plot area stays as an empty frame, so the panel keeps its shape.
-        let r = Rectangle::new(Point::new(SNAP_X, SNAP_Y), Size::new(SNAP_W as u32, SNAP_H as u32));
-        fill(fb, r, BACKGROUND);
         text(fb, &BODY, "No calls yet", SNAP_TEXT_X, top + 34, LEFT, TEXT_MUTED);
         return;
     };
@@ -277,6 +279,10 @@ fn snapshot(app: &BatApp, fb: Fb) {
             *px = INFERNO_565[app.snapshot[x * SNAP_H + y] as usize];
         }
     }
+    // The frequencies at the top and bottom of the snapshot.
+    let (lo, hi) = app.snapshot_hz;
+    text(fb, &SMALL, format_args!("{:.0} kHz", hi / 1000.0), SNAP_X + 2, SNAP_Y + 8, LEFT, TEXT);
+    text(fb, &SMALL, format_args!("{:.0} kHz", lo / 1000.0), SNAP_X + 2, SNAP_Y + SNAP_H as i32 - 2, LEFT, TEXT);
     let fs = app.sample_rate;
     let ago_s = app.samples.saturating_sub(call.end_sample) as f32 / fs;
     let length_ms = (call.end_sample - call.start_sample) as f32 / fs * 1000.0;
@@ -285,21 +291,15 @@ fn snapshot(app: &BatApp, fb: Fb) {
     } else {
         text(fb, &SMALL, format_args!("{:.0} min ago", libm::floorf(ago_s / 60.0)), 308, top + 12, RIGHT, TEXT_MUTED);
     }
-    let rows: [(&str, i32); 3] = [("Peak", top + 30), ("Range", top + 45), ("Length", top + 59)];
-    for (label, y) in rows {
+    let (y1, y2, y3) = (top + 28, top + 42, top + 56);
+    for (label, y) in [("Peak", y1), ("Range", y2), ("Length", y3)] {
         text(fb, &BODY, label, SNAP_TEXT_X, y, LEFT, TEXT_MUTED);
     }
-    text(fb, &BODY_BOLD, format_args!("{:.1} kHz", call.peak_freq_hz / 1000.0), SNAP_VALUE_X, top + 30, LEFT, TEXT);
-    text(
-        fb,
-        &BODY,
-        format_args!("{:.0}-{:.0} kHz", call.min_freq_hz / 1000.0, call.max_freq_hz / 1000.0),
-        SNAP_VALUE_X,
-        top + 45,
-        LEFT,
-        TEXT,
-    );
-    text(fb, &BODY, format_args!("{length_ms:.1} ms"), SNAP_VALUE_X, top + 59, LEFT, TEXT);
+    let lo = call.min_freq_hz / 1000.0;
+    let hi = call.max_freq_hz / 1000.0;
+    text(fb, &BODY, format_args!("{:.1} kHz", call.peak_freq_hz / 1000.0), SNAP_VALUE_X, y1, LEFT, TEXT);
+    text(fb, &BODY, format_args!("{lo:.0}-{hi:.0} kHz"), SNAP_VALUE_X, y2, LEFT, TEXT);
+    text(fb, &BODY, format_args!("{length_ms:.1} ms"), SNAP_VALUE_X, y3, LEFT, TEXT);
 }
 
 fn value_line(app: &BatApp, fb: Fb) {
@@ -326,8 +326,8 @@ fn value_line(app: &BatApp, fb: Fb) {
             match app.te_status() {
                 TeStatus::Waiting => text(fb, &BODY, "Waiting for a call", 312, y, RIGHT, TEXT_MUTED),
                 TeStatus::Capturing => text(fb, &BODY, "Capturing", 312, y, RIGHT, TEXT),
-                TeStatus::Playing { progress } => {
-                    text(fb, &BODY, format_args!("Playing {:.0}%", progress * 100.0), 312, y, RIGHT, TEXT)
+                TeStatus::Playing { .. } => {
+                    text(fb, &BODY, format_args!("Playing, {:.1} s left", app.te_seconds_left()), 312, y, RIGHT, TEXT)
                 }
             };
         }

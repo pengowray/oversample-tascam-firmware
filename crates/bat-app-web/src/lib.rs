@@ -83,6 +83,11 @@ impl Emulator {
         self.app.set_source(source);
     }
 
+    /// Whether a tap at screen pixel (x, y) would do something.
+    pub fn is_tappable(&self, x: i32, y: i32) -> bool {
+        self.app.is_tappable(x, y)
+    }
+
     pub fn is_recording(&self) -> bool {
         self.app.is_recording()
     }

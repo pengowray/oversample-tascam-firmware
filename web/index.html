@@ -21,19 +21,19 @@
     <canvas id="screen" width="320" height="480" aria-label="Recorder screen. Click to tap, scroll to turn the wheel."></canvas>
     <div class="controls">
     <div class="hw" role="group" aria-label="Recorder buttons">
-      <button type="button" data-button="home" disabled title="Returns to the X8's app launcher, which is not emulated">HOME<kbd>H</kbd></button>
+      <button type="button" data-button="home" disabled title="Returns to the X8's app launcher, which is not emulated">HOME</button>
       <button type="button" data-button="play" title="Play or pause the input file (Space)">PLAY<kbd>Space</kbd></button>
       <button type="button" data-button="rec" class="rec" title="Start or stop recording (R)">REC<kbd>R</kbd></button>
       <button type="button" data-button="mark" title="Add a mark; in TE mode, capture now (M)">MARK<kbd>M</kbd></button>
     </div>
     <div class="hw wheel" role="group" aria-label="Wheel">
-      <button type="button" data-wheel="-1" title="Turn the wheel left (Left arrow)">Wheel left<kbd>&larr;</kbd></button>
-      <button type="button" data-wheel="1" title="Turn the wheel right (Right arrow)">Wheel right<kbd>&rarr;</kbd></button>
+      <button type="button" data-wheel="-1" title="Turn the wheel left: lowers the setting at the bottom of the screen (Left arrow)">Wheel left<kbd>&larr;</kbd></button>
+      <button type="button" data-wheel="1" title="Turn the wheel right: raises the setting at the bottom of the screen (Right arrow)">Wheel right<kbd>&rarr;</kbd></button>
     </div>
     </div>
   </section>
 
-  <section class="panel" aria-label="Emulator controls">
+  <section class="panel input" aria-label="Input">
     <h2>Input</h2>
     <div class="row">
       <label class="button primary">Open WAV file<input id="file" type="file" accept="audio/*,.wav" hidden></label>
@@ -48,12 +48,14 @@
       <span id="time" class="num">0:00 / 0:00</span>
       <label class="check"><input id="loop" type="checkbox" checked> Loop</label>
     </div>
+  </section>
 
+  <section class="panel settings" aria-label="Emulator settings">
     <h2>Listen to</h2>
     <div class="row" role="radiogroup" aria-label="Input sent to the headphones">
       <label class="check"><input type="radio" name="source" value="mix" checked> Inputs 3 and 4 mixed</label>
-      <label class="check"><input type="radio" name="source" value="3"> Input 3</label>
-      <label class="check"><input type="radio" name="source" value="4"> Input 4</label>
+      <label class="check"><input type="radio" name="source" value="3"> Input 3 (file channel 1)</label>
+      <label class="check"><input type="radio" name="source" value="4"> Input 4 (file channel 2)</label>
     </div>
 
     <h2>Volume</h2>
@@ -69,7 +71,18 @@
       <tr><td><kbd>M</kbd></td><td>Mark; in TE mode, capture now</td></tr>
       <tr><td><kbd>&larr;</kbd> <kbd>&rarr;</kbd></td><td>Turn the wheel (or scroll over the screen)</td></tr>
       <tr><td><kbd>1</kbd> to <kbd>5</kbd></td><td>Mode: HET, COMB, FD, TE, PITCH</td></tr>
-      <tr><td>Click</td><td>Tap the screen (on the waterfall in HET mode: tune there)</td></tr>
+      <tr><td>Click</td><td>Tap the screen (on the waterfall in HET and COMB modes: tune there)</td></tr>
+    </table>
+
+    <h2>On the screen</h2>
+    <table class="keys legend">
+      <tr><td><span class="swatch" style="background:#0092e5"></span></td><td>Solid line: the tuned frequency (HET, COMB)</td></tr>
+      <tr><td><span class="swatch dashed"></span></td><td>Dashed lines: the band HET hears, 15 kHz either side</td></tr>
+      <tr><td><span class="swatch" style="background:#0092e5"></span></td><td>Box (TE): the window being captured or played back</td></tr>
+      <tr><td><span class="swatch" style="background:#f7d13d"></span></td><td>Yellow ticks along the bottom: detected calls</td></tr>
+      <tr><td><span class="swatch" style="background:#ffffff; outline:1px solid var(--line)"></span></td><td>White ticks along the top: marks</td></tr>
+      <tr><td><span class="swatch" style="background:#ffffff; outline:1px solid var(--line)"></span></td><td>White tick on a meter: highest level in the last 1.5 s</td></tr>
+      <tr><td><span class="swatch resistor"></span></td><td>Coloured ticks on the kHz scale: resistor colour code for the tens digit (40 kHz is yellow), as in Oversample</td></tr>
     </table>
 
     <p id="load" class="status num"></p>
