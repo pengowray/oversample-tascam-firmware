@@ -231,7 +231,7 @@ unit.
 | 0x0010000 to 0x001FFFF | | Erased (0xFF) |
 | 0x0020000 to 0x184FFFB | 0x80000000 to 0x8182FFFB (SDRAM) | Main application, about 25.4 MB. Flash image offset 0x20000 is address 0x80000000. |
 | 0x184FFFC to 0x184FFFF | | sum32 trailer |
-| 0x1850000 to 0x1F9FFFF | | Outside the flash image, about 7.3 MiB. Not yet known whether the firmware uses it. |
+| 0x1850000 to 0x1F9FFFF | 0x81830000 onwards | Outside the stock flash image, about 7.3 MiB. The bootloader copies it into SDRAM anyway (it copies 0x1fc0000 bytes, flash 0x20000 to 0x1fdffff). No stock code refers to SDRAM 0x81830000 to 0x818fffff (IAR's init table starts filling at 0x81900000), so patch code goes at flash 0x1850000 to 0x191ffff. |
 | 0x1FA0000 to 0x1FFFFFF | | Saved settings: records tagged `DR-TURBO` and `X8USET`, each with a checksum, in 64 KiB sectors 0x1FA, 0x1FB, 0x1FE and 0x1FF. A patch must not write here. |
 
 **Bootloader.** It uses SDK drivers for clocks, SEMC (the SDRAM controller), LPSPI,
@@ -286,10 +286,12 @@ From disassembly of the main application. Addresses are the running addresses.
 3. `main()` then starts the RTOS. A system task runs a state machine (0x80DC7A3C)
    that calls the update code in mode 3.
 4. **The update procedure** (0x80DFC57E, flash writer at 0x80E23ED4) reads the whole
-   update file into SDRAM, descrambles it, checks sum32, turns off the data cache,
-   then erases and writes 64 KiB sectors in order, starting at sector 0 (the boot
-   header and bootloader) and ending at the last sector of the flash image. It
-   retries a sector up to 4 times.
+   update file into SDRAM at 0x822f3ad8 (refusing files over 32 MiB),
+   descrambles it, checks sum32, turns off the data cache, then erases and writes
+   64 KiB sectors in order from sector 0 (the boot header and bootloader): (file
+   length >> 16) + 1 sectors, so a longer file is written in full. `x8fw.py pack`
+   refuses an image that would reach the settings sectors. It retries a sector up
+   to 4 times.
 5. **The FPGA is not touched by a normal firmware update.** In mode 3 the update
    procedure calls only the main flash writer. In other modes it descrambles the
    file, checks it, and calls the FPGA programming routine (0x80E24334) up to 3
@@ -328,6 +330,49 @@ rewrites them.
 The FPGA configuration data has not been located. The standard Lattice bitstream
 preamble (0xFFFFBDB3) does not appear in the flash image, so the data is probably
 stored as raw configuration flash pages.
+
+## Step 3 test file: patch code runs on a key press (built 2026-11-02, not yet installed)
+
+The first file with patch code in it: `work/patch/#PortaX8_0219.203`, built by
+`tools/x8patch.py` from the `crates/x8-patch` crate (SHA-256 `ef32509e…44585373`).
+
+- The patch (1,792 bytes of Rust, `no_std`) is linked at SDRAM 0x81830000 and
+  stored at flash 0x1850000, after the stock image; the file is 1,796 bytes
+  longer than the official one and the updater writes the same number of
+  sectors.
+- One stock word changes: 0x80da9a20, which held the app screens' key handler
+  (0x80dac0d5), now holds the patch's `key_hook` (0x81830011). That address
+  occurs nowhere else in the firmware, and only 0x80da98e0 reads the word.
+  Update mode installs its own key handler, so the patch never runs there.
+- `key_hook` checks the system mode, then, in a normal start, draws a 16-pixel
+  bar across the middle of both framebuffers in the next of six colours, writes
+  those cache lines back to SDRAM, and jumps to the stock handler with the
+  original arguments.
+- Checked before installing: the packed file passes all checks and the safety
+  checks of `pack --base`; the patch was disassembled from the packed file (mode
+  check, framebuffer addresses 0x87e24400 and 0x87e6f400, cache clean, tail call
+  to 0x80dac0d5 with r0 to r3 untouched).
+
+To build it again:
+
+```bash
+cargo build -p x8-patch --release --target thumbv7em-none-eabihf
+```
+
+```bash
+python3 tools/x8patch.py "Tascam_X8_official/extracted/#PortaX8_0217.203" target/thumbv7em-none-eabihf/release/x8-patch "work/patch/#PortaX8_0219.203" --build 219
+```
+
+**What to expect.** Install it like the step 2 file (the update screen shows
+B219). In a recording app such as MANUAL, each press of MARK, PLAY or REC, or
+each wheel turn, should draw a coloured bar across the middle of the screen, a
+new colour each time, until the app redraws that part of the screen. The
+buttons should still do what they always did.
+
+**If it goes wrong.** If the unit freezes or restarts when a button is pressed
+in an app, turn it off, hold HOME and REC while turning it on, and install the
+official `#PortaX8_0217.203` from the `UTILITY` folder. Update mode does not run
+the patch.
 
 ## Firmware map (V2.03, in progress)
 

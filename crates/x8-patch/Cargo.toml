@@ -1,0 +1,12 @@
+[package]
+name = "x8-patch"
+version = "0.1.0"
+edition.workspace = true
+license.workspace = true
+description = "Code patched into the Portacapture X8 firmware, linked to run from SDRAM after the stock image"
+publish = false
+
+[[bin]]
+name = "x8-patch"
+test = false
+bench = false

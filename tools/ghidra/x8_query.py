@@ -4,6 +4,7 @@
 #   xrefs ADDR...    references to each address, with the function they are in
 #   callers ADDR...  functions that call the function at each address
 #   disasm ADDR N    N instructions from ADDR
+#   refsin LO HI     every reference whose target is in [LO, HI)
 # Several commands can go in one run, separated by ";" (quote it in the shell).
 # Output goes to the file named by X8_OUT (default: stdout).
 #@category X8
@@ -44,6 +45,19 @@ def run(cmd, args):
             if f:
                 for c in f.getCallingFunctions(ConsoleTaskMonitor()):
                     out.write("  %s at %s\n" % (c.getName(), c.getEntryPoint()))
+    elif cmd == "refsin":
+        lo, hi = A(args[0]), A(args[1])
+        rm = currentProgram.getReferenceManager()
+        it = rm.getReferenceDestinationIterator(lo, True)
+        n = 0
+        while it.hasNext():
+            dst = it.next()
+            if dst.compareTo(hi) >= 0:
+                break
+            for r in getReferencesTo(dst):
+                n += 1
+                out.write("  %s <- %s %s in %s\n" % (dst, r.getFromAddress(), r.getReferenceType(), fname(r.getFromAddress())))
+        out.write("%d references\n" % n)
     elif cmd == "disasm":
         a, n = A(args[0]), int(args[1])
         ins = getInstructionAt(a) or getInstructionAfter(a)

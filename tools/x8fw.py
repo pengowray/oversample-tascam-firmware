@@ -74,6 +74,9 @@ def _app(start, end):
     return start - APP_BASE + APP_OFFSET, end - APP_BASE + APP_OFFSET
 
 
+# First 64 KiB sector of the saved settings; the updater must never reach it.
+SETTINGS_SECTOR = 0x1FA
+
 # Never changed: the updater rewrites this region first, and the boot ROM needs it.
 PROTECTED = [(0x0000000, 0x0020000, "boot header and bootloader")]
 
@@ -252,6 +255,13 @@ def main(argv):
             return 0
         if protected_hits:
             print("refused: the image changes the boot header or bootloader")
+            return 1
+        # The updater writes (file length >> 16) + 1 sectors of 64 KiB from
+        # sector 0 (0x80e23ed4 in V2.03), so the file must stop short of the
+        # settings sectors, which start at sector 0x1fa.
+        if (len(image) + HEADER_LEN) >> 16 >= SETTINGS_SECTOR:
+            print(f"refused: an image of {len(image):,} bytes would make the updater write over the settings "
+                  f"sectors (from flash 0x{SETTINGS_SECTOR << 16:x})")
             return 1
         if boot_hits and not args.allow_boot_path:
             print("refused: the image changes start-up or update-mode code; pass --allow-boot-path to override")
