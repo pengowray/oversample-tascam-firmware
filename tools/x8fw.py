@@ -26,8 +26,13 @@ found to apply to the X8 in the qubero hex editor
 Standard library only. Usage:
     x8fw.py info   UPDATE_FILE
     x8fw.py unpack UPDATE_FILE IMAGE.bin
-    x8fw.py pack   IMAGE.bin UPDATE_FILE --version 203 --build 217 --date 2025-08-19
+    x8fw.py diff   OFFICIAL_UPDATE_FILE IMAGE.bin
+    x8fw.py pack   IMAGE.bin UPDATE_FILE --base OFFICIAL_UPDATE_FILE --build 218 [--date ...]
     x8fw.py selftest UPDATE_FILE...
+
+`pack --base` refuses an image that changes the boot header and bootloader, or
+code on the start-up and update-mode path, because a mistake there leaves a unit
+that SD card update mode cannot repair. See docs/HOMEBREW.md.
 """
 
 import argparse
@@ -58,6 +63,65 @@ UNSCRAMBLE = bytes([
     0x10, 0x15, 0x16, 0x17, 0x1c, 0x1d, 0x1e, 0x1f, 0x11, 0x12, 0x13, 0x18, 0x19, 0x1a, 0x1b, 0xff,
 ])
 SCRAMBLE = bytes(UNSCRAMBLE.index(i) for i in range(256))
+
+# Flash image offsets. The main application is linked at 0x80000000 and starts at
+# flash image offset 0x20000.
+APP_BASE = 0x80000000
+APP_OFFSET = 0x20000
+
+
+def _app(start, end):
+    return start - APP_BASE + APP_OFFSET, end - APP_BASE + APP_OFFSET
+
+
+# Never changed: the updater rewrites this region first, and the boot ROM needs it.
+PROTECTED = [(0x0000000, 0x0020000, "boot header and bootloader")]
+
+# Code that runs before or during update mode, found so far in V2.03 build 217.
+# Extents are approximate (from one function start to the next).
+BOOT_PATH = {
+    (203, 217): [
+        (*_app(0x80000000, 0x80000400), "main application vector table"),
+        (*_app(0x8173206C, 0x81732098), "reset handler"),
+        (*_app(0x80DF0F78, 0x80DF10F8), "main(): start-up and boot button check"),
+        (*_app(0x80DAD730, 0x80DAD8F8), "boot button combination check"),
+        (*_app(0x80D9FF18, 0x80D9FF40), "system mode get and set"),
+        (*_app(0x80DC7A3C, 0x80DC7B04), "system mode state machine"),
+        (*_app(0x80DFBA40, 0x80DFDA64), "update mode screens, update procedure, early start-up"),
+        (*_app(0x80DEFDFC, 0x80DEFED0), "flash erase and sector table"),
+        (*_app(0x80E23ED4, 0x80E24800), "main flash writer and FPGA writer"),
+    ],
+}
+
+
+def changed_ranges(a, b, gap=16):
+    """(start, end) runs where a and b differ, merging runs closer than gap bytes."""
+    runs = []
+    n = min(len(a), len(b))
+    i = 0
+    block = 4096
+    while i < n:
+        j = min(i + block, n)
+        if a[i:j] != b[i:j]:
+            for k in range(i, j):
+                if a[k] != b[k]:
+                    if runs and k - runs[-1][1] <= gap:
+                        runs[-1][1] = k + 1
+                    else:
+                        runs.append([k, k + 1])
+        i = j
+    if len(a) != len(b):
+        runs.append([n, max(len(a), len(b))])
+    return [tuple(r) for r in runs]
+
+
+def overlaps(runs, ranges):
+    hits = []
+    for s, e in runs:
+        for rs, re_, name in ranges:
+            if s < re_ and rs < e:
+                hits.append((s, e, name))
+    return hits
 
 
 def sum32(data):
@@ -133,15 +197,56 @@ def main(argv):
     a = sub.add_parser("unpack", help="write the descrambled flash image")
     a.add_argument("update")
     a.add_argument("image")
+    a = sub.add_parser("diff", help="list the byte ranges an image changes, compared with an official update file")
+    a.add_argument("base")
+    a.add_argument("image")
     a = sub.add_parser("pack", help="build an update file from a flash image, fixing both sums")
     a.add_argument("image")
     a.add_argument("update")
-    a.add_argument("--version", type=int, required=True, help="e.g. 203 for V2.03")
-    a.add_argument("--build", type=int, required=True)
-    a.add_argument("--date", required=True, help="YYYY-MM-DD")
+    a.add_argument("--base", help="official update file the image was patched from; enables the safety checks")
+    a.add_argument("--version", type=int, help="e.g. 203 for V2.03 (default: the base file's)")
+    a.add_argument("--build", type=int, required=True, help="must be higher than the installed firmware's build")
+    a.add_argument("--date", help="YYYY-MM-DD (default: the base file's)")
+    a.add_argument("--allow-boot-path", action="store_true",
+                   help="allow changes to start-up and update-mode code (the bootloader stays refused)")
     a = sub.add_parser("selftest", help="unpack and repack each file and compare bytes")
     a.add_argument("updates", nargs="+")
     args = p.parse_args(argv)
+
+    if args.cmd in ("diff", "pack") and getattr(args, "base", None):
+        base_info, base_image = parse(open(args.base, "rb").read())
+        if check(base_info):
+            print(f"base file fails its own checks: {'; '.join(check(base_info))}")
+            return 1
+        image = bytearray(open(args.image, "rb").read())
+        # The trailer always changes with the content, so compare without it.
+        runs = changed_ranges(base_image[:-4], bytes(image[:-4]))
+        boot_path = BOOT_PATH.get((base_info["version"], base_info["build"]))
+        protected_hits = overlaps(runs, PROTECTED)
+        boot_hits = overlaps(runs, boot_path or [])
+        print(f"{len(runs)} changed ranges, {sum(e - s for s, e in runs):,} bytes")
+        for s, e in runs:
+            names = [n for hs, he, n in protected_hits + boot_hits if (hs, he) == (s, e)]
+            where = f"  <- {', '.join(names)}" if names else ""
+            print(f"  0x{s:07x}-0x{e - 1:07x} ({e - s} bytes){where}")
+        if boot_path is None:
+            print(f"no start-up and update-mode ranges are known for build {base_info['build']}; only the bootloader is checked")
+        if args.cmd == "diff":
+            return 0
+        if protected_hits:
+            print("refused: the image changes the boot header or bootloader")
+            return 1
+        if boot_hits and not args.allow_boot_path:
+            print("refused: the image changes start-up or update-mode code; pass --allow-boot-path to override")
+            return 1
+        version = args.version if args.version is not None else base_info["version"]
+        date = args.date or base_info["date"]
+        if (version, args.build) <= (base_info["version"], base_info["build"]):
+            print(f"warning: version {version} build {args.build} is not higher than the base file's; "
+                  "the updater may reject it as Old Version")
+    elif args.cmd == "diff":
+        print("diff needs an official update file as the first argument")
+        return 1
 
     if args.cmd == "info":
         info, _ = parse(open(args.update, "rb").read())
@@ -155,8 +260,14 @@ def main(argv):
         return 1 if problems else 0
 
     if args.cmd == "pack":
+        if not args.base:
+            if args.version is None or args.date is None:
+                print("pack without --base needs --version and --date")
+                return 1
+            print("warning: no --base given, so the bootloader and start-up code were not checked")
+            version, date = args.version, args.date
         image = open(args.image, "rb").read()
-        out = build_update(image, args.version, args.build, args.date)
+        out = build_update(image, version, args.build, date)
         open(args.update, "wb").write(out)
         info, _ = parse(out)
         print_info(info)

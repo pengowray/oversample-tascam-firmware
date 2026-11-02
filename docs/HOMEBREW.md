@@ -25,10 +25,16 @@ For what the hardware can do and which features are feasible, see
   updater's error messages cover the product, the version, the checksum and flash
   writing, with no signature error. This comes from strings and headers, not from
   reading the updater code, so it is strong evidence but not proof.
-- **Firmware update mode is in the main application.** The bootloader has no SD card
-  driver. If a patched main application fails to start, the SD card update cannot
-  run, and the unit can only be recovered through SWD or the processor's USB serial
-  download mode. Finding one of those is step 0.
+- **Firmware update mode is in the main application, but it is chosen early.** The
+  bootloader has no SD card driver. The main application's `main()` checks the boot
+  button combinations and chooses update mode before the RTOS, the user interface or
+  audio start. So a bug in audio or screen code cannot stop update mode from
+  starting, provided the patch leaves the start-up and update code alone. See
+  [Keeping the bricking risk low](#keeping-the-bricking-risk-low).
+- **An interrupted update still bricks the unit.** The updater erases and rewrites
+  the flash from the first sector, which holds the bootloader. That is equally true
+  of official updates. The recovery for that case is SWD or the processor's USB
+  serial download mode, which needs the unit opened.
 - **The stock firmware uses NXP MCUXpresso SDK drivers, a μITRON-style RTOS, and a
   Qt for MCUs user interface.** Patching the audio code looks practical. Adding a
   screen inside the Qt UI is the hardest part, so the plan draws the bat app's
@@ -87,11 +93,18 @@ python3 tools/x8fw.py unpack "Tascam_X8_official/extracted/#PortaX8_0217.203" wo
 ```
 
 ```bash
-python3 tools/x8fw.py pack work/v203-patched.bin "work/#PortaX8_0218.203" --version 203 --build 218 --date 2026-11-02
+python3 tools/x8fw.py diff "Tascam_X8_official/extracted/#PortaX8_0217.203" work/v203-patched.bin
 ```
 
-`pack` recomputes sum32 in the header and in the flash image's last 4 bytes. Files
-in `work/` are ignored by git.
+```bash
+python3 tools/x8fw.py pack work/v203-patched.bin "work/#PortaX8_0218.203" --base "Tascam_X8_official/extracted/#PortaX8_0217.203" --build 218
+```
+
+`pack` recomputes sum32 in the header and in the flash image's last 4 bytes. With
+`--base`, it lists every changed byte range, refuses changes to the boot header and
+bootloader, and refuses changes to the start-up and update-mode code listed in
+[Keeping the bricking risk low](#keeping-the-bricking-risk-low) unless
+`--allow-boot-path` is given. Files in `work/` are ignored by git.
 
 ## Flash image layout (V2.03)
 
@@ -104,7 +117,8 @@ in `work/` are ignored by git.
 | 0x0010000 to 0x001FFFF | | Erased (0xFF) |
 | 0x0020000 to 0x184FFFB | 0x80000000 to 0x8182FFFB (SDRAM) | Main application, about 25.4 MB. Flash image offset 0x20000 is address 0x80000000. |
 | 0x184FFFC to 0x184FFFF | | sum32 trailer |
-| 0x1850000 to 0x1FFFFFF | | Outside the flash image, about 7.7 MiB. Unknown whether the firmware stores anything here. |
+| 0x1850000 to 0x1F9FFFF | | Outside the flash image, about 7.3 MiB. Not yet known whether the firmware uses it. |
+| 0x1FA0000 to 0x1FFFFFF | | Saved settings: records tagged `DR-TURBO` and `X8USET`, each with a checksum, in 64 KiB sectors 0x1FA, 0x1FB, 0x1FE and 0x1FF. A patch must not write here. |
 
 **Bootloader.** It uses SDK drivers for clocks, SEMC (the SDRAM controller), LPSPI,
 LPUART, GPIO and eLCDIF. Its only messages are display errors ("Display
@@ -120,6 +134,47 @@ stack pointer 0x20011CC8 (DTCM), reset handler 0x8173206D (flash image offset
 vectors point to two-instruction stubs that jump to low addresses such as
 0x0002834F. Those addresses are in ITCM, so the startup code copies time-critical
 code into ITCM. The audio interrupt handlers are probably among them.
+
+**SDRAM is large.** The reset handler first sets the stack pointer to 0x86600000,
+and the updater loads the whole update file into SDRAM at 0x822F3AD8. So at least
+102 MiB of SDRAM exists (0x80000000 to 0x86600000), probably 128 MiB. A 10 s
+stereo 32-bit float look-back buffer (15.4 MB) fits.
+
+## Start-up and update mode (V2.03)
+
+From disassembly of the main application. Addresses are the running addresses.
+
+1. The reset handler (0x8173206C) sets up the stack, the FlexRAM split between ITCM
+   and DTCM, and the vector table, then runs the C library start-up, which calls
+   `main()` at 0x80DF0F78. The start-up code looks like Arm Compiler's C library.
+2. `main()` initialises the hardware, turns the unit off if the battery is too low,
+   and sets up DMA. Then it checks four boot button combinations with the function
+   at 0x80DAD730 and stores the result as the **system mode** (a byte at
+   0x81969DD9):
+
+   | Button combination (table index) | System mode | Meaning |
+   |---|---|---|
+   | 1 (HOME and REC, per the update instructions) | 3 | Firmware update from the SD card |
+   | 2 | 6 | Probably the FPGA update (see below) |
+   | 0 | 8 | Not yet identified (possibly a settings reset) |
+   | 3 | 5 | Not yet identified |
+   | none, USB power present | 1 | Normal start |
+   | none | 0 | Normal start |
+
+3. `main()` then starts the RTOS. A system task runs a state machine (0x80DC7A3C)
+   that calls the update code in mode 3.
+4. **The update procedure** (0x80DFC57E, flash writer at 0x80E23ED4) reads the whole
+   update file into SDRAM, descrambles it, checks sum32, turns off the data cache,
+   then erases and writes 64 KiB sectors in order, starting at sector 0 (the boot
+   header and bootloader) and ending at the last sector of the flash image. It
+   retries a sector up to 4 times.
+5. **The FPGA is not touched by a normal firmware update.** In mode 3 the update
+   procedure calls only the main flash writer. In other modes it descrambles the
+   file, checks it, and calls the FPGA programming routine (0x80E24334) up to 3
+   times. That path is probably what boot combination 2 (mode 6) is for, with a
+   separate FPGA update file that Tascam has not published.
+
+The version check ("Old Version") has not been traced yet.
 
 **Changes from V2.01 to V2.03**, compared in 64 KiB blocks:
 
@@ -143,7 +198,7 @@ rewrites them.
 | UI | Qt for MCUs (Qt Quick Ultralite): about 11,000 assertion strings with `qul/` header paths |
 | MP3 | Fraunhofer-licensed MP3 encoder and decoder (Tascam's "CDK" library, from the DR-20 project) |
 | Bluetooth | "TCS" control stack for the AK-BT1: `TCSBleManager.c`, `TCSBlePeripheral.c`, `TCSDataTransfer.c` and others |
-| FPGA programming | MachXO3 configuration flash routines (`MachXO3CFMAccessEnable`, `MachXO3CFMErase`, `MachXO3CFMInitializeAddress`, `MachXO3CFMProgramDone`, `MachXO3CFMBypass`) and the message `Write PLD : 0x%08lX`, at flash image offset 0xE44754. Just before them is a table of MachXO3 programming opcodes (0x26, 0x0E, 0xF0, 0x3C, 0x46, 0x70, 0x5E, 0xFF) and a page count of 2,164. |
+| FPGA programming | Lattice's MachXO3 configuration flash routines (`MachXO3CFMAccessEnable`, `MachXO3CFMErase`, `MachXO3CFMInitializeAddress`, `MachXO3CFMProgramDone`, `MachXO3CFMBypass`) and the message `Write PLD : 0x%08lX`, at flash image offset 0xE44754. Just before them is a table of programming opcodes (0x26, 0x0E, 0xF0, 0x3C, 0x46, 0x70, 0x5E, 0xFF) and a page count of 2,164. The chip itself is a MachXO2 (LCMXO2-1200ZE, from a teardown video); MachXO2 and MachXO3 use the same programming commands, and 2,164 pages fits the MachXO2-1200. |
 | Debug log | `fsl_debug_console.c` and the log format `[%s (%d)] ...`, so a debug UART probably exists |
 | Source tree | `C:\Perforce\projects\SSR\DR-TURBO\firmware\work\BOOT\...` and `...\work\main\...` |
 
@@ -151,34 +206,93 @@ The FPGA configuration data has not been located. The standard Lattice bitstream
 preamble (0xFFFFBDB3) does not appear in the flash image, so the data is probably
 stored as raw configuration flash pages.
 
-## Risks
+## Keeping the bricking risk low
 
-1. **Bricking.** A patched main application that crashes before update mode starts
-   cannot be fixed from the SD card. Official updates carry the same risk if power is
-   lost during the update.
-2. **Boot header and bootloader.** The flash image includes them. Changing those
-   bytes risks a unit that does not boot at all.
-3. **FPGA configuration.** The main application can reprogram the FPGA's
-   configuration flash. A patch that disturbs that code could leave the FPGA
-   unconfigured. Leave that code alone.
-4. **Licensing.** Modifying the firmware voids the warranty. A patched update file
-   contains Tascam's code and licensed third-party code (Qt for MCUs, the Fraunhofer
-   MP3 codec), so it should not be published as a file. Publish a patch that users
-   apply to the official update file they download, or get Tascam's permission.
+**What can still brick a unit, even when following the rules below:**
 
-## Recovery options on the i.MX RT1060
+1. Losing power or removing the SD card during any update, official or patched. The
+   updater erases the bootloader sector first, and a half-written main application
+   cannot start update mode. A viewer comment on a teardown video reports a unit
+   bricked during an official firmware update.
+2. A change to the boot header, the bootloader, or code that runs before or during
+   update mode.
+3. Patched code that writes to flash, including the settings sectors.
+4. A change to code that runs before `main()`, such as C++ static constructors. The
+   Qt for MCUs user interface has many of them.
 
-Both options need the unit opened.
+**Rules for patches:**
 
-- **SWD with a debug probe** (J-Link or CMSIS-DAP; `probe-rs` supports the i.MX RT
-  family). Works if the debug port has not been disabled by fuses. The probe can
-  rewrite the FlexSPI flash through a flash loader.
-- **USB serial download mode.** With the BOOT_MODE pins set to serial download
-  (BOOT_MODE[1:0] = 01), the processor's boot ROM accepts a flash loader over USB.
-  NXP's SPSDK tools (`sdphost`, then `blhost`) can then rewrite the flash. The X8's
-  USB-C port is probably connected to the processor's USB OTG1 port, because the
-  X8 works as a USB device (audio interface and card reader). This needs checking
-  on the board.
+1. Change only code that runs after `main()` has chosen the system mode, such as
+   audio processing and the recording apps' screens. `x8fw.py pack --base` refuses
+   changes to the bootloader and to the start-up and update-mode code found so far.
+   That list is incomplete (it does not yet cover the SD card, FAT file system and
+   text display code that update mode uses), so it is a backstop, not a proof.
+2. Make patched code do nothing in update mode. Every hook first reads the system
+   mode byte (0x81969DD9 in V2.03) and goes straight back to the original code
+   unless the mode is 0 or 1 (normal start).
+3. Turn the bat app on only when a particular file (for example `BAT.CFG`) is on the
+   SD card. If the bat app crashes the unit, take the card out, delete the file on a
+   computer, and the unit starts as stock.
+4. Never write to flash from patched code.
+5. Keep an official update file on the SD card, repacked with a build number higher
+   than the patched firmware's, ready to install from update mode. Whether the
+   updater accepts an equal or lower build number is not known yet.
+6. Install updates on USB power, not batteries.
+7. Optionally, run the hook code in an emulator (for example Unicorn) on the real
+   firmware image before flashing it, to catch crashes on a desktop.
+
+**Prove the recovery path before any code patch.** Install the string-only patch
+(step 2 of the plan), then hold HOME and REC at power-on and install the repacked
+official file. If both work, SD card recovery is proven on that unit.
+
+**Estimate.** Following these rules, a bug in patched code should only ever need SD
+card recovery. The remaining risk of a hard brick is about the same as for an
+official update: power loss during flashing. This comes from reading the code and
+has not been tested on a unit.
+
+**Licensing.** Modifying the firmware voids the warranty. A patched update file
+contains Tascam's code and licensed third-party code (Qt for MCUs, the Fraunhofer
+MP3 codec), so it should not be published as a file. Publish a patch that users
+apply to the official update file they download, or get Tascam's permission.
+
+## Opening the unit and hardware recovery
+
+Two teardown videos are public: [What Dennis Does](https://www.youtube.com/watch?v=ryWlHvm3rk4)
+(English, 2022) and [iFixThis](https://www.youtube.com/watch?v=YKcWbtdZgvI)
+(Polish, 2025). They show:
+
+- **Opening.** Remove the batteries, SD card and mic capsules. Two screws under the
+  rubber feet and six more free the back, which stays attached by the cable for
+  inputs 1/2. The logic board has four screws (two also hold ground wires) and sits
+  on a board-to-board connector that has to be pried up. The LCD and its ribbon cable
+  are under the logic board.
+- **Chips.** MIMXRT1062DVL6B processor, LCMXO2-1200ZE FPGA, two SDRAM chips, one
+  flash chip, two AK5704 ADCs, OPA1678 op-amps, PCM1754 DAC, TPA4411 headphone amp.
+- **Test points.** The logic board has many labelled test points (TP2, TP80, TP83 and
+  others are visible in the video). Neither video identifies SWD, JTAG or UART pads.
+  No schematic or service manual is published.
+
+Difficulty for someone new to this:
+
+| Task | Difficulty | Notes |
+|---|---|---|
+| Opening the case and lifting the logic board | Moderate | Screwdrivers and a plastic pry tool. The risks are tearing a ribbon cable, bending the board-to-board connector, and static. Watch the teardown video first. |
+| Finding the SWD pads | Hard without a schematic | The processor is a BGA chip, so its balls cannot be probed directly. The SWD signals (SWDIO on GPIO_AD_B0_06, SWCLK on GPIO_AD_B0_07) have to be traced from vias or test points with a multimeter and the chip's ball map. |
+| Attaching wires | Moderate to hard | Fine wire (about 30 AWG) soldered to small pads, or a pogo-pin clip. Practise on a scrap board first. |
+| Reading and writing flash over SWD | Moderate | A SEGGER J-Link, or a CMSIS-DAP probe such as a Raspberry Pi Pico running Raspberry Pi's debugprobe firmware. SEGGER's tools support the RT1062 with external flash directly; `probe-rs` may need a flash algorithm for this flash chip. If the firmware reuses the SWD pins, connect while holding the processor in reset. Only works if Tascam has not disabled the debug port with fuses. |
+| USB serial download mode | Hard | Needs the BOOT_MODE pins changed at power-on, which on this board probably means a resistor or test point. Then NXP's MCUXpresso Secure Provisioning tool or SPSDK (`sdphost`, then `blhost`) over the X8's USB-C port, if that port is wired to the processor's USB OTG1. BOOT_MODE[1:0] = 01 selects serial download; check this in the RT1060 reference manual. |
+
+**Practise on cheap hardware first.** A Teensy 4.1 or NXP's MIMXRT1060-EVKB board
+has the same processor, so SWD, serial download and FlexSPI flashing can be learned
+there with no risk to an X8.
+
+**The easiest option is to ask Tascam** for a unit with SWD and UART wired out, and
+for the pad locations.
+
+Not yet confirmed: whether the boot ROM falls back to serial download mode by itself
+when the flash image is invalid. If it does, a unit bricked by an interrupted update
+could be recovered over USB without changing the BOOT_MODE pins. Check the boot
+chapter of the RT1060 reference manual.
 
 ## Plan
 
@@ -195,8 +309,7 @@ with the flash image from `x8fw.py unpack`.
 - Find the ITCM copy loop in the reset handler and add the copied code at its ITCM
   address.
 - Apply an i.MX RT1062 SVD file for peripheral register names (from the MCUXpresso
-  SDK, or generated by `imxrt-ral`). The RT1061, RT1062 and RT1064 share these
-  registers.
+  SDK, or generated by `imxrt-ral`). The chip is an MIMXRT1062DVL6B.
 - Name SDK driver functions from their assertion strings and by comparing with the
   SDK source (for example `fsl_sai.c`, `fsl_sai_edma.c`).
 - Find: the SAI receive and transmit DMA callbacks, the monitor mix routine (the
@@ -204,8 +317,10 @@ with the flash image from `x8fw.py unpack`.
   REC buffer, the framebuffer addresses, and the code that sets the sample rate.
 
 **Step 2: a patch with no code change.** Change one visible string, raise the build
-number, pack the update file with `x8fw.py`, and install it with the official update
-procedure. This confirms that the updater accepts a repacked update file.
+number, pack the update file with `x8fw.py pack --base`, and install it with the
+official update procedure. This confirms that the updater accepts a repacked update
+file. Then install the official image repacked with a still higher build number, to
+prove the SD card recovery path.
 
 **Step 3: add code.**
 
@@ -236,9 +351,12 @@ record.
 The FPGA design cannot practically be recovered from its configuration data, so any
 change means writing the FPGA's whole function again from scratch, with its pinout
 and timing, and without a schematic. Lattice Diamond (the free licence covers
-MachXO3) with Verilog is the reliable toolchain. Yosys and nextpnr support MachXO2
-and MachXO3 experimentally. Rust-based hardware description languages such as
-RustHDL generate Verilog, but they are not mature enough to depend on here.
+MachXO2) with Verilog is the reliable toolchain. Yosys with nextpnr and Project
+Trellis supports MachXO2, but that support is still experimental. Rust-based
+hardware description languages such as RustHDL generate Verilog, but they are not
+mature enough to depend on here. The firmware already has an FPGA update path (see
+[Start-up and update mode](#start-up-and-update-mode-v203)), which would avoid
+needing a JTAG cable to load a new FPGA design.
 
 ## Tools needed
 

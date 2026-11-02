@@ -28,11 +28,15 @@ The firmware reverse-engineering notes and the patching plan are in
   boot signature. This is based on the updater's error messages; the update code
   itself has not been read yet. `tools/x8fw.py` unpacks both official releases and
   repacks them byte for byte.
-- **The main risk of patching is a bricked unit.** Firmware update mode is part of
-  the main application, so a patch that stops the main application from starting
-  also stops recovery from the SD card. A hardware recovery path (SWD debug pads or
-  the processor's USB serial download mode) has to be found before any patched code
-  is flashed.
+- **The bricking risk can be kept close to that of an official update.** The
+  firmware chooses update mode (HOME and REC held at power-on) early in start-up,
+  before the RTOS, the screens or audio start. So a bug in patched audio or screen
+  code can be fixed by installing an official update file from the SD card. A unit
+  is only bricked for good if an update is interrupted (true of official updates
+  too), or if a patch changes the start-up or update code. A hardware recovery path
+  (SWD debug pads or the processor's USB serial download mode) is the backstop for
+  those cases; finding one needs the unit opened. Details are in
+  [HOMEBREW.md](HOMEBREW.md#keeping-the-bricking-risk-low).
 - **Open questions that need a unit or Tascam's answers:** the ultrasonic hum that
   reviewers report in X8 recordings, the analog response from 60 to 96 kHz, and how
   much CPU the stock firmware leaves free at 192 kHz.
@@ -41,11 +45,12 @@ The firmware reverse-engineering notes and the patching plan are in
 
 | Part | Details | Source |
 |---|---|---|
-| Processor | NXP i.MX RT1060 family (RT1061, RT1062 or RT1064; exact part not confirmed): Cortex-M7, 600 MHz, single and double precision FPU | Tascam; boot header in the firmware |
-| Program flash | 32 MiB FlexSPI NOR flash | boot header in the firmware |
-| RAM | On-chip RAM (ITCM, DTCM, OCRAM) plus external SDRAM. SDRAM size unknown; at least 25 MB, because the main application (25.4 MB) is built to run from SDRAM. | firmware |
-| FPGA | Lattice MachXO3 with on-chip configuration flash. The main application can reprogram it. | firmware strings `MachXO3CFMErase`, `Write PLD : 0x%08lX` |
-| ADCs | AKM AK5704: 4 channels per chip, up to 192 kHz, with built-in mic preamps. According to Tascam, these serve inputs 3 to 6. Each dual-gain input uses two ADC channels at different gains to produce 32-bit float, so inputs 3 to 6 need two of these chips. Which ADC serves inputs 1/2 and EXT IN is not confirmed. | Tascam; manual |
+| Processor | NXP i.MX RT1062 (MIMXRT1062DVL6B): Cortex-M7, 600 MHz, single and double precision FPU, 1 MB on-chip RAM | teardown video; firmware |
+| Program flash | 32 MiB FlexSPI NOR flash, one chip | firmware; teardown video |
+| RAM | On-chip RAM (ITCM, DTCM, OCRAM) plus external SDRAM on two chips. At least 102 MiB of SDRAM is in use (the start-up stack is at 0x86600000), so probably 128 MiB. The main application (25.4 MB) runs from SDRAM. | firmware; teardown video |
+| FPGA | Lattice MachXO2 (LCMXO2-1200ZE-1MG132C): 1,280 LUTs, no hardware multipliers, on-chip configuration flash. The firmware programs it with Lattice's MachXO3 routines, which use the same commands. | teardown video; firmware |
+| ADCs | AKM AK5704: 4 channels per chip, up to 192 kHz, with built-in mic preamps. There are two of them, serving inputs 3 to 6 according to Tascam: each dual-gain input uses two ADC channels at different gains to produce 32-bit float. Which ADC serves inputs 1/2 and EXT IN is not confirmed. | Tascam; teardown video |
+| Analog and output | OPA1678 op-amps in the input stages, TI PCM1754 DAC, TI TPA4411 headphone amplifier | teardown video |
 | Inputs 1/2 | 3.5 mm TRS jacks with plug-in power. The included mics connect here. | manual |
 | Inputs 3/4 and 5/6 | XLR/TRS combo jacks with phantom power | manual |
 | EXT IN | Stereo 3.5 mm line input. One ADC channel per side (no dual gain). Cannot be used at the same time as inputs 5/6. | manual |
@@ -56,13 +61,14 @@ Plug-in power is available on inputs 1/2 only. Inputs 3 to 6 provide phantom pow
 The MVP uses inputs 3/4, so the ultrasonic mics need phantom power or their own
 power. Plug-in-power electret or MEMS capsules are an alternative on inputs 1/2.
 
-**The FPGA is a small glue-logic part, not a DSP engine.** The MachXO3 family has
-no hardware multipliers. The firmware's FPGA programming routine uses a page count
-of 2,164 pages of 16 bytes (about 35 KB), which fits one of the smaller MachXO3
-parts (around 1,300 logic cells). The chip marking will confirm it. The FPGA is
-probably used to generate clocks and to pass the multi-channel (TDM) audio between
-the ADCs and the processor, and possibly to combine the two gain paths into float.
-All DSP in this plan runs on the Cortex-M7.
+**The FPGA is a small glue-logic part, not a DSP engine.** The MachXO2-1200 has
+1,280 LUTs, 64 kbit of block RAM, one PLL and no hardware multipliers. The
+firmware's FPGA programming routine writes 2,164 configuration pages, which matches
+this part. In recorders like this, an FPGA of this size usually generates and
+distributes the audio clocks, joins the serial audio from several converter chips
+into one multi-channel (TDM) stream for the processor, and handles extra I/O. Here
+it probably also combines each input's two gain paths into one float value. All DSP
+in this plan runs on the Cortex-M7, which is far faster at it.
 
 ## Frequency range at 192 kHz
 
@@ -175,9 +181,10 @@ stereo master file), which frees processing time.
 | 10 s, stereo, 192 kHz, 24-bit | 11.5 MB |
 | 5 s, stereo, 192 kHz, 32-bit float | 7.7 MB |
 
-The SDRAM size is unknown and the main application already uses about 25 MB of it,
-so a 10 s buffer may not fit in RAM. The stock 8 s EXPANDED PRE REC may keep its
-buffer on the SD card. Testing EXPANDED PRE REC at 192 kHz is the first step.
+At least 102 MiB of SDRAM is in use, and the main application takes about 25 MB
+of it, so a 10 s float buffer should fit in RAM. How much of the rest the stock
+firmware already uses is not known. Testing the stock EXPANDED PRE REC at 192 kHz
+is still worth doing first, because it may already provide the buffer.
 
 ## Ways to build it
 
@@ -217,8 +224,8 @@ In order of value:
    and how to put the processor into USB serial download mode (the BOOT_MODE pins).
 5. **Hardware details.** The analog input path for inputs 1 to 4 (preamp bandwidth,
    anti-alias filtering), which ADC channels feed each input, what the FPGA does and
-   how the processor controls it, the headphone DAC part and its clocking, the SDRAM
-   size, and the free flash and RAM.
+   how the processor controls it, how the headphone DAC is clocked, and the free
+   flash and RAM.
 6. **The ultrasonic hum.** Its cause and frequency, and whether a hardware revision
    fixed it.
 7. **Higher sample rates.** Whether the clocks, FPGA and DAC can run at 384 kHz for
@@ -234,11 +241,12 @@ In order of value:
 | Frequency and level of the ultrasonic hum | Could mask calls or trigger the call detector | Record at 192 kHz with inputs 3/4 terminated, on battery and on USB power; view in Oversample |
 | Analog response from 60 to 96 kHz | Sets the real upper limit | Feed a sine sweep at line level into input 3, record at 192 kHz, compare with the datasheet filter |
 | Free CPU at 192 kHz in the stock firmware | Sets how much DSP fits | Ask Tascam, or measure the RTOS idle time once the firmware is mapped |
-| SDRAM size and free RAM | Sets the look-back buffer length | Ask Tascam, or read the SDRAM setup in the bootloader |
+| Free SDRAM in the stock firmware | Sets the look-back buffer length (at least 102 MiB of SDRAM exists) | Ask Tascam, or find the heap setup once the firmware is mapped |
 | Whether EXPANDED PRE REC works at 192 kHz | May provide the look-back buffer at no cost | Try it on a unit |
 | Where the two gain paths are combined (FPGA or processor) | Decides where the bat code reads samples | Firmware analysis, or ask Tascam |
 | Display resolution and framebuffer format | Needed for the waterfall | Firmware analysis, or ask Tascam |
-| A recovery path for a bricked unit | Required before any patched code is flashed | Open a unit and look for SWD pads and BOOT_MODE resistors; or ask Tascam |
+| A hardware recovery path | Needed if an update is interrupted; a backstop for patch testing | Open a unit and look for SWD pads and BOOT_MODE resistors; or ask Tascam |
+| Whether SD card recovery works after a patched update | Makes code patches low risk | Install a string-only patch, then the official file repacked with a higher build number |
 
 ## Milestones
 
