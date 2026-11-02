@@ -97,3 +97,95 @@ fn noise_alone_never_triggers_the_expander() {
     assert!(r.trigger_block.is_none());
     assert!(r.output.iter().all(|v| *v == 0.0));
 }
+
+mod in_place {
+    use super::*;
+    use crate::pitch_shift::PitchShifter;
+
+    // These compile only if the constructors are `const`, so the processors
+    // can sit in statics without passing through the stack.
+    static _SHIFTER: PitchShifter = PitchShifter::unconfigured();
+    static _ANALYZER: SpectrumAnalyzer<1024> = SpectrumAnalyzer::unconfigured();
+    static _DETECTOR: CallDetector<1024> = CallDetector::unconfigured();
+
+    fn call_in_noise() -> Vec<f32> {
+        let mut x = noise(0.01, FS as usize / 2, 5);
+        for (v, c) in x[48_000..].iter_mut().zip(chirp(FS, 80_000.0, 40_000.0, 0.1, 960)) {
+            *v += c;
+        }
+        x
+    }
+
+    fn columns_and_events(
+        an: &mut SpectrumAnalyzer<512>,
+        det: &mut CallDetector<512>,
+        x: &[f32],
+    ) -> (usize, Vec<CallEvent>) {
+        let mut columns = 0;
+        let mut events = Vec::new();
+        for block in x.chunks(BLOCK) {
+            an.push(block, |c| {
+                columns += 1;
+                events.extend(det.process(c));
+            });
+        }
+        (columns, events)
+    }
+
+    #[test]
+    fn init_gives_the_same_results_as_new() {
+        let x = call_in_noise();
+
+        let mut fresh = PitchShifter::new(FS);
+        let mut placed = PitchShifter::unconfigured();
+        placed.init(FS);
+        let a = crate::test_util::run_blocks(&x, BLOCK, |i, o| fresh.process(i, o));
+        let b = crate::test_util::run_blocks(&x, BLOCK, |i, o| placed.process(i, o));
+        assert_eq!(a, b);
+
+        let (mut an1, mut det1) = (SpectrumAnalyzer::<512>::new(FS), CallDetector::<512>::new(FS));
+        let (mut an2, mut det2) = (SpectrumAnalyzer::<512>::unconfigured(), CallDetector::<512>::unconfigured());
+        an2.init(FS);
+        det2.init(FS);
+        let r1 = columns_and_events(&mut an1, &mut det1, &x);
+        let r2 = columns_and_events(&mut an2, &mut det2, &x);
+        assert_eq!(r1.0, r2.0);
+        assert_eq!(r1.1.len(), 1);
+        assert_eq!(std::format!("{:?}", r1.1), std::format!("{:?}", r2.1));
+    }
+
+    #[test]
+    fn init_after_use_starts_again_from_scratch() {
+        let x = call_in_noise();
+        let mut used = PitchShifter::new(FS);
+        used.set_factor(4.0);
+        used.set_highpass(false);
+        let _ = crate::test_util::run_blocks(&x, BLOCK, |i, o| used.process(i, o));
+        used.init(FS);
+        let mut fresh = PitchShifter::new(FS);
+        let a = crate::test_util::run_blocks(&x, BLOCK, |i, o| used.process(i, o));
+        let b = crate::test_util::run_blocks(&x, BLOCK, |i, o| fresh.process(i, o));
+        assert_eq!(a, b);
+
+        let (mut an, mut det) = (SpectrumAnalyzer::<512>::new(FS), CallDetector::<512>::new(FS));
+        det.set_threshold_db(30.0);
+        let _ = columns_and_events(&mut an, &mut det, &x);
+        an.init(FS);
+        det.init(FS);
+        let (mut an_new, mut det_new) = (SpectrumAnalyzer::<512>::new(FS), CallDetector::<512>::new(FS));
+        let r1 = columns_and_events(&mut an, &mut det, &x);
+        let r2 = columns_and_events(&mut an_new, &mut det_new, &x);
+        assert_eq!(std::format!("{:?}", r1.1), std::format!("{:?}", r2.1));
+    }
+
+    #[test]
+    fn unconfigured_processors_are_quiet_and_do_not_panic() {
+        let x = call_in_noise();
+        let (mut an, mut det) = (SpectrumAnalyzer::<512>::unconfigured(), CallDetector::<512>::unconfigured());
+        let (columns, events) = columns_and_events(&mut an, &mut det, &x);
+        assert_eq!((columns, events.len()), (0, 0));
+        let mut shifter = PitchShifter::unconfigured();
+        let y = crate::test_util::run_blocks(&x, BLOCK, |i, o| shifter.process(i, o));
+        assert!(y.iter().all(|v| v.is_finite()));
+    }
+}

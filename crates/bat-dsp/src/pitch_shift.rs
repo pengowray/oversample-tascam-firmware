@@ -41,7 +41,7 @@
 //! An optional 15 kHz high-pass (on by default) removes audible sound before
 //! the shift, so voices and wind do not come out as low rumble.
 
-use core::f32::consts::{FRAC_PI_2, PI, TAU};
+use core::f32::consts::FRAC_PI_2;
 
 use microfft::Complex32;
 
@@ -97,13 +97,35 @@ pub struct PitchShifter {
 impl PitchShifter {
     /// A shifter with factor [`DEFAULT_FACTOR`] and the high-pass on. The
     /// sample rate only sets the high-pass cutoff.
+    ///
+    /// This builds the shifter (about 23 KB) on the stack and returns it. On a
+    /// microcontroller, use [`unconfigured`](Self::unconfigured) in a `static`
+    /// and call [`init`](Self::init) on it instead.
     pub fn new(sample_rate: f32) -> Self {
+        let mut shifter = Self::unconfigured();
+        shifter.init(sample_rate);
+        shifter
+    }
+
+    /// A shifter with no sample rate yet, for a `static`, so it is never
+    /// copied through the stack. Call [`init`](Self::init) before use; until
+    /// then the high-pass passes everything.
+    pub const fn unconfigured() -> Self {
         Self {
             stft: Stft::new(),
             shift: PeakShift::new(DEFAULT_FACTOR),
-            highpass: Butterworth4::highpass(sample_rate, DEFAULT_HIGHPASS_HZ),
+            highpass: Butterworth4::identity(),
             highpass_on: true,
         }
+    }
+
+    /// Set the sample rate, restore the default settings and clear the
+    /// history, in place.
+    pub fn init(&mut self, sample_rate: f32) {
+        self.highpass.set_coefficients(&Butterworth4::highpass(sample_rate, DEFAULT_HIGHPASS_HZ));
+        self.shift.set_factor(DEFAULT_FACTOR);
+        self.highpass_on = true;
+        self.reset();
     }
 
     /// Divide frequencies by `factor`, clamped to [`MIN_FACTOR`] to
@@ -158,9 +180,6 @@ impl PitchShifter {
 /// 1024-point frames every 256 samples, output delayed by one frame.
 #[derive(Clone, Debug)]
 struct Stft {
-    window: [f32; FRAME_LEN],
-    /// e^(+2πik / FRAME_LEN) for k in 0..=HALF / 2, for the inverse transform.
-    twiddle: [Complex32; HALF / 2 + 1],
     /// The last FRAME_LEN input samples, oldest first. The newest HOP are
     /// filled in during the current hop.
     input: [f32; FRAME_LEN],
@@ -175,17 +194,33 @@ struct Stft {
     fill: usize,
 }
 
+/// Periodic Hann window: sin²(πn / FRAME_LEN).
+static WINDOW: [f32; FRAME_LEN] = {
+    let mut w = [0.0; FRAME_LEN];
+    let mut n = 0;
+    while n < FRAME_LEN {
+        let s = cos_sin_turns(n as f32 / (2 * FRAME_LEN) as f32).1;
+        w[n] = s * s;
+        n += 1;
+    }
+    w
+};
+
+/// e^(+2πik / FRAME_LEN) for k in 0..=HALF / 2, for the inverse transform.
+static TWIDDLE: [Complex32; HALF / 2 + 1] = {
+    let mut t = [Complex32::new(0.0, 0.0); HALF / 2 + 1];
+    let mut k = 0;
+    while k <= HALF / 2 {
+        let (c, s) = cos_sin_turns(k as f32 / FRAME_LEN as f32);
+        t[k] = Complex32::new(c, s);
+        k += 1;
+    }
+    t
+};
+
 impl Stft {
-    fn new() -> Self {
+    const fn new() -> Self {
         Self {
-            window: core::array::from_fn(|n| {
-                let s = libm::sinf(PI * n as f32 / FRAME_LEN as f32);
-                s * s
-            }),
-            twiddle: core::array::from_fn(|k| {
-                let a = TAU * k as f32 / FRAME_LEN as f32;
-                Complex32::new(libm::cosf(a), libm::sinf(a))
-            }),
             input: [0.0; FRAME_LEN],
             acc: [0.0; FRAME_LEN],
             fft: [0.0; FRAME_LEN],
@@ -217,17 +252,17 @@ impl Stft {
     /// (both in microfft's packed layout), and overlap-add the result.
     fn frame(&mut self, modify: impl FnOnce(&[Complex32; HALF], &mut [Complex32; HALF])) {
         self.fill = 0;
-        for ((f, &x), &w) in self.fft.iter_mut().zip(&self.input).zip(&self.window) {
+        for ((f, &x), &w) in self.fft.iter_mut().zip(&self.input).zip(&WINDOW) {
             *f = x * w;
         }
         let src = microfft::real::rfft_1024(&mut self.fft);
         modify(src, &mut self.spec);
 
-        let frame = inverse_rfft(&mut self.spec, &self.twiddle);
+        let frame = inverse_rfft(&mut self.spec, &TWIDDLE);
         self.acc.copy_within(HOP.., 0);
         self.acc[FRAME_LEN - HOP..].fill(0.0);
         let gain = OLA_GAIN / FRAME_LEN as f32;
-        let pairs = self.acc.as_chunks_mut::<2>().0.iter_mut().zip(self.window.as_chunks::<2>().0);
+        let pairs = self.acc.as_chunks_mut::<2>().0.iter_mut().zip(WINDOW.as_chunks::<2>().0);
         for ((a, w), z) in pairs.zip(frame) {
             a[0] += z.re * w[0] * gain;
             a[1] -= z.im * w[1] * gain;
@@ -285,7 +320,7 @@ struct PeakShift {
 }
 
 impl PeakShift {
-    fn new(factor: f32) -> Self {
+    const fn new(factor: f32) -> Self {
         Self {
             factor,
             shift_per_bin: 1.0 / factor - 1.0,
@@ -423,7 +458,7 @@ fn peak_offset(left: f32, centre: f32, right: f32) -> f32 {
 /// Nearest integer, halves away from zero. For values well inside the i32
 /// range.
 #[inline]
-fn round_to_int(x: f32) -> i32 {
+const fn round_to_int(x: f32) -> i32 {
     if x >= 0.0 { (x + 0.5) as i32 } else { (x - 0.5) as i32 }
 }
 
@@ -437,7 +472,7 @@ fn wrap_turns(t: f32) -> f32 {
 /// Splits off whole quarter turns and uses Taylor series on the rest
 /// (±π/4), so it needs no f64.
 #[inline]
-fn cos_sin_turns(t: f32) -> (f32, f32) {
+const fn cos_sin_turns(t: f32) -> (f32, f32) {
     let q = 4.0 * t;
     let n = round_to_int(q);
     let x = (q - n as f32) * FRAC_PI_2;
@@ -455,6 +490,7 @@ fn cos_sin_turns(t: f32) -> (f32, f32) {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use core::f32::consts::PI;
     use crate::test_util::{chirp, noise, rms, run_blocks, sine, tone_power, zero_crossing_freq};
     use std::vec::Vec;
 
@@ -486,10 +522,9 @@ mod tests {
     #[test]
     fn inverse_rfft_undoes_the_forward_fft() {
         let x = noise(1.0, FRAME_LEN, 7);
-        let stft = Stft::new();
         let mut buf: [f32; FRAME_LEN] = x.clone().try_into().unwrap();
         let mut spec = *microfft::real::rfft_1024(&mut buf);
-        let z = inverse_rfft(&mut spec, &stft.twiddle);
+        let z = inverse_rfft(&mut spec, &TWIDDLE);
         for (m, c) in z.iter().enumerate() {
             let even = c.re / FRAME_LEN as f32;
             let odd = -c.im / FRAME_LEN as f32;
@@ -522,8 +557,7 @@ mod tests {
     fn peak_offset_finds_a_tone_between_bins() {
         for bin in [100.0f32, 100.2, 100.5, 200.7, 300.9, 411.35] {
             let x = sine(FS, bin * FS / FRAME_LEN as f32, 1.0, FRAME_LEN);
-            let stft = Stft::new();
-            let mut buf: [f32; FRAME_LEN] = core::array::from_fn(|i| x[i] * stft.window[i]);
+            let mut buf: [f32; FRAME_LEN] = core::array::from_fn(|i| x[i] * WINDOW[i]);
             let spec = microfft::real::rfft_1024(&mut buf);
             let power: Vec<f32> = spec.iter().map(|c| c.norm_sqr()).collect();
             let k = (1..HALF - 1).max_by(|&a, &b| power[a].total_cmp(&power[b])).unwrap();

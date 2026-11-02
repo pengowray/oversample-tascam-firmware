@@ -97,6 +97,12 @@ pub struct Butterworth4 {
 }
 
 impl Butterworth4 {
+    /// Pass-through filter, for building a processor in a `static` before its
+    /// sample rate is known.
+    pub const fn identity() -> Self {
+        Self { sections: [Biquad::identity(); 2] }
+    }
+
     pub fn lowpass(sample_rate: f32, cutoff_hz: f32) -> Self {
         Self { sections: BUTTERWORTH4_Q.map(|q| Biquad::lowpass(sample_rate, cutoff_hz, q)) }
     }

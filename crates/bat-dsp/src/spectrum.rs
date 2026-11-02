@@ -189,22 +189,25 @@ where
     [f32; N]: FftFrame,
 {
     /// Analyzer with the default hop of `N / 4` samples.
+    ///
+    /// This builds the analyzer (about 14 KB for `N = 1024`) on the stack and
+    /// returns it. On a microcontroller, use
+    /// [`unconfigured`](Self::unconfigured) in a `static` and call
+    /// [`init`](Self::init) on it instead.
     pub fn new(sample_rate: f32) -> Self {
-        let mut window = [0.0; N];
-        let mut sum = 0.0;
-        for (i, w) in window.iter_mut().enumerate() {
-            *w = 0.5 - 0.5 * libm::cosf(TAU * i as f32 / N as f32);
-            sum += *w;
-        }
-        // A sine of amplitude A centred on a bin gives |X| = A · sum / 2.
-        let scale = 2.0 / sum;
-        for w in &mut window {
-            *w *= scale;
-        }
+        let mut analyzer = Self::unconfigured();
+        analyzer.init(sample_rate);
+        analyzer
+    }
+
+    /// An analyzer with no sample rate yet, for a `static`, so it is never
+    /// copied through the stack. Call [`init`](Self::init) before use;
+    /// [`push`](Self::push) makes no columns until then.
+    pub const fn unconfigured() -> Self {
         Self {
-            sample_rate,
+            sample_rate: 0.0,
             hop: N / 4,
-            window,
+            window: [0.0; N],
             ring: [0.0; N],
             pos: 0,
             until_column: N,
@@ -212,6 +215,24 @@ where
             frame: [0.0; N],
             db: <[f32; N] as FftFrame>::SILENT_BINS,
         }
+    }
+
+    /// Set the sample rate, restore the default hop and clear the history,
+    /// in place.
+    pub fn init(&mut self, sample_rate: f32) {
+        self.sample_rate = sample_rate;
+        self.hop = N / 4;
+        let mut sum = 0.0;
+        for (i, w) in self.window.iter_mut().enumerate() {
+            *w = 0.5 - 0.5 * libm::cosf(TAU * i as f32 / N as f32);
+            sum += *w;
+        }
+        // A sine of amplitude A centred on a bin gives |X| = A · sum / 2.
+        let scale = 2.0 / sum;
+        for w in &mut self.window {
+            *w *= scale;
+        }
+        self.reset();
     }
 
     /// FFT size `N`.
@@ -255,7 +276,7 @@ where
 
     /// Clear the sample history and restart the sample count at 0.
     pub fn reset(&mut self) {
-        self.ring = [0.0; N];
+        self.ring.fill(0.0);
         self.pos = 0;
         self.until_column = N;
         self.pushed = 0;
@@ -267,6 +288,9 @@ where
     /// The first column comes once `N` samples have arrived, then one every
     /// `hop` samples.
     pub fn push(&mut self, mut input: &[f32], mut on_column: impl FnMut(&Column<'_>)) {
+        if self.sample_rate == 0.0 {
+            return;
+        }
         while !input.is_empty() {
             let take = self.until_column.min(input.len());
             let (now, rest) = input.split_at(take);

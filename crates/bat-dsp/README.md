@@ -28,9 +28,15 @@ estimates from the generated code and operation counts, not measurements.
   listening have setters that do not click.
 - Buffers whose size depends on time (the time expander's storage) are passed in
   by the caller, so they can live in a static or in SDRAM.
-- Some structs are large: `PitchShifter` is about 29 KB, and
-  `SpectrumAnalyzer<1024>` with `CallDetector<1024>` about 14 KB. On the target,
-  construct them in a static or in place, not on a small stack.
+- Three structs are large: `PitchShifter` (about 23 KB), `SpectrumAnalyzer<1024>`
+  (about 14 KB) and `CallDetector<1024>` (about 8 KB). `new()` builds them on the
+  stack, which is fine on a PC. On the target, put `unconfigured()` (a `const fn`)
+  in a `static` and call `init(sample_rate)` on it at start-up. `init` works in
+  place: on the Cortex-M7 build, `PitchShifter::init` uses a 56-byte stack frame,
+  against over 16 KB for `new`. Calling `init` again restores the defaults and
+  clears the history, for example after a sample-rate change.
+- The pitch shifter's window and twiddle tables (6 KB) are computed at compile
+  time into statics, so they sit in flash and are shared by all instances.
 
 ## Build and test
 

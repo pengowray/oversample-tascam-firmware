@@ -175,10 +175,25 @@ impl<const N: usize> CallDetector<N>
 where
     [f32; N]: FftFrame,
 {
+    /// A detector with the default settings.
+    ///
+    /// This builds the detector (about 8 KB for `N = 1024`) on the stack and
+    /// returns it. On a microcontroller, use
+    /// [`unconfigured`](Self::unconfigured) in a `static` and call
+    /// [`init`](Self::init) on it instead.
     pub fn new(sample_rate: f32) -> Self {
-        let mut det = Self {
-            sample_rate,
-            bin_hz: sample_rate / N as f32,
+        let mut det = Self::unconfigured();
+        det.init(sample_rate);
+        det
+    }
+
+    /// A detector with no sample rate yet, for a `static`, so it is never
+    /// copied through the stack. Call [`init`](Self::init) before use;
+    /// [`process`](Self::process) reports nothing until then.
+    pub const fn unconfigured() -> Self {
+        Self {
+            sample_rate: 0.0,
+            bin_hz: 0.0,
             band_hz: (0.0, 0.0),
             band_bins: (0, 0),
             threshold_db: DEFAULT_THRESHOLD_DB,
@@ -199,15 +214,24 @@ where
             last_centre: None,
             state: State::Idle,
             call: Call::starting_at(0),
-        };
-        det.settle = det.ms_to_samples(SETTLE_MS);
-        det.set_band(DEFAULT_BAND_LO_HZ, DEFAULT_BAND_HI_HZ);
-        det.set_min_call_ms(DEFAULT_MIN_CALL_MS);
-        det.set_merge_gap_ms(DEFAULT_MERGE_GAP_MS);
-        det.set_max_call_ms(DEFAULT_MAX_CALL_MS);
-        det.set_floor_time(DEFAULT_FLOOR_TIME_S);
-        det.reset();
-        det
+        }
+    }
+
+    /// Set the sample rate, restore the default settings and clear the noise
+    /// floor, in place.
+    pub fn init(&mut self, sample_rate: f32) {
+        self.sample_rate = sample_rate;
+        self.bin_hz = sample_rate / N as f32;
+        self.threshold_db = DEFAULT_THRESHOLD_DB;
+        self.release_db = DEFAULT_RELEASE_DB;
+        self.range_db = DEFAULT_RANGE_DB;
+        self.settle = self.ms_to_samples(SETTLE_MS);
+        self.set_band(DEFAULT_BAND_LO_HZ, DEFAULT_BAND_HI_HZ);
+        self.set_min_call_ms(DEFAULT_MIN_CALL_MS);
+        self.set_merge_gap_ms(DEFAULT_MERGE_GAP_MS);
+        self.set_max_call_ms(DEFAULT_MAX_CALL_MS);
+        self.set_floor_time(DEFAULT_FLOOR_TIME_S);
+        self.reset();
     }
 
     /// Frequency range searched for calls, in Hz. Bins outside it still keep
@@ -327,6 +351,9 @@ where
     /// A call ends once the merge gap has passed after its `end_sample`, so
     /// it is reported that much later.
     pub fn process(&mut self, column: &Column<'_>) -> Option<CallEvent> {
+        if self.sample_rate == 0.0 {
+            return None;
+        }
         let db = column.db;
         debug_assert_eq!(db.len(), N / 2 + 1);
         let t = column.centre_sample;
