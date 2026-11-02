@@ -526,6 +526,7 @@ dependencies = [
  "bat-app",
  "bat-dsp",
  "embedded-graphics",
+ "libm",
  "u8g2-fonts",
 ]
 

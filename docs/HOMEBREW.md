@@ -495,7 +495,20 @@ opens should still allow HOME and REC at power-on and the official file. If
 the screen stays on the bat display after closing it, turning the unit off and
 on clears everything (nothing is saved).
 
-## Step 6 test file: the bat app in its own RTOS task (built 2026-11-02, not yet installed)
+## Step 6 test file: the bat app in its own RTOS task (installed 2026-11-03: smoother, PITCH freezes)
+
+**Result** (user's X8, 2026-11-03). Much smoother and more responsive. The
+task was created. In HET the strip read "dsp 73% draw 20%" (wall time), so the
+app used most of the time even in its cheapest mode. Choosing PITCH froze the
+screen and the unit would not power off; STOP brought it back. In PITCH the
+headphones gave a short buzz about once a second, and the other modes gave no
+audible output. The DSP task processed everything waiting before it slept, so
+in a mode slower than real time it never slept and starved Qt (priority 17),
+which also handles powering off. Pressing MARK three times in MANUAL without a
+file only showed the stock "no file to mark" pop-up, which then took the next
+presses; it worked from the launcher. With one microphone on input 3 (phantom
+on 3 only), meters 3 and 4 both moved, 4 more than 3, so the input word
+mapping is in doubt. A dog repeller showed on the waterfall up to about 40 kHz.
 
 `work/patch4/#PortaX8_0222.203` (B222, SHA-256 `45998666…7a200ac`). Changes
 from step 5:
@@ -526,6 +539,39 @@ from step 5:
 **What to expect.** As step 5, but with no "lost" input once processing keeps
 up, quick response to PLAY and the wheel, and no blanking. The "dsp" and
 "draw" figures say how much of the processor the app needs at 192 kHz.
+
+## Step 7 test file: capped passes, gain, input word levels (built 2026-11-03, not yet installed)
+
+`work/patch5/#PortaX8_0223.203` (B223, SHA-256 `36f9b8ef…09800f2481`). Changes
+from step 6:
+
+- **No more starving.** Each DSP pass stops after 8 ms of wall time, then
+  draws (if due) and sleeps 4 ms, so a mode that cannot keep up drops input
+  ("lost" rises) instead of freezing the unit.
+- **Output gain.** The app's output gets +18 dB, with a -6 dBFS ceiling,
+  before the stock headphone gain: bat calls and microphone noise are often
+  40 to 60 dB below full scale.
+- **MARK.** With the bat screen closed, MARK presses are held back; three
+  within 1.5 s, each within 0.5 s of the last, open the bat screen, and
+  otherwise the held presses go on to the stock app 0.5 s after the last, by
+  calling the stock key handler from task 1 with a MARK message. So the
+  trigger works in MANUAL, and a single mark lands half a second late. With
+  the bat screen up, MARK goes only to the bat app (a stock pop-up there would
+  be hidden, and would take the keys while touch is off).
+- **Figures.** Three lines across the top of the bat screen: task, key hook
+  rate, DSP and drawing shares, and the core clock (from the Cortex-M7 cycle
+  counter, which the audio hook turns on); the share of all cycles spent in
+  the stock audio callback and in the patch's part of the audio hook, the
+  ring levels, underruns and dropped input; and the peak level of each of the
+  12 input words, in dB below full scale, to settle which word is which input.
+- **Faster.** Both rings are now in cached memory (the input ring in the patch
+  region, the output ring at 0x865e2000 in a cached gap no stock code refers
+  to), the app redraws 10 times a second, and the frame goes to the display
+  buffer in one block copy.
+
+**What to read off.** With a microphone on input 3 only, which word's figure
+rises when you rub or tap the microphone; and in each mode the "dsp", "draw",
+"core" and "stock" figures, and whether "lost" keeps rising.
 
 ## Firmware map (V2.03, in progress)
 

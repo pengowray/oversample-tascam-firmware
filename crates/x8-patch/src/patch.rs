@@ -80,10 +80,13 @@ mod spare {
     pub const DISPLAY: usize = 0x87eb_0000; // 320 x 480 RGB565, 0x4b000 bytes
     pub const TE_STORAGE: usize = 0x87f0_0000; // f32 x TE_SAMPLES
     pub const TE_SAMPLES: usize = 96_000; // 0.5 s at 192 kHz
-    pub const IN_RING: usize = 0x87f6_0000; // (i32, i32) x IN_FRAMES
-    pub const IN_FRAMES: u32 = 65_536;
-    pub const OUT_RING: usize = 0x87fe_0000; // f32 x OUT_SAMPLES, to 0x88000000
-    pub const OUT_SAMPLES: u32 = 32_768;
+    /// SDRAM between two zeroed ranges, 0x865e1d88 to 0x865fffff, which no
+    /// stock code refers to; the MPU maps it cached (region 9). The interrupt
+    /// and the tasks run on one core, so cached rings need no maintenance.
+    pub const OUT_RING: usize = 0x865e_2000; // f32 x OUT_SAMPLES, 64 KB
+    pub const OUT_SAMPLES: u32 = 16_384;
+    /// The input ring is in the patch region (`IN_RING`), also cached.
+    pub const IN_FRAMES: u32 = 8_192;
 }
 
 type Handler = unsafe extern "C" fn(usize, usize, usize, usize) -> usize;
@@ -100,18 +103,28 @@ pub struct Header {
 
 #[unsafe(no_mangle)]
 #[unsafe(link_section = ".header")]
-pub static X8_PATCH_HEADER: Header = Header { magic: *b"BATX", version: 4, key_hook };
+pub static X8_PATCH_HEADER: Header = Header { magic: *b"BATX", version: 5, key_hook };
 
 const SAMPLE_RATE: f32 = 192_000.0;
 /// Output samples buffered before the headphones start playing the bat app's
-/// output (85 ms at 192 kHz), so the bursts of processing in task 1 do not run
-/// dry.
-const PRIME_SAMPLES: u32 = 16_384;
+/// output (43 ms at 192 kHz), so the DSP task's passes do not run dry.
+const PRIME_SAMPLES: u32 = 8_192;
 /// Frames processed per call at most when processing in task 1 (only if the
 /// DSP task could not be created), so one call cannot hold task 1 for long.
 const MAX_FRAMES_PER_CALL: u32 = 24_576;
 const CHUNK: usize = 1_024;
-const RENDERS_PER_SECOND: u32 = 15;
+const RENDERS_PER_SECOND: u32 = 10;
+/// The DSP task stops a pass after this much wall time (8 ms) even with input
+/// waiting, then draws and sleeps, so a mode that cannot keep up drops input
+/// instead of starving Qt (which also handles powering off).
+const PASS_BLOCKS: u32 = 384;
+/// Gain on the app's output before the stock headphone gain (+18 dB), with a
+/// ceiling of -6 dBFS: bat calls are often 40 to 60 dB below full scale.
+const OUTPUT_GAIN: f32 = 8.0;
+const OUTPUT_CEILING: f32 = 0.5;
+/// MARK presses with the bat screen closed are held this long (0.5 s), in case
+/// two more follow, before they are passed on to the stock app.
+const MARK_HOLD_DIVISOR: u32 = 2;
 
 /// The DSP task: unused ids at start-up (the table at 0x8131dac4 uses 1, 2,
 /// 4 to 7, 9 to 12 and 15 to 22), tried in turn. Priority 16 is below task 1
@@ -140,6 +153,10 @@ static LAST_SECOND: AtomicU32 = AtomicU32::new(0);
 static CALLS_AT_SECOND: AtomicU32 = AtomicU32::new(0);
 static LAST_EVENT: AtomicU32 = AtomicU32::new(0);
 static MARK_TIMES: [AtomicU32; 2] = [AtomicU32::new(0), AtomicU32::new(0)];
+/// MARK presses held back while the bat screen is closed, and when the last
+/// one came (audio block count).
+static MARKS_HELD: AtomicU32 = AtomicU32::new(0);
+static MARK_HELD_AT: AtomicU32 = AtomicU32::new(0);
 static AUDIO_STATE: AtomicU32 = AtomicU32::new(AUDIO_NOT_TRIED);
 const AUDIO_NOT_TRIED: u32 = 0;
 const AUDIO_INSTALLED: u32 = 1;
@@ -184,6 +201,31 @@ static OUT_WRITE: AtomicU32 = AtomicU32::new(0); // task 1
 static OUT_READ: AtomicU32 = AtomicU32::new(0); // interrupt
 static PRIMED: AtomicBool = AtomicBool::new(false); // interrupt
 static UNDERRUNS: AtomicU32 = AtomicU32::new(0); // interrupt
+/// Peak magnitude of each of the 12 words of an input frame since the last
+/// redraw: the interrupt raises them, the drawing context reads and clears.
+static WORD_PEAKS: [AtomicU32; 12] = [const { AtomicU32::new(0) }; 12];
+/// Core cycles in the last second: in all, in the stock audio callback, and in
+/// the rest of the audio hook (interrupt; read by the drawing context).
+static CYCLES_PER_S: AtomicU32 = AtomicU32::new(0);
+static STOCK_CYCLES_PER_S: AtomicU32 = AtomicU32::new(0);
+static HOOK_CYCLES_PER_S: AtomicU32 = AtomicU32::new(0);
+static CYCLES_AT_SECOND: AtomicU32 = AtomicU32::new(0);
+static BLOCKS_AT_SECOND: AtomicU32 = AtomicU32::new(0);
+static STOCK_CYCLES: AtomicU32 = AtomicU32::new(0);
+static HOOK_CYCLES: AtomicU32 = AtomicU32::new(0);
+static CYCLE_COUNTER_ON: AtomicBool = AtomicBool::new(false);
+
+/// Arm's debug registers for the cycle counter (privileged access only, so
+/// used from the audio interrupt).
+const DEMCR: *mut u32 = 0xe000_edfc as *mut u32;
+const DWT_CTRL: *mut u32 = 0xe000_1000 as *mut u32;
+const DWT_CYCCNT: *const u32 = 0xe000_1004 as *const u32;
+const DWT_LAR: *mut u32 = 0xe000_1fb0 as *mut u32;
+
+fn cycles() -> u32 {
+    // SAFETY: reading the cycle counter, from the interrupt.
+    unsafe { ptr::read_volatile(DWT_CYCCNT) }
+}
 
 /// Statics written by one context at a time, as the comments on each use say.
 struct Slot<T>(UnsafeCell<MaybeUninit<T>>);
@@ -198,6 +240,9 @@ static APP: Slot<BatApp<'static>> = Slot(UnsafeCell::new(MaybeUninit::uninit()))
 /// display buffer in one pass.
 #[unsafe(link_section = ".noinit")]
 static FRAME: Slot<[u16; stock::WIDTH * stock::HEIGHT]> = Slot(UnsafeCell::new(MaybeUninit::uninit()));
+/// The input ring: (input 3, input 4) frames from the interrupt.
+#[unsafe(link_section = ".noinit")]
+static IN_RING: Slot<[[i32; 2]; spare::IN_FRAMES as usize]> = Slot(UnsafeCell::new(MaybeUninit::uninit()));
 const DSP_STACK_BYTES: usize = 48 * 1024;
 #[repr(C, align(8))]
 struct DspStack([u8; DSP_STACK_BYTES]);
@@ -237,6 +282,7 @@ unsafe extern "C" fn key_hook(msg: usize, b: usize, c: usize, d: usize) -> usize
             install_audio_hook();
         }
         count_call();
+        replay_held_marks();
         // SAFETY: the message copy on task 1's stack, 0x14 bytes.
         unsafe { handle_message(msg) };
         let work = PENDING.swap(0, Relaxed);
@@ -298,6 +344,28 @@ fn install_audio_hook() {
     AUDIO_STATE.store(AUDIO_INSTALLED, Relaxed);
 }
 
+/// Pass held MARK presses on to the stock app once no more have come for
+/// 0.5 s, by calling the stock key handler with a MARK message, as task 1
+/// would have.
+fn replay_held_marks() {
+    let held = MARKS_HELD.load(Relaxed);
+    if held == 0 || BLOCKS.load(Relaxed).wrapping_sub(MARK_HELD_AT.load(Relaxed)) < blocks_per_second() / MARK_HOLD_DIVISOR {
+        return;
+    }
+    MARKS_HELD.store(0, Relaxed);
+    if BAT_ACTIVE.load(Relaxed) {
+        return;
+    }
+    // SAFETY: the stock handler, from task 1, with a message laid out as task
+    // 1's copies are (0x14 bytes: category 0, kind 0 at +4, code at +8).
+    let stock_handler: Handler = unsafe { core::mem::transmute(stock::KEY_HANDLER) };
+    for _ in 0..held {
+        let mut message = [0u32; 5];
+        message[2] = stock::MARK as u32;
+        unsafe { stock_handler(message.as_mut_ptr() as usize, stock::KEY_HANDLER, 0, 0) };
+    }
+}
+
 fn count_call() {
     let calls = CALLS.load(Relaxed).wrapping_add(1);
     CALLS.store(calls, Relaxed);
@@ -340,11 +408,20 @@ unsafe fn handle_message(msg: usize) {
     let swallow_button = || unsafe { ptr::write_volatile(value_ptr, stock::NO_KEY) };
     match (kind, value) {
         (stock::KIND_BUTTON, stock::MARK) => {
-            // MARK still reaches the app (a mark while recording).
-            if mark_triple() {
-                if active { leave_bat_screen() } else { PENDING.store(WORK_ENTER, Relaxed) }
-            } else if active {
-                queue_action(ACTION_MARK, 0);
+            // Held back from the stock app: in MANUAL without a file, MARK opens
+            // a pop-up that takes the next presses (with the bat screen up, a
+            // hidden one, with touch off). With the screen closed, presses that
+            // do not make a triple are passed on after 0.5 s.
+            swallow_button();
+            let triple = mark_triple();
+            if active {
+                if triple { leave_bat_screen() } else { queue_action(ACTION_MARK, 0) }
+            } else if triple {
+                MARKS_HELD.store(0, Relaxed);
+                PENDING.store(WORK_ENTER, Relaxed);
+            } else {
+                MARKS_HELD.store(MARKS_HELD.load(Relaxed) + 1, Relaxed);
+                MARK_HELD_AT.store(BLOCKS.load(Relaxed), Relaxed);
             }
         }
         (stock::KIND_BUTTON, stock::HOME) if active => {
@@ -468,7 +545,7 @@ extern "C" fn dsp_task(_: isize) {
         new_session();
         apply_actions(app);
         let start = BLOCKS.load(Relaxed);
-        process_input(app, u32::MAX);
+        process_input(app, u32::MAX, PASS_BLOCKS);
         let processed = BLOCKS.load(Relaxed);
         DSP_BLOCKS.store(DSP_BLOCKS.load(Relaxed).wrapping_add(processed.wrapping_sub(start)), Relaxed);
         if processed.wrapping_sub(LAST_RENDER.load(Relaxed)) >= blocks_per_second() / RENDERS_PER_SECOND {
@@ -564,7 +641,7 @@ extern "C" fn tick_work() {
     let app = unsafe { app() };
     new_session();
     apply_actions(app);
-    process_input(app, MAX_FRAMES_PER_CALL);
+    process_input(app, MAX_FRAMES_PER_CALL, PASS_BLOCKS);
     let now = BLOCKS.load(Relaxed);
     if now.wrapping_sub(LAST_RENDER.load(Relaxed)) >= blocks_per_second() / RENDERS_PER_SECOND {
         LAST_RENDER.store(now, Relaxed);
@@ -572,17 +649,19 @@ extern "C" fn tick_work() {
     }
 }
 
-/// Process up to `budget` frames from the input ring and queue the output.
-/// Returns the frames processed.
-fn process_input(app: &mut BatApp<'static>, budget: u32) -> u32 {
+/// Process up to `budget` frames from the input ring, stopping after
+/// `time_blocks` audio blocks of wall time, and queue the output. Returns the
+/// frames processed.
+fn process_input(app: &mut BatApp<'static>, budget: u32, time_blocks: u32) -> u32 {
+    let start = BLOCKS.load(Relaxed);
     let mut in3 = [0.0f32; CHUNK];
     let mut in4 = [0.0f32; CHUNK];
     let mut left = [0.0f32; CHUNK];
     let mut right = [0.0f32; CHUNK];
-    let ring = spare::IN_RING as *const [i32; 2];
+    let ring = IN_RING.0.get().cast::<[i32; 2]>();
     let out = spare::OUT_RING as *mut f32;
     let mut done = 0;
-    while done < budget {
+    while done < budget && BLOCKS.load(Relaxed).wrapping_sub(start) < time_blocks {
         let read = IN_READ.load(Relaxed);
         let available = IN_WRITE.load(Acquire).wrapping_sub(read);
         let n = available.min(CHUNK as u32).min(budget - done) as usize;
@@ -619,51 +698,100 @@ fn render() {
     let mut fb = Rgb565Buffer::new(pixels, stock::WIDTH, stock::HEIGHT);
     // SAFETY: built by enter_work.
     unsafe { app() }.render(&mut fb);
-    let mut line = Line::new();
     let task = TASK.load(Relaxed) as i32;
+    let percent = |part: u32, all: u32| if all == 0 { 0 } else { (part as u64 * 100 / all as u64) as u32 };
+    let all = CYCLES_PER_S.load(Relaxed);
+    let mut line = Line::new();
     let _ = write!(
         line,
-        "{} | key {}/s | dsp {}% draw {}% | in {} out {} | dry {} lost {}",
+        "{} | key {}/s | dsp {}% draw {}% | core {} MHz",
         if task > 0 { "task" } else { "no task" },
         CALLS_PER_S.load(Relaxed),
         DSP_PERMILLE.load(Relaxed) / 10,
         DRAW_PERMILLE.load(Relaxed) / 10,
+        all / 1_000_000,
+    );
+    if task <= 0 {
+        let _ = write!(line, " | cre_tsk {task}");
+    }
+    draw_strip(&mut fb, 0, &line, Rgb565::new(4, 8, 4));
+    let mut line = Line::new();
+    let _ = write!(
+        line,
+        "audio irq: stock {}% hook {}% | in {} out {} | dry {} lost {}",
+        percent(STOCK_CYCLES_PER_S.load(Relaxed), all),
+        percent(HOOK_CYCLES_PER_S.load(Relaxed), all),
         IN_WRITE.load(Relaxed).wrapping_sub(IN_READ.load(Relaxed)),
         OUT_WRITE.load(Relaxed).wrapping_sub(OUT_READ.load(Relaxed)),
         UNDERRUNS.load(Relaxed),
         IN_DROPPED.load(Relaxed),
     );
-    if task <= 0 {
-        let _ = write!(line, " | cre_tsk {task}");
+    draw_strip(&mut fb, STRIP_ROWS as i32, &line, Rgb565::new(4, 8, 4));
+    // Peak level of each input word since the last redraw, in dB below full
+    // scale, to check which word carries which input.
+    let mut peaks = Line::new();
+    let _ = write!(peaks, "word -dBFS");
+    for (i, peak) in WORD_PEAKS.iter().enumerate() {
+        let p = peak.swap(0, Relaxed);
+        let db = if p == 0 { 99 } else { (-20.0 * libm::log10f(p as f32 / 2_147_483_648.0)) as u32 };
+        let _ = write!(peaks, " {i}:{}", db.min(99));
     }
-    draw_strip(&mut fb, &line, Rgb565::new(4, 8, 4));
-    let from = pixels.as_ptr().cast::<u32>();
-    let to = spare::DISPLAY as *mut u32;
-    for i in 0..stock::WIDTH * stock::HEIGHT / 2 {
-        // SAFETY: both buffers hold 320 x 480 pixels.
-        unsafe { ptr::write_volatile(to.add(i), ptr::read(from.add(i))) };
-    }
+    draw_strip(&mut fb, 2 * STRIP_ROWS as i32, &peaks, Rgb565::new(8, 4, 4));
+    // One block copy, so the writes to the uncached display buffer go out in
+    // bursts.
+    // SAFETY: both buffers hold 320 x 480 pixels and do not overlap.
+    unsafe { ptr::copy_nonoverlapping(pixels.as_ptr(), spare::DISPLAY as *mut u16, stock::WIDTH * stock::HEIGHT) };
 }
 
 /// The audio DMA callback: runs the stock one, then, with the bat screen up at
 /// 192 kHz, passes inputs 3 and 4 to the app and plays the app's output.
 unsafe extern "C" fn audio_hook(a: usize, b: usize, c: usize, d: usize) -> usize {
+    if !CYCLE_COUNTER_ON.load(Relaxed) {
+        // SAFETY: turning on the Cortex-M7 cycle counter (trace enable, then
+        // the DWT's lock and counter enable); this interrupt is privileged.
+        unsafe {
+            ptr::write_volatile(DEMCR, ptr::read_volatile(DEMCR) | 1 << 24);
+            ptr::write_volatile(DWT_LAR, 0xc5ac_ce55);
+            ptr::write_volatile(DWT_CTRL, ptr::read_volatile(DWT_CTRL) | 1);
+        }
+        CYCLE_COUNTER_ON.store(true, Relaxed);
+    }
+    let t0 = cycles();
     // SAFETY: read before the stock callback moves the ring on.
     let index = unsafe { ptr::read_volatile(stock::AUDIO_INDEX) } as usize % 3;
     // SAFETY: the stock callback, with its own arguments.
     let stock_callback: Handler = unsafe { core::mem::transmute(stock::AUDIO_CALLBACK) };
     let result = unsafe { stock_callback(a, b, c, d) };
-    BLOCKS.store(BLOCKS.load(Relaxed).wrapping_add(1), Relaxed);
+    let t1 = cycles();
+    STOCK_CYCLES.store(STOCK_CYCLES.load(Relaxed).wrapping_add(t1.wrapping_sub(t0)), Relaxed);
+    let blocks = BLOCKS.load(Relaxed).wrapping_add(1);
+    BLOCKS.store(blocks, Relaxed);
+    if blocks.wrapping_sub(BLOCKS_AT_SECOND.load(Relaxed)) >= blocks_per_second() {
+        BLOCKS_AT_SECOND.store(blocks, Relaxed);
+        CYCLES_PER_S.store(t1.wrapping_sub(CYCLES_AT_SECOND.load(Relaxed)), Relaxed);
+        CYCLES_AT_SECOND.store(t1, Relaxed);
+        STOCK_CYCLES_PER_S.store(STOCK_CYCLES.swap(0, Relaxed), Relaxed);
+        HOOK_CYCLES_PER_S.store(HOOK_CYCLES.swap(0, Relaxed), Relaxed);
+    }
     if !BAT_ACTIVE.load(Acquire) || rate_class() != 2 {
         return result;
     }
     let input = (stock::INPUT_BLOCKS + index * 0x180) as *const i32;
     let output = (stock::OUTPUT_BLOCKS + (index + 2) % 3 * 0x40) as *mut i32;
 
+    for (w, peak) in WORD_PEAKS.iter().enumerate() {
+        let mut p = peak.load(Relaxed);
+        for k in 0..4 {
+            // SAFETY: a word of this frame in the input block.
+            p = p.max(unsafe { ptr::read_volatile(input.add(12 * k + w)) }.unsigned_abs());
+        }
+        peak.store(p, Relaxed);
+    }
+
     // Inputs 3 and 4 of the block's 4 frames into the input ring.
     let write = IN_WRITE.load(Relaxed);
     if spare::IN_FRAMES - write.wrapping_sub(IN_READ.load(Acquire)) >= 4 {
-        let ring = spare::IN_RING as *mut [i32; 2];
+        let ring = IN_RING.0.get().cast::<[i32; 2]>();
         for k in 0..4 {
             // SAFETY: words of this frame in the input block, and the ring.
             unsafe {
@@ -697,7 +825,7 @@ unsafe extern "C" fn audio_hook(a: usize, b: usize, c: usize, d: usize) -> usize
         } else {
             0.0
         };
-        let sample = (y.clamp(-1.0, 1.0) * gain) as i32;
+        let sample = ((y * OUTPUT_GAIN).clamp(-OUTPUT_CEILING, OUTPUT_CEILING) * gain) as i32;
         // SAFETY: the words of this frame in the output block.
         unsafe {
             ptr::write_volatile(output.add(2 * k), sample);
@@ -707,6 +835,7 @@ unsafe extern "C" fn audio_hook(a: usize, b: usize, c: usize, d: usize) -> usize
     if primed {
         OUT_READ.store(read.wrapping_add(4), Release);
     }
+    HOOK_CYCLES.store(HOOK_CYCLES.load(Relaxed).wrapping_add(cycles().wrapping_sub(t1)), Relaxed);
     result
 }
 
@@ -737,9 +866,10 @@ impl core::fmt::Write for Line {
 const STRIP_ROWS: usize = 13;
 const FONT: FontRenderer = FontRenderer::new::<fonts::u8g2_font_helvR08_tf>();
 
-fn draw_strip(target: &mut Rgb565Buffer<'_>, line: &Line, background: Rgb565) {
-    let _ = target.fill_solid(&Rectangle::new(Point::zero(), Size::new(stock::WIDTH as u32, STRIP_ROWS as u32)), background);
-    let _ = FONT.render(line.as_str(), Point::new(2, 10), VerticalPosition::Baseline, FontColor::Transparent(Rgb565::WHITE), target);
+fn draw_strip(target: &mut Rgb565Buffer<'_>, top: i32, line: &Line, background: Rgb565) {
+    let _ = target.fill_solid(&Rectangle::new(Point::new(0, top), Size::new(stock::WIDTH as u32, STRIP_ROWS as u32)), background);
+    let _ =
+        FONT.render(line.as_str(), Point::new(2, top + 10), VerticalPosition::Baseline, FontColor::Transparent(Rgb565::WHITE), target);
 }
 
 /// While the bat screen is closed: a strip across the top of Qt's framebuffers.
@@ -762,7 +892,7 @@ fn draw_status_strip() {
     for &fb in &stock::FRAMEBUFFERS {
         // SAFETY: the top rows of a framebuffer the stock firmware allocated.
         let pixels = unsafe { core::slice::from_raw_parts_mut(fb as *mut u16, stock::WIDTH * STRIP_ROWS) };
-        draw_strip(&mut Rgb565Buffer::new(pixels, stock::WIDTH, STRIP_ROWS), &line, Rgb565::new(4, 8, 4));
+        draw_strip(&mut Rgb565Buffer::new(pixels, stock::WIDTH, STRIP_ROWS), 0, &line, Rgb565::new(4, 8, 4));
     }
 }
 
