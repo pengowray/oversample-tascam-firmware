@@ -40,8 +40,13 @@ pub const VIEW_HI_HZ: f32 = 96_000.0;
 
 /// Time covered by one waterfall pixel column.
 const WF_COLUMN_MS: f32 = 10.0;
-/// Range of levels shown, in dB above the display floor.
-const DISPLAY_RANGE_DB: f32 = 50.0;
+/// Waterfall contrast defaults; see [`BatApp::set_display`]. Chosen on X8
+/// recordings of bats at 45-50 kHz: 3 dB above the background turns the
+/// background speckle black and keeps faint calls, and 45 dB of range keeps
+/// strong calls from saturating. One floor for all rows (not per row) keeps a
+/// steady tone, such as RF hum, visible as a line.
+pub const DEFAULT_DISPLAY_OFFSET_DB: f32 = 3.0;
+pub const DEFAULT_DISPLAY_RANGE_DB: f32 = 45.0;
 /// Lowest display floor. Without it, digital silence (-200 dB) pulls the
 /// floor down until the silence itself shows as faint colour.
 const MIN_FLOOR_DB: f32 = -140.0;
@@ -219,8 +224,15 @@ pub struct BatApp<'a> {
     /// Index of the display column being filled (sample time / column length).
     wf_column: u64,
     wf_accum: [f32; WF_H],
-    /// Display floor in dB, following the background level.
-    floor_db: f32,
+    /// Background level of each waterfall row, in dB, followed while no call
+    /// is in progress.
+    row_floor: [f32; WF_H],
+    row_floor_set: bool,
+    display_offset_db: f32,
+    display_range_db: f32,
+    /// Set each row's floor from that row's own background, instead of one
+    /// floor for the whole waterfall.
+    display_per_row: bool,
 
     /// The last `HISTORY` detector columns, every bin as a level, for
     /// snapshots.
@@ -273,7 +285,11 @@ impl<'a> BatApp<'a> {
             wf_next: 0,
             wf_column: 0,
             wf_accum: [f32::MIN; WF_H],
-            floor_db: -110.0,
+            row_floor: [-110.0; WF_H],
+            row_floor_set: false,
+            display_offset_db: DEFAULT_DISPLAY_OFFSET_DB,
+            display_range_db: DEFAULT_DISPLAY_RANGE_DB,
+            display_per_row: false,
             history: [0; HISTORY * BINS],
             history_centre: [0; HISTORY],
             history_next: 0,
@@ -493,7 +509,11 @@ impl<'a> BatApp<'a> {
             wf_next,
             wf_column,
             wf_accum,
-            floor_db,
+            row_floor,
+            row_floor_set,
+            display_offset_db,
+            display_range_db,
+            display_per_row,
             history,
             history_centre,
             history_next,
@@ -515,18 +535,19 @@ impl<'a> BatApp<'a> {
             col.to_pixels(VIEW_HI_HZ, VIEW_LO_HZ, &mut px);
             let this_column = col.centre_sample / column_len.max(1);
             if this_column != *wf_column {
-                // Follow the background: the column's median-ish level, only
-                // while no call is in progress.
-                if !detector.is_active() {
-                    let mean = wf_accum.iter().sum::<f32>() / WF_H as f32;
-                    if mean > -200.0 {
-                        *floor_db += 0.02 * (mean - 3.0 - *floor_db);
-                        *floor_db = floor_db.max(MIN_FLOOR_DB);
+                // Follow each row's background, only while no call is in
+                // progress. Digital silence stops at MIN_FLOOR_DB.
+                if wf_accum[0] > f32::MIN && !detector.is_active() {
+                    let rate = if *row_floor_set { 0.02 } else { 1.0 };
+                    for (f, &a) in row_floor.iter_mut().zip(wf_accum.iter()) {
+                        *f = (*f + rate * (a - *f)).max(MIN_FLOOR_DB);
                     }
+                    *row_floor_set = true;
                 }
+                let floors = display_floors(row_floor, *display_per_row, *display_offset_db);
                 let base = *wf_next * WF_H;
-                for (dst, &db) in wf[base..base + WF_H].iter_mut().zip(wf_accum.iter()) {
-                    *dst = level(db, *floor_db);
+                for ((dst, &db), &floor) in wf[base..base + WF_H].iter_mut().zip(wf_accum.iter()).zip(&floors) {
+                    *dst = level(db, floor, *display_range_db);
                 }
                 *wf_next = (*wf_next + 1) % WF_W;
                 *wf_column = this_column;
@@ -536,10 +557,15 @@ impl<'a> BatApp<'a> {
                 *a = a.max(p);
             }
 
-            // Snapshot history: every bin.
+            // Snapshot history: every bin, against the floor of the waterfall
+            // row at that bin's frequency.
+            let floors = display_floors(row_floor, *display_per_row, *display_offset_db);
             let base = *history_next * BINS;
-            for (dst, &db) in history[base..base + BINS].iter_mut().zip(col.db) {
-                *dst = level(db, *floor_db);
+            for (k, (dst, &db)) in history[base..base + BINS].iter_mut().zip(col.db).enumerate() {
+                let hz = k as f32 * col.bin_hz;
+                let t = ((VIEW_HI_HZ - hz) / (VIEW_HI_HZ - VIEW_LO_HZ)).clamp(0.0, 1.0);
+                let row = ((t * WF_H as f32) as usize).min(WF_H - 1);
+                *dst = level(db, floors[row], *display_range_db);
             }
             history_centre[*history_next] = col.centre_sample;
             *history_next = (*history_next + 1) % HISTORY;
@@ -554,6 +580,17 @@ impl<'a> BatApp<'a> {
     /// Draw the whole screen.
     pub fn render(&self, fb: &mut Rgb565Buffer<'_>) {
         screen::draw(self, fb);
+    }
+
+    /// Waterfall contrast. A level `offset_db` above the background shows as
+    /// black, and `range_db` above that as the brightest colour. With
+    /// `per_row`, each frequency row has its own background, so a band that
+    /// is noisier than the rest (low frequencies, a steady hum) shows as dark
+    /// as the quiet bands.
+    pub fn set_display(&mut self, offset_db: f32, range_db: f32, per_row: bool) {
+        self.display_offset_db = offset_db;
+        self.display_range_db = range_db.max(1.0);
+        self.display_per_row = per_row;
     }
 
     /// Whether a tap at (x, y) would do something: a mode button, or the
@@ -573,9 +610,20 @@ impl<'a> BatApp<'a> {
 }
 
 /// Map a level in dB to 0..=255 for the colour map.
-fn level(db: f32, floor_db: f32) -> u8 {
-    let t = (db - floor_db) / DISPLAY_RANGE_DB;
+fn level(db: f32, floor_db: f32, range_db: f32) -> u8 {
+    let t = (db - floor_db) / range_db;
     (t.clamp(0.0, 1.0) * 255.0) as u8
+}
+
+/// The level shown as black for each waterfall row: the row's own background,
+/// or the average background of all rows, plus the offset.
+fn display_floors(row_floor: &[f32; WF_H], per_row: bool, offset_db: f32) -> [f32; WF_H] {
+    if per_row {
+        row_floor.map(|f| f + offset_db)
+    } else {
+        let mean = row_floor.iter().sum::<f32>() / WF_H as f32;
+        [mean + offset_db; WF_H]
+    }
 }
 
 /// Draw the call in `event` from the history into `snapshot`: the call's

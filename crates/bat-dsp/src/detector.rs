@@ -32,10 +32,12 @@
 //! end up to half a window late (1.3 ms each for `N = 512` at 192 kHz).
 //!
 //! A call's frequency range is measured from its peak: it covers the bins
-//! that came within 20 dB of the peak (settable). Measuring from the
-//! threshold instead would let the FFT window's side lobes, and the spread
-//! of an abrupt start or end, widen a loud call's range far beyond its own
-//! frequencies.
+//! that came within 20 dB of the peak (settable), in one unbroken stretch of
+//! frequencies through the peak. Measuring from the threshold instead would
+//! let the FFT window's side lobes, and the spread of an abrupt start or
+//! end, widen a loud call's range far beyond its own frequencies; taking
+//! every loud bin would add any separate sound at the same moment, such as
+//! an insect at 20 kHz under a bat at 46 kHz.
 //!
 //! The first [`SETTLE_MS`] after construction or [`CallDetector::reset`] are
 //! used only to learn the floor.
@@ -58,6 +60,11 @@ pub const DEFAULT_RANGE_DB: f32 = 20.0;
 /// threshold, so the range for any cutoff can be picked when the call ends.
 const RANGE_STEP_DB: f32 = 3.0;
 const RANGE_LEVELS: usize = 24;
+/// Bins tracked per level: enough for `N = 1024` (513 bins).
+const MAX_BINS: usize = 576;
+const WORDS: usize = MAX_BINS / 64;
+/// Gaps up to this many bins inside a call's range are bridged.
+const RANGE_GAP_BINS: usize = 2;
 
 /// Time after construction or reset during which the detector only learns
 /// the floor and reports nothing.
@@ -79,11 +86,11 @@ pub struct CallEvent {
     pub peak_freq_hz: f32,
     /// How far the call rose above the floor at that frequency, in dB.
     pub peak_db_above_floor: f32,
-    /// Lowest bin frequency that came within the range setting (default
-    /// 20 dB) of the call's peak, and above the threshold, during the call.
+    /// Lowest bin frequency of the call's range: the unbroken stretch of
+    /// frequencies through the peak that came within the range setting
+    /// (default 20 dB) of the peak, and above the threshold, during the call.
     pub min_freq_hz: f32,
-    /// Highest bin frequency that came within the range setting of the call's
-    /// peak, and above the threshold, during the call.
+    /// Highest bin frequency of the call's range.
     pub max_freq_hz: f32,
 }
 
@@ -110,11 +117,20 @@ struct Call {
     end: u64,
     peak_db: f32,
     peak_freq_hz: f32,
-    /// Lowest and highest bins whose averaged excess reached
-    /// `threshold_db + level * RANGE_STEP_DB`, for each level, in any column
-    /// of the call. `usize::MAX` and 0 when none did.
-    lo_bin: [usize; RANGE_LEVELS],
-    hi_bin: [usize; RANGE_LEVELS],
+    /// Bin of the peak.
+    peak_bin: usize,
+    /// For each level, the bins whose averaged excess reached
+    /// `threshold_db + level * RANGE_STEP_DB` in any column of the call, as a
+    /// bit set.
+    reached: [[u64; WORDS]; RANGE_LEVELS],
+}
+
+fn set_bit(bits: &mut [u64; WORDS], k: usize) {
+    bits[k / 64] |= 1 << (k % 64);
+}
+
+fn bit(bits: &[u64; WORDS], k: usize) -> bool {
+    bits[k / 64] & (1 << (k % 64)) != 0
 }
 
 impl Call {
@@ -124,8 +140,8 @@ impl Call {
             end: t,
             peak_db: f32::MIN,
             peak_freq_hz: 0.0,
-            lo_bin: [usize::MAX; RANGE_LEVELS],
-            hi_bin: [0; RANGE_LEVELS],
+            peak_bin: 0,
+            reached: [[0; WORDS]; RANGE_LEVELS],
         }
     }
 }
@@ -191,6 +207,7 @@ where
     /// copied through the stack. Call [`init`](Self::init) before use;
     /// [`process`](Self::process) reports nothing until then.
     pub const fn unconfigured() -> Self {
+        const { assert!(N / 2 < MAX_BINS, "CallDetector supports N up to 1024") };
         Self {
             sample_rate: 0.0,
             bin_hz: 0.0,
@@ -481,30 +498,70 @@ where
 
     /// Add a column above the release threshold to the call in progress.
     ///
-    /// The frequency range is recorded at several levels, because which level
-    /// to report depends on the call's peak, which is known only at the end.
+    /// Which bins reached each level is recorded, because which level to
+    /// report depends on the call's peak, which is known only at the end.
     /// Measuring from the call's peak keeps a loud call's range to its own
     /// frequencies: the FFT window's side lobes, and the spread of an abrupt
     /// start or end, clear the threshold far from them, but stay well below
     /// the peak.
     fn extend(&mut self, db: &[f32], scan: &Scan, t: u64) {
-        let mut call = self.call;
+        let mut excess = [f32::MIN; MAX_BINS];
+        self.for_each_excess(db, |k, e| excess[k] = e);
+        let threshold = self.threshold_db;
+        let bin_hz = self.bin_hz;
+        let call = &mut self.call;
         call.end = t;
         if scan.peak_db > call.peak_db {
             call.peak_db = scan.peak_db;
-            call.peak_freq_hz = peak_position(db, scan.peak_bin) * self.bin_hz;
+            call.peak_bin = scan.peak_bin;
+            call.peak_freq_hz = peak_position(db, scan.peak_bin) * bin_hz;
         }
-        let threshold = self.threshold_db;
-        self.for_each_excess(db, |k, e| {
+        let (lo, hi) = self.band_bins;
+        for (k, &e) in excess.iter().enumerate().take(hi + 1).skip(lo) {
             if e > threshold {
                 let top = (((e - threshold) / RANGE_STEP_DB) as usize).min(RANGE_LEVELS - 1);
-                for level in 0..=top {
-                    call.lo_bin[level] = call.lo_bin[level].min(k);
-                    call.hi_bin[level] = call.hi_bin[level].max(k);
+                for level in &mut call.reached[..=top] {
+                    set_bit(level, k);
                 }
             }
-        });
-        self.call = call;
+        }
+    }
+
+    /// The call's frequency range at `level`, in bins: the stretch of bins
+    /// that reached that level and runs unbroken (bridging gaps of up to
+    /// `RANGE_GAP_BINS`) through the peak bin. A separate sound at the same
+    /// moment in another part of the band, such as an insect at 20 kHz under
+    /// a bat at 46 kHz, is left out.
+    fn range_through_peak(&self, level: usize) -> (usize, usize) {
+        let c = &self.call;
+        let bits = &c.reached[level];
+        let (lo, hi) = self.band_bins;
+        let (mut a, mut b) = (c.peak_bin, c.peak_bin);
+        let mut gap = 0;
+        for k in (lo..c.peak_bin).rev() {
+            if bit(bits, k) {
+                a = k;
+                gap = 0;
+            } else {
+                gap += 1;
+                if gap > RANGE_GAP_BINS {
+                    break;
+                }
+            }
+        }
+        gap = 0;
+        for k in c.peak_bin + 1..=hi {
+            if bit(bits, k) {
+                b = k;
+                gap = 0;
+            } else {
+                gap += 1;
+                if gap > RANGE_GAP_BINS {
+                    break;
+                }
+            }
+        }
+        (a, b)
     }
 
     fn finish(&mut self) -> Option<CallEvent> {
@@ -514,16 +571,17 @@ where
         // highest level any bin reached.
         let cutoff = (c.peak_db - self.range_db - self.threshold_db).max(0.0);
         let mut level = ((libm::ceilf(cutoff / RANGE_STEP_DB)) as usize).min(RANGE_LEVELS - 1);
-        while level > 0 && c.lo_bin[level] == usize::MAX {
+        while level > 0 && !bit(&c.reached[level], c.peak_bin) {
             level -= 1;
         }
+        let (a, b) = self.range_through_peak(level);
         (c.end.saturating_sub(c.start) >= self.min_call).then_some(CallEvent {
             start_sample: c.start,
             end_sample: c.end,
             peak_freq_hz: c.peak_freq_hz,
             peak_db_above_floor: c.peak_db,
-            min_freq_hz: c.lo_bin[level] as f32 * self.bin_hz,
-            max_freq_hz: c.hi_bin[level] as f32 * self.bin_hz,
+            min_freq_hz: a as f32 * self.bin_hz,
+            max_freq_hz: b as f32 * self.bin_hz,
         })
     }
 }
@@ -613,6 +671,20 @@ mod tests {
         let e = events[0];
         assert!((35_000.0..=45_000.0).contains(&e.min_freq_hz), "{e:?}");
         assert!((75_000.0..=85_000.0).contains(&e.max_freq_hz), "{e:?}");
+    }
+
+    #[test]
+    fn a_separate_sound_at_the_same_time_stays_out_of_the_range() {
+        // A 60 to 45 kHz call over a quieter 20 kHz tone burst of the same length.
+        let mut x = noise(0.003, ms(300.0), 4);
+        let t0 = ms(150.0);
+        add(&mut x, t0, &chirp(FS, 60_000.0, 45_000.0, 0.1, ms(6.0)));
+        add(&mut x, t0, &sine(FS, 20_000.0, 0.03, ms(6.0)));
+        let events = detect(&mut CallDetector::new(FS), &x);
+        assert_eq!(events.len(), 1, "{events:?}");
+        let e = events[0];
+        assert!(e.min_freq_hz > 40_000.0, "{e:?}");
+        assert!((55_000.0..=65_000.0).contains(&e.max_freq_hz), "{e:?}");
     }
 
     #[test]

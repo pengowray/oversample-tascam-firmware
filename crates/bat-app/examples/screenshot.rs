@@ -1,9 +1,11 @@
 //! Render the bat app's screen to a PNG after playing a WAV file into it.
 //!
-//! cargo run -p bat-app --release --example screenshot -- IN.wav OUT.png [SECONDS] [MODE] [SCALE]
+//! cargo run -p bat-app --release --example screenshot -- IN.wav OUT.png [SECONDS] [MODE] [SCALE] [OFFSET RANGE PER_ROW]
 //!
 //! SECONDS: how much of the file to play first (default: all of it).
 //! MODE: het, comb, fd, te or pitch (default het). SCALE: 1 to 4 (default 2).
+//! OFFSET, RANGE (dB) and PER_ROW (0 or 1): waterfall contrast, as
+//! `BatApp::set_display` (default: the app's defaults).
 //! The file must be at 192 kHz; channel 1 feeds input 3, channel 2 input 4.
 
 use bat_app::{BatApp, HEIGHT, Mode, Rgb565Buffer, WIDTH};
@@ -17,15 +19,18 @@ fn main() {
     let mut reader = hound::WavReader::open(&args[1]).expect("open wav");
     let spec = reader.spec();
     let channels = spec.channels as usize;
+    let total_frames = reader.duration() as usize;
+    let seconds: f32 =
+        args.get(3).map(|s| s.parse().unwrap()).unwrap_or(total_frames as f32 / spec.sample_rate as f32);
+    let wanted = ((seconds * spec.sample_rate as f32) as usize).min(total_frames) * channels;
     let samples: Vec<f32> = match spec.sample_format {
-        hound::SampleFormat::Float => reader.samples::<f32>().map(Result::unwrap).collect(),
+        hound::SampleFormat::Float => reader.samples::<f32>().take(wanted).map(Result::unwrap).collect(),
         hound::SampleFormat::Int => {
             let scale = 1.0 / (1u64 << (spec.bits_per_sample - 1)) as f32;
-            reader.samples::<i32>().map(|s| s.unwrap() as f32 * scale).collect()
+            reader.samples::<i32>().take(wanted).map(|s| s.unwrap() as f32 * scale).collect()
         }
     };
     let frames = samples.len() / channels;
-    let seconds: f32 = args.get(3).map(|s| s.parse().unwrap()).unwrap_or(frames as f32 / spec.sample_rate as f32);
     let mode = match args.get(4).map(String::as_str).unwrap_or("het") {
         "comb" => Mode::Comb,
         "fd" => Mode::Fd,
@@ -40,6 +45,9 @@ fn main() {
     let mut storage = vec![0.0f32; spec.sample_rate as usize];
     let mut app = BatApp::new(fs, &mut storage);
     app.set_mode(mode);
+    if let (Some(o), Some(r), Some(p)) = (args.get(6), args.get(7), args.get(8)) {
+        app.set_display(o.parse().unwrap(), r.parse().unwrap(), p == "1");
+    }
     app.set_clock(21 * 3600 + 47 * 60 + 5);
     let ch = |c: usize| -> Vec<f32> { (0..n).map(|i| samples[i * channels + c.min(channels - 1)]).collect() };
     let (a, b) = (ch(0), ch(1));

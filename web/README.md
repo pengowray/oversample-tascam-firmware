@@ -48,4 +48,14 @@ cargo run -p bat-app --release --example screenshot -- IN.wav OUT.png 1.25 het 2
 ```
 
 The arguments after the file names are seconds to play, the mode (`het`,
-`comb`, `fd`, `te` or `pitch`) and the scale. `docs/screens/` has one per mode.
+`comb`, `fd`, `te` or `pitch`) and the scale; three more set the waterfall
+contrast (offset dB, range dB, per-row 0 or 1). `docs/screens/` has one per
+mode.
+
+`crates/bat-app/examples/calls.rs` lists the calls the app's detector finds in
+a file, with a table of calls by peak frequency and length, for tuning on real
+recordings:
+
+```bash
+cargo run -p bat-app --release --example calls -- IN.wav [FROM_S] [TO_S]
+```
