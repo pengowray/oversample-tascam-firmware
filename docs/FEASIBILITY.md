@@ -47,7 +47,7 @@ The firmware reverse-engineering notes and the patching plan are in
 |---|---|---|
 | Processor | NXP i.MX RT1062 (MIMXRT1062DVL6B): Cortex-M7, 600 MHz, single and double precision FPU, 1 MB on-chip RAM | teardown video; firmware |
 | Program flash | 32 MiB FlexSPI NOR flash, one chip | firmware; teardown video |
-| RAM | On-chip RAM (ITCM, DTCM, OCRAM) plus external SDRAM on two chips. At least 102 MiB of SDRAM is in use (the start-up stack is at 0x86600000), so probably 128 MiB. The main application (25.4 MB) runs from SDRAM. | firmware; teardown video |
+| RAM | On-chip RAM (ITCM, DTCM, OCRAM) plus external SDRAM on two chips. At least about 60 MB of SDRAM is in use (the updater loads the update file at 0x822F3AD8), so probably 64 MB or 128 MB in total. The main application (25.4 MB) runs from SDRAM. | firmware; teardown video |
 | FPGA | Lattice MachXO2 (LCMXO2-1200ZE-1MG132C): 1,280 LUTs, no hardware multipliers, on-chip configuration flash. The firmware programs it with Lattice's MachXO3 routines, which use the same commands. | teardown video; firmware |
 | ADCs | AKM AK5704: 4 channels per chip, up to 192 kHz, with built-in mic preamps. There are two of them, serving inputs 3 to 6 according to Tascam: each dual-gain input uses two ADC channels at different gains to produce 32-bit float. Which ADC serves inputs 1/2 and EXT IN is not confirmed. | Tascam; teardown video |
 | Analog and output | OPA1678 op-amps in the input stages, TI PCM1754 DAC, TI TPA4411 headphone amplifier | teardown video |
@@ -181,9 +181,9 @@ stereo master file), which frees processing time.
 | 10 s, stereo, 192 kHz, 24-bit | 11.5 MB |
 | 5 s, stereo, 192 kHz, 32-bit float | 7.7 MB |
 
-At least 102 MiB of SDRAM is in use, and the main application takes about 25 MB
-of it, so a 10 s float buffer should fit in RAM. How much of the rest the stock
-firmware already uses is not known. Testing the stock EXPANDED PRE REC at 192 kHz
+The SDRAM is probably 64 MB or 128 MB, and the main application takes about 25 MB
+of it, so a 10 s float buffer (15.4 MB) should fit in RAM if the stock firmware
+leaves that much free. How much it already uses is not known. Testing the stock EXPANDED PRE REC at 192 kHz
 is still worth doing first, because it may already provide the buffer.
 
 ## Ways to build it
@@ -241,7 +241,7 @@ In order of value:
 | Frequency and level of the ultrasonic hum | Could mask calls or trigger the call detector | Record at 192 kHz with inputs 3/4 terminated, on battery and on USB power; view in Oversample |
 | Analog response from 60 to 96 kHz | Sets the real upper limit | Feed a sine sweep at line level into input 3, record at 192 kHz, compare with the datasheet filter |
 | Free CPU at 192 kHz in the stock firmware | Sets how much DSP fits | Ask Tascam, or measure the RTOS idle time once the firmware is mapped |
-| Free SDRAM in the stock firmware | Sets the look-back buffer length (at least 102 MiB of SDRAM exists) | Ask Tascam, or find the heap setup once the firmware is mapped |
+| SDRAM size (64 or 128 MB) and how much the stock firmware leaves free | Sets the look-back buffer length | Read the SDRAM chip markings, ask Tascam, or find the heap setup once the firmware is mapped |
 | Whether EXPANDED PRE REC works at 192 kHz | May provide the look-back buffer at no cost | Try it on a unit |
 | Where the two gain paths are combined (FPGA or processor) | Decides where the bat code reads samples | Firmware analysis, or ask Tascam |
 | Display resolution and framebuffer format | Needed for the waterfall | Firmware analysis, or ask Tascam |

@@ -135,10 +135,13 @@ vectors point to two-instruction stubs that jump to low addresses such as
 0x0002834F. Those addresses are in ITCM, so the startup code copies time-critical
 code into ITCM. The audio interrupt handlers are probably among them.
 
-**SDRAM is large.** The reset handler first sets the stack pointer to 0x86600000,
-and the updater loads the whole update file into SDRAM at 0x822F3AD8. So at least
-102 MiB of SDRAM exists (0x80000000 to 0x86600000), probably 128 MiB. A 10 s
-stereo 32-bit float look-back buffer (15.4 MB) fits.
+**SDRAM is large.** The updater loads the whole 25.5 MB update file into SDRAM at
+0x822F3AD8, so at least about 60 MB of SDRAM is real. A teardown video shows two
+SDRAM chips, so the total is probably 64 MB or 128 MB. The reset handler sets its
+first stack pointer to 0x86600000, which suggests 128 MB, but it is not proof: if
+the SDRAM controller's address window is larger than the chips, a high address
+also works. A 10 s stereo 32-bit float look-back buffer (15.4 MB) should fit if the
+stock firmware leaves that much free, which is likely even at 64 MB.
 
 ## Start-up and update mode (V2.03)
 
@@ -158,7 +161,7 @@ From disassembly of the main application. Addresses are the running addresses.
    | 2 | 6 | Probably the FPGA update (see below) |
    | 0 | 8 | Not yet identified (possibly a settings reset) |
    | 3 | 5 | Not yet identified |
-   | none, USB power present | 1 | Normal start |
+   | none, and the function at 0x80DA9582 returns true (probably external power) | 1 | Normal start |
    | none | 0 | Normal start |
 
 3. `main()` then starts the RTOS. A system task runs a state machine (0x80DC7A3C)

@@ -90,6 +90,17 @@ BOOT_PATH = {
         (*_app(0x80DFBA40, 0x80DFDA64), "update mode screens, update procedure, early start-up"),
         (*_app(0x80DEFDFC, 0x80DEFED0), "flash erase and sector table"),
         (*_app(0x80E23ED4, 0x80E24800), "main flash writer and FPGA writer"),
+    ] + [
+        # Called directly by main() or the button check before the system mode is
+        # set. The functions these call in turn are not listed.
+        (*_app(start, end), "start-up code called before the boot button check")
+        for start, end in [
+            (0x80D9055C, 0x80D90580), (0x80D90D1C, 0x80D90D58), (0x80DA7618, 0x80DA7620),
+            (0x80DA93F0, 0x80DA9418), (0x80DA9542, 0x80DA9586), (0x80DA979C, 0x80DA98E0),
+            (0x80DAD594, 0x80DAD626), (0x80DDB4DA, 0x80DDB522), (0x80DF0F50, 0x80DF0F78),
+            (0x80DF11A4, 0x80DF151E), (0x80DF4C28, 0x80DF4DA0), (0x80DF502C, 0x80DF5056),
+            (0x80E17680, 0x80E17684), (0x80E178B8, 0x80E17962),
+        ]
     ],
 }
 
