@@ -361,14 +361,67 @@ second buffer is switched in is not read yet. Qt for MCUs draws through the PXP.
 | Processing routines | Chosen by a mode byte at 0x2a2ca: 2 runs 0x12368, 3 runs 0x13a68, 4 runs 0x81595d34, 5 runs 0x81337020, 6 runs 0x12a90, anything else runs 0x11380 (the largest, about 800 lines of floating-point code). A second byte at 0x2a2cb, probably the sample rate class, sets 8 or 16 descriptors per input block |
 | Who sets the modes | ITCM functions at 0x158b8, 0x15c78, 0x15d7a and 0x15f50 |
 
+**Input block layout** (from the processing routines; checked by reading all
+twelve loads in 0x12368). A frame is 12 signed 32-bit words, 4 time slots on
+each of 3 SAI receive lines, read RDR0, RDR1, RDR2 in turn, so word w is line
+w % 3, slot w / 3. A block holds 2 frames below 176.4 kHz and 4 frames at
+176.4 and 192 kHz (8 or 16 descriptors of 12 bytes); the rest of the 384 bytes
+is unused. Each input has two words, one per gain path of its ADC; both words of
+an input share one gain value in the code:
+
+| Input | Word that follows the gain setting | Other gain path |
+|---|---|---|
+| 1 | 2 | 1 |
+| 2 | 5 | 4 |
+| 3 | 0 | 3 |
+| 4 | 6 | 9 |
+| 5 | 8 | 7 |
+| 6 | 11 | 10 |
+
+Inputs 1 and 2 swap when the byte at 0x2a2ce is 1 (probably the mic capsule
+position), EXT IN shares the input 5/6 slots, and the raw words of inputs 3 and
+4 are inverted. The firmware switches from the first path to the second when the
+first nears -3 dBFS, so the first is the high-gain path at normal settings
+(fairly sure, not certain).
+
+**Output block layout.** A frame is 2 words, left then right (left/right fairly
+sure), 2 or 4 frames per block like the input. The stock code clamps to plus or
+minus 1, scales by 2^31 - 1 and multiplies by a negative output gain. The
+source is the monitor mix (pointers at 0x2a1ec and 0x2a1f0, normally the mix at
+0x200103b0); the 1 kHz test tone and the tuner's oscillator go out the same way.
+Only one stereo pair leaves the processor, so the headphones and the line output
+probably carry the same signal.
+
+**Mode bytes.** 0x2a2cb is the rate class: 0 for 44.1/48 kHz, 1 for 88.2/96,
+2 for 176.4/192 (set in 0x15c78). 0x2a2ca, the processing mode, normally equals
+the rate class (0 and 1 run 0x11380, 2 runs 0x12368, so a recording app at
+192 kHz runs 0x12368). Some apps override it: the tuner gets mode 5,
+metronome-style sample playback probably mode 4, another app mode 6, and USB
+audio interface use mode 3.
+
+**Timing.** At 192 kHz a block is 4 frames, 20.8 microseconds: the callback
+runs 48,000 times a second, leaving about 12,500 cycles per block at 600 MHz
+for the stock processing, the rest of the firmware and any hook. So the bat
+DSP cannot run in the callback as it is: a hook there must stay small (copy
+inputs 3 and 4 into a ring buffer, and copy the bat audio from another ring
+buffer into the output words), while the heavier work (the FFTs for the
+detector, waterfall and pitch shift, about 64 to 512 samples at a time) runs
+in an RTOS task or a low-priority interrupt. The bat app's code already
+accepts any block length, so only the plumbing around it changes.
+
 **Hook idea.** The audio callback is a pointer in RAM (the channel 9 handle at
-0x2001024c), not in code. Patched code that runs once the audio is set up could
-store its own function there: one that calls the stock callback and then runs
-the bat DSP on the same input block, writing the headphone part of the output
-block. That needs no change to the packed ITCM code. Still to find: which input
-slots hold inputs 3 and 4 (and at which gain), which output slots go to the
-headphones, the block length in frames at 192 kHz, and stock code that runs
-regularly (or when an app opens) to install the hook from.
+0x2001024c), not in code; `EDMA_SetCallback` (0x27fd4) is called once, from
+the run-once part of 0x2aa48, so a replaced pointer should survive sample rate
+changes. A replacement first reads the ring index at 0x20010268 (input block
+0x2000e340 + index x 0x180, output block 0x200104c0 + ((index + 2) % 3) x
+0x40), calls the stock callback, and then, for frames k = 0 to 3 at 192 kHz,
+reads input 3 from word 12k and input 4 from word 12k + 6, and writes the bat
+audio to output words 2k and 2k + 1. That needs no change to the packed ITCM
+code. Still open: stock code that runs regularly (or when an app opens) to
+install the pointer from, and a place to run the heavier DSP.
+
+Full notes from this part of the work are in `work/notes/audio.md` (not in
+git).
 
 **Not mapped yet:** the buttons, the wheel and the touch screen; the recording
 apps' screens; the WAV writer.
