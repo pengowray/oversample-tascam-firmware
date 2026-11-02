@@ -1,6 +1,10 @@
 # High-resolution spectrogram of an excerpt of a WAV file, for looking at call
-# shapes: mono mix, 512-point FFT every 64 samples, 0 to 96 kHz at 192 kHz.
-# Reads only the excerpt, so it works on multi-gigabyte X8 recordings.
+# shapes: mono mix, 0 to 96 kHz, 375 Hz per row and 1/3 ms per column (a
+# 512-point FFT every 64 samples at 192 kHz). Other sample rates get the FFT
+# size and hop scaled to keep the same scale, so recordings at 96, 192 or
+# 384 kHz can be compared side by side; above a 96 kHz file's 48 kHz limit the
+# image is black. Reads only the excerpt, so it works on multi-gigabyte X8
+# recordings. 16, 24 and 32-bit integer and 32-bit float WAVs.
 #
 # Usage: python3 tools/spectrogram.py IN.wav START_S DURATION_S OUT.png
 # Needs numpy and Pillow.
@@ -18,14 +22,25 @@ while i < len(head) - 8:
 tag, ch, rate, _, block, bits = fmt
 f.seek(off + int(start * rate) * block)
 raw = f.read(int(dur * rate) * block)
-dt = np.float32 if tag == 3 else (np.int16 if bits == 16 else np.int32)
-x = np.frombuffer(raw[:len(raw)//block*block], dtype=dt).reshape(-1, ch).astype(np.float64).mean(axis=1)
-N, hop = 512, 64
+raw = raw[:len(raw)//block*block]
+if tag == 3:
+    x = np.frombuffer(raw, dtype=np.float32)
+elif bits == 24:
+    b = np.frombuffer(raw, dtype=np.uint8).reshape(-1, 3).astype(np.int32)
+    x = (b[:, 0] | (b[:, 1] << 8) | (b[:, 2] << 16)) << 8 >> 8   # sign-extend
+else:
+    x = np.frombuffer(raw, dtype=np.int16 if bits == 16 else np.int32)
+x = x.reshape(-1, ch).astype(np.float64).mean(axis=1)
+ROWS, HZ_PER_ROW, COL_S = 256, 375.0, 64 / 192000
+N = int(round(rate / HZ_PER_ROW)); hop = int(round(rate * COL_S))
 win = np.hanning(N)
 cols = [np.abs(np.fft.rfft(x[k:k+N] * win)) for k in range(0, len(x) - N, hop)]
 S = 20 * np.log10(np.array(cols).T + 1e-12)          # bins x time
-S = S[:N//2][::-1]                                    # 0..96 kHz, high at top
-floor = np.median(S); img = np.clip((S - floor - 3) / 50, 0, 1)
+floor = np.median(S[1:min(ROWS, len(S))])
+if len(S) < ROWS:                                     # below 192 kHz: pad
+    S = np.vstack([S, np.full((ROWS - len(S), S.shape[1]), floor - 100)])
+S = S[:ROWS][::-1]                                    # 0..96 kHz, high at top
+img = np.clip((S - floor - 3) / 50, 0, 1)
 rgb = (np.stack([img**0.6, img**1.2, img**3], -1) * 255).astype(np.uint8)
 im = Image.fromarray(rgb).resize((min(1600, rgb.shape[1]), 512), Image.NEAREST)
 d = ImageDraw.Draw(im)
