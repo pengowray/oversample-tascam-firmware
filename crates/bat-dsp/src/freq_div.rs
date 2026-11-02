@@ -17,17 +17,24 @@
 //!
 //! `division` counts whole cycles (an upward and a downward crossing), so the
 //! output is at `f / division`, as on analogue FD detectors. Oversample counts
-//! each crossing as one, which puts its output at `2f / division`.
+//! each sign change as one, which puts its output at `2f / division`.
 //!
-//! Crossings are found by a comparator with hysteresis of one noise-floor
-//! level either side of zero, so small noise near zero does not add crossings.
-//! Each crossing time is interpolated between samples, which makes the
-//! frequencies in [`ZcPoint`]s accurate to well under 1%.
+//! Unlike Oversample, a crossing counts only once the signal passes a
+//! threshold either side of zero: 15% of the envelope, and at least the
+//! disarm level. This stops noise riding on a call from adding crossings. A
+//! gap of more than one 15 kHz cycle between crossings restarts the count, so
+//! the noise in the few milliseconds after a call, while the envelope decays,
+//! makes no clicks.
+//!
+//! Each zero-crossing time is interpolated between samples. At 192 kHz the
+//! frequencies in [`ZcPoint`]s are within 1% up to about 70 kHz and within
+//! 2% up to about 87 kHz.
 
 use crate::biquad::{Biquad, Butterworth4};
 use crate::osc::Nco;
 
 pub const DEFAULT_DIVISION: u32 = 10;
+pub const MAX_DIVISION: u32 = 1 << 16;
 /// The envelope must be this many times the noise floor to arm (about 12 dB).
 pub const DEFAULT_ARM_RATIO: f32 = 4.0;
 pub const HIGHPASS_HZ: f32 = 15_000.0;
@@ -47,7 +54,9 @@ const FLOOR_START: f32 = 1.0;
 const MIN_FLOOR: f32 = 1e-5;
 const MIN_ARM_RATIO: f32 = 1.1;
 /// A crossing must pass this fraction of the envelope either side of zero.
-const CROSSING_FRACTION: f32 = 0.25;
+/// Low enough that a sine sampled at 192 kHz passes it every half-cycle up to
+/// about 87 kHz.
+const CROSSING_FRACTION: f32 = 0.15;
 const BUTTERWORTH2_Q: f32 = core::f32::consts::FRAC_1_SQRT_2;
 
 /// What the divider sends to its output.
@@ -79,7 +88,8 @@ pub struct ZcPoint {
 /// running noise floor instead: the floor falls towards the envelope with a
 /// 10 ms time constant, and rises by at most 6 dB per second. A call lasts
 /// a few milliseconds, so it barely lifts the floor, while a lasting change
-/// in background noise is followed within a few seconds. The divider arms
+/// in background noise is followed within a few seconds. A steady tone that
+/// lasts several seconds is also treated as noise in the end. The divider arms
 /// when the envelope exceeds the floor times the arm ratio, and disarms when
 /// it drops below the floor times the square root of that ratio (halfway in
 /// dB). After construction or a reset, the floor needs about 0.1 s to fall
@@ -116,6 +126,11 @@ pub struct FrequencyDivider {
     high: bool,
     /// Previous high-passed sample.
     prev: f32,
+    /// The last sign change of the high-passed signal: the index of the
+    /// sample after it, and the samples either side.
+    zc_sample: u64,
+    zc_after: f32,
+    zc_before: f32,
     /// Whether a reference crossing has been taken since arming.
     has_ref: bool,
     /// Crossings since the reference crossing.
@@ -133,7 +148,7 @@ impl FrequencyDivider {
     pub fn new(sample_rate: f32) -> Self {
         let env_window = libm::roundf(sample_rate * ENVELOPE_MS / 1000.0).max(1.0);
         let click_len = (libm::roundf(sample_rate * CLICK_MS / 1000.0) as u32).max(2);
-        let mut fd = Self {
+        Self {
             sample_rate,
             highpass: Butterworth4::highpass(sample_rate, HIGHPASS_HZ),
             lowpass: Biquad::lowpass(sample_rate, OUTPUT_LOWPASS_HZ, BUTTERWORTH2_Q),
@@ -155,6 +170,9 @@ impl FrequencyDivider {
             armed: false,
             high: false,
             prev: 0.0,
+            zc_sample: 0,
+            zc_after: 0.0,
+            zc_before: 0.0,
             has_ref: false,
             crossings: 0,
             last_crossing: 0,
@@ -163,14 +181,12 @@ impl FrequencyDivider {
             click_pos: click_len,
             click_amp: 0.0,
             square_sign: 1.0,
-        };
-        fd.reset();
-        fd
+        }
     }
 
-    /// Number of cycles per output event. At least 1.
+    /// Number of cycles per output event, from 1 to 65536.
     pub fn set_division(&mut self, division: u32) {
-        self.division = division.max(1);
+        self.division = division.clamp(1, MAX_DIVISION);
         self.has_ref = false;
     }
 
@@ -198,8 +214,8 @@ impl FrequencyDivider {
         self.arm_ratio
     }
 
-    /// Linear output gain. At 1.0 a click peaks at about 0.8 times the
-    /// amplitude of the call that made it.
+    /// Linear output gain. At 1.0 the clicks, or the square wave, reach about
+    /// 0.8 times the amplitude of the call.
     pub fn set_gain(&mut self, gain: f32) {
         self.gain = gain;
     }
@@ -208,7 +224,7 @@ impl FrequencyDivider {
         self.gain
     }
 
-    /// Whether a call is being heard and its crossings counted.
+    /// Whether a call is present, so its crossings are being counted.
     pub fn is_armed(&self) -> bool {
         self.armed
     }
@@ -228,6 +244,9 @@ impl FrequencyDivider {
         self.armed = false;
         self.high = false;
         self.prev = 0.0;
+        self.zc_sample = 0;
+        self.zc_after = 0.0;
+        self.zc_before = 0.0;
         self.has_ref = false;
         self.crossings = 0;
         self.last_crossing = 0;
@@ -293,18 +312,19 @@ impl FrequencyDivider {
             self.has_ref = false;
         }
 
+        if (x < 0.0) != (self.prev < 0.0) {
+            self.zc_sample = self.sample;
+            self.zc_after = x;
+            self.zc_before = self.prev;
+        }
+
         let mut freq = None;
         let threshold = (floor * self.disarm_ratio).max(env * CROSSING_FRACTION);
         let crossed = if self.high { x < -threshold } else { x > threshold };
         if crossed {
             self.high = !self.high;
             if self.armed {
-                // How far back from this sample the threshold was crossed,
-                // by linear interpolation.
-                let level = if self.high { threshold } else { -threshold };
-                let d = x - self.prev;
-                let back = if d != 0.0 { ((x - level) / d).clamp(0.0, 1.0) } else { 0.0 };
-                freq = self.on_crossing(back, env);
+                freq = self.on_crossing(env);
             }
         }
         self.prev = x;
@@ -335,14 +355,13 @@ impl FrequencyDivider {
     /// `max_gap` restarts the count, so the slow crossings of noise after a
     /// call cannot complete it.
     #[inline]
-    fn on_crossing(&mut self, back: f32, env: f32) -> Option<f32> {
+    fn on_crossing(&mut self, env: f32) -> Option<f32> {
         let gap = self.sample - self.last_crossing;
         self.last_crossing = self.sample;
         if !self.has_ref || gap > self.max_gap {
             self.has_ref = true;
             self.crossings = 0;
-            self.ref_sample = self.sample;
-            self.ref_back = back;
+            (self.ref_sample, self.ref_back) = self.zero_crossing_time();
             return None;
         }
         self.crossings += 1;
@@ -358,11 +377,22 @@ impl FrequencyDivider {
         self.click_amp = self.gain * env;
         self.click_osc.reset_phase();
 
-        let whole = (self.sample - self.ref_sample).min(u32::MAX as u64) as u32;
+        let (sample, back) = self.zero_crossing_time();
+        let whole = (sample - self.ref_sample).min(u32::MAX as u64) as u32;
         let span = whole as f32 - (back - self.ref_back);
-        self.ref_sample = self.sample;
+        self.ref_sample = sample;
         self.ref_back = back;
         Some(self.division as f32 * self.sample_rate / span)
+    }
+
+    /// Time of the last sign change, by linear interpolation: `back` samples
+    /// before sample `sample`.
+    #[inline]
+    fn zero_crossing_time(&self) -> (u64, f32) {
+        // Zero only before the first sign change after a reset.
+        let d = self.zc_after - self.zc_before;
+        let back = if d != 0.0 { self.zc_after / d } else { 0.0 };
+        (self.zc_sample, back)
     }
 }
 

@@ -10,8 +10,8 @@
 //! a ring buffer, so a trigger can include sound from just before it. The
 //! window plays back with 4-point cubic (Catmull-Rom) interpolation.
 //!
-//! Defaults: 50 ms before the trigger, 250 ms after it, slowed 10 times, so a
-//! window plays for 3 s.
+//! Defaults: 50 ms before the trigger, 250 ms after it, and a factor of 10,
+//! so a window plays for 3 s.
 
 pub const DEFAULT_PRE_MS: f32 = 50.0;
 pub const DEFAULT_POST_MS: f32 = 250.0;
@@ -69,7 +69,7 @@ pub struct TimeExpander<'a> {
 
 impl<'a> TimeExpander<'a> {
     /// `storage` holds the ring buffer. Its length limits the window: at
-    /// 192 kHz the default 300 ms window needs 57 600 samples.
+    /// 192 kHz the default 300 ms window needs 57,600 samples.
     pub fn new(sample_rate: f32, storage: &'a mut [f32]) -> Self {
         let mut te = Self {
             sample_rate,
@@ -324,7 +324,8 @@ mod tests {
         let burst_len = 1_920;
         let play_len = (PRE + POST) * 10;
         let mut x = std::vec![0.0; at + POST + play_len + 1_000];
-        x[burst_start..burst_start + burst_len].copy_from_slice(&sine(FS, 50_000.0, 0.5, burst_len));
+        x[burst_start..burst_start + burst_len]
+            .copy_from_slice(&sine(FS, 50_000.0, 0.5, burst_len));
         let y = run_with_trigger(&mut te, &x, 512, at);
         assert_eq!(te.state(), ExpanderState::Idle);
 
