@@ -579,7 +579,17 @@ from step 6:
 rises when you rub or tap the microphone; and in each mode the "dsp", "draw",
 "core" and "stock" figures, and whether "lost" keeps rising.
 
-## Step 8 test file: hot code in ITCM, hot state in DTCM (built 2026-11-03, not yet installed)
+## Step 8 test file: hot code in ITCM, hot state in DTCM (installed 2026-11-03: HET keeps up)
+
+**Result.** HET kept up: "dsp 53% draw 15%", "dry 2 lost 0" (from 73% in
+step 6). PITCH did not ("dsp 78%", input lost, stuttering noise). The core
+runs at 600 MHz, and the stock audio callback alone takes 32% of the cycles at
+192 kHz, the patch's part of the audio hook 4%. Input word peaks with
+microphones connected: word 0 (input 3) -68 dBFS, word 6 (input 4) -61 dBFS,
+the low-gain words about -78, inputs 5 and 6 about -78, inputs 1 and 2 zero.
+The waterfall showed steady lines near 37 kHz and 72 kHz, probably the X8's
+known ultrasonic hum. HET and COMB are the priority from here; PITCH is set
+aside.
 
 `work/patch6/#PortaX8_0224.203` (B224, SHA-256 `e9e3e7fc…bee7b16c`). The FlexRAM is
 288 KB of ITCM and 224 KB of DTCM (IOMUXC_GPR17 = 0xffffeaaa, set by
