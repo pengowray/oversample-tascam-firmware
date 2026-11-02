@@ -8,6 +8,8 @@ between Oversample (`~/projects/batchi`) and TASCAM.
 - [docs/FEASIBILITY.md](docs/FEASIBILITY.md): hardware, frequency range, features, ways to build it, questions for TASCAM.
 - [docs/HOMEBREW.md](docs/HOMEBREW.md): firmware update format, flash layout, patching plan, recovery.
 - [crates/bat-dsp](crates/bat-dsp/README.md): the real-time bat DSP library (Rust, `no_std`): heterodyne, comb, frequency division, time expansion, pitch shift, spectrum, call detection.
+- [crates/bat-app](crates/bat-app/src/lib.rs): the bat app itself (`no_std`): listening modes, call detection and the 320 × 480 screen.
+- [web/](web/README.md): an emulator page that runs the bat app in the browser on WAV files or a microphone. Screens of each mode are in [docs/screens/](docs/screens/).
 - [tools/x8fw.py](tools/x8fw.py): unpack, check and repack firmware update files (Python 3, standard library only).
 - [tools/fwdis.py](tools/fwdis.py): quick disassembly and cross-reference helpers for the main application (needs `capstone` and `numpy`).
 

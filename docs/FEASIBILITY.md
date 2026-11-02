@@ -272,7 +272,8 @@ In order of value:
    `oversample-core` and against X8 recordings, and measure cycle counts on a
    Teensy 4.1.
 3. **Integration on the X8.** Route A with Tascam, or route B.
-4. **Display.** Waterfall, zero-crossing plot and call snapshots.
+4. **Display (started: `crates/bat-app`, with a web emulator in `web/`).**
+   Waterfall and call snapshots are done; the zero-crossing plot is not.
 5. **Later.** Unattended recording, GUANO metadata, phone control by audio pulses or
    Bluetooth, experiments above 192 kHz.
 
