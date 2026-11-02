@@ -6,7 +6,7 @@ use core::ptr;
 use core::sync::atomic::{AtomicBool, AtomicU32, Ordering::Acquire, Ordering::Relaxed, Ordering::Release};
 
 use bat_app::fb::Rgb565Buffer;
-use bat_app::{BatApp, Button, Mode};
+use bat_app::{BatApp, Buffers, Button, Mode};
 use embedded_graphics::pixelcolor::Rgb565;
 use embedded_graphics::prelude::*;
 use embedded_graphics::primitives::Rectangle;
@@ -103,7 +103,7 @@ pub struct Header {
 
 #[unsafe(no_mangle)]
 #[unsafe(link_section = ".header")]
-pub static X8_PATCH_HEADER: Header = Header { magic: *b"BATX", version: 5, key_hook };
+pub static X8_PATCH_HEADER: Header = Header { magic: *b"BATX", version: 6, key_hook };
 
 const SAMPLE_RATE: f32 = 192_000.0;
 /// Output samples buffered before the headphones start playing the bat app's
@@ -114,10 +114,13 @@ const PRIME_SAMPLES: u32 = 8_192;
 const MAX_FRAMES_PER_CALL: u32 = 24_576;
 const CHUNK: usize = 1_024;
 const RENDERS_PER_SECOND: u32 = 10;
-/// The DSP task stops a pass after this much wall time (8 ms) even with input
-/// waiting, then draws and sleeps, so a mode that cannot keep up drops input
-/// instead of starving Qt (which also handles powering off).
-const PASS_BLOCKS: u32 = 384;
+/// The DSP task stops a pass after this much wall time (30 ms) even with input
+/// waiting, then draws and sleeps, so a mode that cannot keep up cannot starve
+/// Qt (which also handles powering off). Input left beyond BACKLOG_FRAMES
+/// after a pass is dropped, so the sound stays current.
+const PASS_BLOCKS: u32 = 1_440;
+const BACKLOG_FRAMES: u32 = 4_096;
+const SLEEP_MS: u32 = 2;
 /// Gain on the app's output before the stock headphone gain (+18 dB), with a
 /// ceiling of -6 dBFS: bat calls are often 40 to 60 dB below full scale.
 const OUTPUT_GAIN: f32 = 8.0;
@@ -201,6 +204,7 @@ static OUT_WRITE: AtomicU32 = AtomicU32::new(0); // task 1
 static OUT_READ: AtomicU32 = AtomicU32::new(0); // interrupt
 static PRIMED: AtomicBool = AtomicBool::new(false); // interrupt
 static UNDERRUNS: AtomicU32 = AtomicU32::new(0); // interrupt
+static BACKLOG_DROPPED: AtomicU32 = AtomicU32::new(0); // DSP task
 /// Peak magnitude of each of the 12 words of an input frame since the last
 /// redraw: the interrupt raises them, the drawing context reads and clears.
 static WORD_PEAKS: [AtomicU32; 12] = [const { AtomicU32::new(0) }; 12];
@@ -233,20 +237,61 @@ struct Slot<T>(UnsafeCell<MaybeUninit<T>>);
 unsafe impl<T> Sync for Slot<T> {}
 
 /// The bat app: built in task 1 on the patch stack, then used only by the
-/// DSP task (or, without one, by task 1).
-#[unsafe(link_section = ".noinit")]
+/// DSP task (or, without one, by task 1). Its state is in DTCM; its large
+/// buffers are in SDRAM.
+#[unsafe(link_section = ".dtcm")]
 static APP: Slot<BatApp<'static>> = Slot(UnsafeCell::new(MaybeUninit::uninit()));
+#[unsafe(link_section = ".noinit")]
+static BUFFERS: Slot<Buffers> = Slot(UnsafeCell::new(MaybeUninit::uninit()));
+
+unsafe extern "C" {
+    /// The hot code's place in ITCM and its copy in the patch (x8patch.ld).
+    static __itcm_start: u8;
+    static __itcm_end: u8;
+    static __itcm_load: u8;
+}
+/// Checksum of the code copied into ITCM, to stop processing if anything
+/// changes it (no stock code is known to use that part of ITCM).
+static ITCM_SUM: AtomicU32 = AtomicU32::new(0);
+static ITCM_OK: AtomicBool = AtomicBool::new(false);
+static ITCM_CHECKED_AT: AtomicU32 = AtomicU32::new(0);
+
+fn itcm_code() -> &'static [u32] {
+    // SAFETY: linker symbols bounding the .itcm section, 8-byte aligned.
+    unsafe {
+        let start = &raw const __itcm_start as *const u32;
+        let end = &raw const __itcm_end as *const u32;
+        core::slice::from_raw_parts(start, end.offset_from(start) as usize)
+    }
+}
+
+fn itcm_sum() -> u32 {
+    itcm_code().iter().fold(0u32, |a, &w| a.rotate_left(1) ^ w)
+}
+
+/// Copy the hot code into ITCM. Must run before anything calls it.
+fn load_itcm() {
+    let code = itcm_code();
+    // SAFETY: the load copy is as long as the section; ITCM is writable.
+    unsafe {
+        let from = &raw const __itcm_load as *const u32;
+        ptr::copy_nonoverlapping(from, code.as_ptr() as *mut u32, code.len());
+        core::arch::asm!("dsb sy", "isb sy");
+    }
+    ITCM_SUM.store(itcm_sum(), Relaxed);
+    ITCM_OK.store(true, Relaxed);
+}
 /// The off-screen frame: cached, so drawing is fast, then copied to the
 /// display buffer in one pass.
 #[unsafe(link_section = ".noinit")]
 static FRAME: Slot<[u16; stock::WIDTH * stock::HEIGHT]> = Slot(UnsafeCell::new(MaybeUninit::uninit()));
 /// The input ring: (input 3, input 4) frames from the interrupt.
-#[unsafe(link_section = ".noinit")]
+#[unsafe(link_section = ".dtcm")]
 static IN_RING: Slot<[[i32; 2]; spare::IN_FRAMES as usize]> = Slot(UnsafeCell::new(MaybeUninit::uninit()));
-const DSP_STACK_BYTES: usize = 48 * 1024;
+const DSP_STACK_BYTES: usize = 32 * 1024;
 #[repr(C, align(8))]
 struct DspStack([u8; DSP_STACK_BYTES]);
-#[unsafe(link_section = ".noinit")]
+#[unsafe(link_section = ".dtcm")]
 static DSP_STACK: Slot<DspStack> = Slot(UnsafeCell::new(MaybeUninit::uninit()));
 /// Where Qt's present function writes while the bat screen is up (it writes
 /// at offsets 0x0, 0x10 and 0x4c of what it takes for the LCDIF registers).
@@ -476,6 +521,35 @@ fn apply_actions(app: &mut BatApp<'static>) {
     }
 }
 
+/// Once a second, check that the code in ITCM is unchanged; if anything has
+/// written over it, stop running it for good.
+fn itcm_still_ok() -> bool {
+    if !ITCM_OK.load(Relaxed) {
+        return false;
+    }
+    let now = BLOCKS.load(Relaxed);
+    if now.wrapping_sub(ITCM_CHECKED_AT.load(Relaxed)) >= blocks_per_second() {
+        ITCM_CHECKED_AT.store(now, Relaxed);
+        if itcm_sum() != ITCM_SUM.load(Relaxed) {
+            ITCM_OK.store(false, Relaxed);
+            return false;
+        }
+    }
+    true
+}
+
+/// Drop input beyond BACKLOG_FRAMES, so a mode that cannot keep up plays
+/// current sound with gaps rather than ever later sound.
+fn drop_backlog() {
+    let read = IN_READ.load(Relaxed);
+    let waiting = IN_WRITE.load(Acquire).wrapping_sub(read);
+    if waiting > BACKLOG_FRAMES {
+        let skip = waiting - BACKLOG_FRAMES;
+        IN_READ.store(read.wrapping_add(skip), Release);
+        BACKLOG_DROPPED.store(BACKLOG_DROPPED.load(Relaxed).wrapping_add(skip), Relaxed);
+    }
+}
+
 /// At the start of each opening of the bat screen: empty the rings, from the
 /// consumer's side of the input one and the producer's side of the output one,
 /// and drop actions queued before.
@@ -540,12 +614,17 @@ extern "C" fn dsp_task(_: isize) {
             sleep_ms(20);
             continue;
         }
+        if !itcm_still_ok() {
+            sleep_ms(20);
+            continue;
+        }
         // SAFETY: built before BAT_ACTIVE is set; only this task uses it.
         let app = unsafe { app() };
         new_session();
         apply_actions(app);
         let start = BLOCKS.load(Relaxed);
         process_input(app, u32::MAX, PASS_BLOCKS);
+        drop_backlog();
         let processed = BLOCKS.load(Relaxed);
         DSP_BLOCKS.store(DSP_BLOCKS.load(Relaxed).wrapping_add(processed.wrapping_sub(start)), Relaxed);
         if processed.wrapping_sub(LAST_RENDER.load(Relaxed)) >= blocks_per_second() / RENDERS_PER_SECOND {
@@ -562,19 +641,24 @@ extern "C" fn dsp_task(_: isize) {
         }
         // Sleep after every pass, even with input waiting: the audio interrupt
         // adds 4 frames every 21 us, so the ring is never empty, and Qt (task
-        // 21, priority 17) still runs the hidden app, REC included. 4 ms is 2
-        // or 3 kernel ticks, about 1,000 frames a pass.
-        sleep_ms(4);
+        // 21, priority 17) still runs the hidden app, REC included.
+        sleep_ms(SLEEP_MS);
     }
 }
 
 /// Build the app (the first time), start feeding it, and show its screen.
 extern "C" fn enter_work() {
     if !APP_READY.load(Relaxed) {
+        load_itcm();
         // SAFETY: spare SDRAM no stock code uses (see `spare`).
         let te = unsafe { core::slice::from_raw_parts_mut(spare::TE_STORAGE as *mut f32, spare::TE_SAMPLES) };
+        // SAFETY: zeroing the buffers in place makes them a valid Buffers.
+        let buffers = unsafe {
+            ptr::write_bytes(BUFFERS.0.get(), 0, 1);
+            (*BUFFERS.0.get()).assume_init_mut()
+        };
         // SAFETY: init_in_place writes every field; only task 1 uses APP.
-        unsafe { BatApp::init_in_place((*APP.0.get()).as_mut_ptr(), SAMPLE_RATE, te) };
+        unsafe { BatApp::init_in_place((*APP.0.get()).as_mut_ptr(), SAMPLE_RATE, te, buffers) };
         APP_READY.store(true, Relaxed);
         start_task();
     }
@@ -704,8 +788,9 @@ fn render() {
     let mut line = Line::new();
     let _ = write!(
         line,
-        "{} | key {}/s | dsp {}% draw {}% | core {} MHz",
+        "{}{} | key {}/s | dsp {}% draw {}% | core {} MHz",
         if task > 0 { "task" } else { "no task" },
+        if ITCM_OK.load(Relaxed) { "" } else { " ITCM CHANGED" },
         CALLS_PER_S.load(Relaxed),
         DSP_PERMILLE.load(Relaxed) / 10,
         DRAW_PERMILLE.load(Relaxed) / 10,
@@ -724,7 +809,7 @@ fn render() {
         IN_WRITE.load(Relaxed).wrapping_sub(IN_READ.load(Relaxed)),
         OUT_WRITE.load(Relaxed).wrapping_sub(OUT_READ.load(Relaxed)),
         UNDERRUNS.load(Relaxed),
-        IN_DROPPED.load(Relaxed),
+        IN_DROPPED.load(Relaxed).wrapping_add(BACKLOG_DROPPED.load(Relaxed)),
     );
     draw_strip(&mut fb, STRIP_ROWS as i32, &line, Rgb565::new(4, 8, 4));
     // Peak level of each input word since the last redraw, in dB below full

@@ -540,7 +540,13 @@ from step 5:
 up, quick response to PLAY and the wheel, and no blanking. The "dsp" and
 "draw" figures say how much of the processor the app needs at 192 kHz.
 
-## Step 7 test file: capped passes, gain, input word levels (built 2026-11-03, not yet installed)
+## Step 7 test file: capped passes, gain, input word levels (installed 2026-11-03: stutters)
+
+**Result.** No crashes, but the audio stuttered in every mode: an 8 ms pass,
+then about 13 ms of drawing and a 4 ms sleep, made less audio than the
+headphones used. Retesting B222 showed inputs 3 and 4 the right way round and
+audible output in COMB (keys, a dog repeller) at higher volume; the waterfall
+showed nothing above about 40 kHz.
 
 `work/patch5/#PortaX8_0223.203` (B223, SHA-256 `36f9b8ef…09800f2481`). Changes
 from step 6:
@@ -572,6 +578,37 @@ from step 6:
 **What to read off.** With a microphone on input 3 only, which word's figure
 rises when you rub or tap the microphone; and in each mode the "dsp", "draw",
 "core" and "stock" figures, and whether "lost" keeps rising.
+
+## Step 8 test file: hot code in ITCM, hot state in DTCM (built 2026-11-03, not yet installed)
+
+`work/patch6/#PortaX8_0224.203` (B224, SHA-256 `e9e3e7fc…bee7b16c`). The FlexRAM is
+288 KB of ITCM and 224 KB of DTCM (IOMUXC_GPR17 = 0xffffeaaa, set by
+0x80e3f958). The stock ITCM code ends at 0x31a92 and the stock DTCM data,
+zeroed ranges and main stack end at 0x20011cd8, leaving about 90 KB and 152 KB
+that no stock code refers to (Ghidra finds no references, and the raw words
+that look like addresses there are instruction bytes or image data). Both are
+single-cycle memories, with no cache to miss.
+
+- **Hot code in ITCM.** The linker script places the app's processing (36 KB,
+  most of the DSP inlined into it), the DSP library, the FFT, libm, the
+  snapshot builder and the input loop, 55.8 KB in all, to run at 0x31b00; the
+  patch stores it after its header and copies it into ITCM on the first
+  opening, before anything calls it. The linker adds 21 long-branch veneers
+  between SDRAM and ITCM. A checksum of the ITCM code is checked once a
+  second; if anything has changed it, the DSP task stops and the strip says
+  "ITCM CHANGED".
+- **Hot state in DTCM.** `bat-app` now takes its large buffers (waterfall,
+  snapshot history, snapshot: 136 KB, in SDRAM) from the caller, so the app's
+  own state (43 KB), the input ring (64 KB) and the DSP task's stack (32 KB)
+  fit in DTCM from 0x20011d00.
+- **Processing.** Passes process until they catch up again, for at most 30
+  ms; input waiting beyond 4,096 frames (21 ms) is then dropped, so a mode
+  that cannot keep up plays current sound with gaps. The task sleeps 2 ms
+  after each pass.
+
+**What to read off.** The same figures as step 7, in each mode: whether
+"dsp" has dropped from about 73% in HET, whether PITCH now keeps up, and
+whether "lost" stays still.
 
 ## Firmware map (V2.03, in progress)
 

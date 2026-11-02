@@ -42,6 +42,20 @@ HOOKS = {
 HEADER_FIELDS = ["magic", "version", "key_hook"]
 
 
+def elf_symbols(data, shoff, shentsize, shnum):
+    """Names and values of the ELF file's symbols."""
+    out = {}
+    for i in range(shnum):
+        _, kind, _, _, offset, size, link = struct.unpack_from("<IIIIIII", data, shoff + i * shentsize)
+        if kind != 2:      # SHT_SYMTAB
+            continue
+        strings = struct.unpack_from("<I", data, shoff + link * shentsize + 16)[0]
+        for k in range(size // 16):
+            name, value = struct.unpack_from("<II", data, offset + k * 16)
+            out[data[strings + name:data.index(b"\0", strings + name)].decode()] = value
+    return out
+
+
 def elf_image(path):
     """The patch's bytes from PATCH_BASE to the end of its last section, with
     .bss as zeros. .noinit, which the patch writes before reading, is left out
@@ -52,14 +66,22 @@ def elf_image(path):
     shoff, = struct.unpack_from("<I", data, 0x20)
     shentsize, shnum, shstrndx = struct.unpack_from("<HHH", data, 0x2E)
     names_at = struct.unpack_from("<I", data, shoff + shstrndx * shentsize + 16)[0]
+    symbols = elf_symbols(data, shoff, shentsize, shnum)
     out = bytearray()
     for i in range(shnum):
         name, kind, flags, addr, offset, size = struct.unpack_from("<IIIIII", data, shoff + i * shentsize)
         if not flags & 2 or size == 0:     # SHF_ALLOC
             continue
-        if not (PATCH_BASE <= addr and addr + size <= PATCH_LIMIT):
-            raise ValueError(f"section at 0x{addr:08x} is outside the patch region")
         section = data[names_at + name:data.index(b"\0", names_at + name)].decode()
+        if section == ".itcm":
+            # Runs in ITCM, stored at its load address in the patch region.
+            print(f"patch: .itcm {size:,} bytes, runs at 0x{addr:08x}, stored at 0x{symbols['__itcm_load']:08x}")
+            addr = symbols["__itcm_load"]
+        if section == ".dtcm":
+            print(f"patch: .dtcm {size:,} bytes at 0x{addr:08x} to 0x{addr + size:08x}, not stored")
+            continue
+        if not (PATCH_BASE <= addr and addr + size <= PATCH_LIMIT):
+            raise ValueError(f"section {section} at 0x{addr:08x} is outside the patch region")
         if section == ".noinit":
             print(f"patch: .noinit {size:,} bytes at 0x{addr:08x} to 0x{addr + size:08x}, not stored")
             continue
