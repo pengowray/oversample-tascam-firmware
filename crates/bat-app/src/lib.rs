@@ -37,7 +37,8 @@ pub const WIDTH: usize = 320;
 pub const HEIGHT: usize = 480;
 
 /// Frequency range of the waterfall and the call snapshot.
-pub const VIEW_LO_HZ: f32 = 15_000.0;
+/// From 0 Hz, so audible sound shows too and the input can be seen working.
+pub const VIEW_LO_HZ: f32 = 0.0;
 pub const VIEW_HI_HZ: f32 = 96_000.0;
 
 /// Time covered by one waterfall pixel column.
@@ -95,12 +96,14 @@ pub enum Mode {
     Te,
     /// Pitch shift: frequencies divided, at real-time speed.
     Pitch,
+    /// The input as it is, unshifted (only audible sound is heard).
+    Thru,
 }
 
 impl Mode {
-    pub const ALL: [Mode; 5] = [Mode::Het, Mode::Comb, Mode::Fd, Mode::Te, Mode::Pitch];
+    pub const ALL: [Mode; 6] = [Mode::Het, Mode::Comb, Mode::Fd, Mode::Te, Mode::Pitch, Mode::Thru];
     /// The modes the X8 runs fast enough: PITCH cannot keep up there.
-    pub const WITHOUT_PITCH: [Mode; 4] = [Mode::Het, Mode::Comb, Mode::Fd, Mode::Te];
+    pub const WITHOUT_PITCH: [Mode; 5] = [Mode::Het, Mode::Comb, Mode::Fd, Mode::Te, Mode::Thru];
 
     /// Button label. HET, FD and TE are the usual names on bat detectors.
     pub fn label(self) -> &'static str {
@@ -110,6 +113,7 @@ impl Mode {
             Mode::Fd => "FD",
             Mode::Te => "TE",
             Mode::Pitch => "PITCH",
+            Mode::Thru => "1:1",
         }
     }
 }
@@ -499,6 +503,7 @@ impl<'a> BatApp<'a> {
             Mode::Fd => self.fd.reset(),
             Mode::Te => {}
             Mode::Pitch => self.pitch.reset(),
+            Mode::Thru => {}
         }
     }
 
@@ -661,6 +666,7 @@ impl<'a> BatApp<'a> {
             Mode::Fd => self.fd_index = step(self.fd_index, FD_DIVISIONS.len()),
             Mode::Te => self.te_index = step(self.te_index, TE_FACTORS.len()),
             Mode::Pitch => self.pitch_index = step(self.pitch_index, PITCH_FACTORS.len()),
+            Mode::Thru => {}
         }
         self.apply_settings();
     }
@@ -694,16 +700,37 @@ impl<'a> BatApp<'a> {
         } else if let Some(mode) = layout::mode_button_at(x, y, self.modes) {
             self.set_mode(mode);
         } else if let Some(hz) = layout::waterfall_freq_at(x, y) {
-            match self.mode {
-                Mode::Het => self.set_het_lo(hz),
-                Mode::Comb => {
-                    // Move the comb so its nearest LO lands on the tapped frequency.
-                    let spacing = DEFAULT_COMB_SPACING_HZ;
-                    let i = libm::roundf((hz - self.comb_first_hz) / spacing).clamp(0.0, (COMB_COUNT - 1) as f32);
-                    self.set_comb_first(hz - i * spacing);
-                }
-                _ => {}
+            self.tune_to(hz);
+        }
+    }
+
+    /// A finger moving after touching down at a point that was passed to
+    /// [`touch`](Self::touch): on the waterfall, HET and COMB follow it.
+    pub fn drag(&mut self, x: i32, y: i32) {
+        if self.screen == Screen::Main {
+            if let Some(hz) = layout::waterfall_freq_at(x, y) {
+                self.tune_to(hz);
             }
+        }
+    }
+
+    /// Whether a touch down at (x, y) starts a drag that tunes.
+    pub fn is_draggable(&self, x: i32, y: i32) -> bool {
+        self.screen == Screen::Main
+            && matches!(self.mode, Mode::Het | Mode::Comb)
+            && layout::waterfall_freq_at(x, y).is_some()
+    }
+
+    fn tune_to(&mut self, hz: f32) {
+        match self.mode {
+            Mode::Het => self.set_het_lo(hz),
+            Mode::Comb => {
+                // Move the comb so its nearest LO lands on the frequency.
+                let spacing = DEFAULT_COMB_SPACING_HZ;
+                let i = libm::roundf((hz - self.comb_first_hz) / spacing).clamp(0.0, (COMB_COUNT - 1) as f32);
+                self.set_comb_first(hz - i * spacing);
+            }
+            _ => {}
         }
     }
 
@@ -784,6 +811,7 @@ impl<'a> BatApp<'a> {
             Mode::Fd => self.fd.process(mono, out),
             Mode::Te => out.copy_from_slice(&self.te_out[..len]),
             Mode::Pitch => self.pitch.process(mono, out),
+            Mode::Thru => out.copy_from_slice(mono),
         }
         out_l.copy_from_slice(out);
         out_r.copy_from_slice(out);

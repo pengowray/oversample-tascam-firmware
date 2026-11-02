@@ -42,6 +42,7 @@ fn main() {
         "fd" => Mode::Fd,
         "te" => Mode::Te,
         "pitch" => Mode::Pitch,
+        "thru" => Mode::Thru,
         _ => Mode::Het,
     };
     let scale: usize = args.get(5).map(|s| s.parse().unwrap()).unwrap_or(2).clamp(1, 4);

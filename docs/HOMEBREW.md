@@ -620,7 +620,17 @@ single-cycle memories, with no cache to miss.
 "dsp" has dropped from about 73% in HET, whether PITCH now keeps up, and
 whether "lost" stays still.
 
-## Step 9 test file: the BATS tile, recording, pop-ups (built 2026-11-03, not yet installed)
+## Step 9 test file: the BATS tile, recording, pop-ups (installed 2026-11-03: works)
+
+**Result.** Tapping BATS opens the bat screen over MANUAL. MANUAL's phantom
+power question shows first (the pop-up handling gives it the display) and the
+bat screen follows once it is answered. REC works as in MANUAL: the REC LED
+blinks in standby and lights while recording. Holding HOME returns to the
+LAUNCHER. Debug strip: app 2, st 1, dsp 55%, draw 14%. Audio, headphones and
+the wrong-rate notice were not tried. The user asked for PLAY instead of MARK
+x3 to switch screens (MARK x3 left marks in takes), touch for the mode buttons
+and HET tuning, the waterfall from 0 Hz, and a 1:1 mode: step 10.
+
 
 `work/patch7/#PortaX8_0225.203` (B225, SHA-256 `384bfbf2…7d114cfe`). The bat
 screen now opens like an app and works over MANUAL's recorder.
@@ -667,6 +677,34 @@ blink, then turn red and count; after stopping, is there a 192 kHz file on the
 card, with marks where MARK was pressed? Do the wheel and PLAY work during the
 take? Does a pop-up (REC without a card) show and then give the bat screen back?
 Does holding HOME return to the LAUNCHER? At 48 kHz, does the notice show?
+
+## Step 10 test file: PLAY switches screens, touch, 0 Hz, 1:1 (built 2026-11-03, not yet installed)
+
+`work/patch8/#PortaX8_0226.203` (B226, SHA-256 `006146be…0c17955e`).
+
+- **PLAY** swaps between the bat screen and MANUAL's own screen, in the app
+  BATS opened (MANUAL's own playback is not used there; a short HOME press
+  stops playback if it starts some other way). MARK x3 is gone, so the bat
+  screen opens only from the BATS tile. MARK with the bat screen up marks the
+  bat app (in TE, captures a call), and during a take also marks the file;
+  with the bat screen hidden, MARK goes to MANUAL unchanged.
+- **Touch.** Touch polling now stays on. The patch retargets the touch poll's
+  only call to Qt (`bl 0x80e0364a` at 0x80df501a, task 9) to `touch_hook`:
+  while the bat screen is up, touches go to the bat app (the release of a touch
+  Qt saw start still goes to Qt). A touch down is a tap (mode buttons, the
+  menu button, the settings screen, tuning on the waterfall); moving the
+  finger on the waterfall keeps tuning HET or COMB. Whether the poll's x and y
+  are screen pixels (320 x 480, portrait) is not known: the second debug line
+  shows the last touch ("touch down x,y").
+- **Waterfall** from 0 to 96 kHz (was 15 to 96 kHz).
+- **1:1 mode** plays the input unshifted, for audible sound and to check that
+  the input works. PLAY no longer cycles modes; tap the buttons.
+
+**What to check.** Do taps land where the finger is (mode buttons, the menu
+button at the top left), and does dragging on the waterfall in HET move the
+tuning line? Does PLAY swap screens both ways, also during a take? With mics
+and headphones: is there sound in 1:1 and HET, and does the 0 to 20 kHz part of
+the waterfall show audible sound?
 
 ## Firmware map (V2.03, in progress)
 

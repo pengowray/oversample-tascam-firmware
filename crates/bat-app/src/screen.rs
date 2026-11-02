@@ -243,7 +243,8 @@ fn waterfall(app: &BatApp, fb: Fb) {
     // Frequency axis: a label and a tick every 10 kHz, the tick in the
     // resistor colour of its tens digit, as Oversample marks frequencies.
     text(fb, &SMALL, "kHz", 2, WF_Y + 7, LEFT, TEXT_MUTED);
-    for (k, &color) in RESISTOR.iter().enumerate().skip(2) {
+    let first = libm::ceilf(VIEW_LO_HZ / 10_000.0) as usize;
+    for (k, &color) in RESISTOR.iter().enumerate().skip(first) {
         let y = y_of(k as f32 * 10_000.0);
         text(fb, &SMALL, format_args!("{}", k * 10), 24, y + 4, RIGHT, TEXT_MUTED);
         fill(fb, Rectangle::new(Point::new(25, y), Size::new(3, 1)), color);
@@ -285,7 +286,7 @@ fn waterfall(app: &BatApp, fb: Fb) {
                 }
             }
         }
-        Mode::Fd | Mode::Pitch => {}
+        Mode::Fd | Mode::Pitch | Mode::Thru => {}
     }
 
     // Marked detections (ticks in the strip under the waterfall, coloured by
@@ -426,6 +427,9 @@ fn value_line(app: &BatApp, fb: Fb) {
                     text(fb, &BODY, format_args!("Playing, {:.1} s left", app.te_seconds_left()), 312, y, RIGHT, TEXT)
                 }
             };
+        }
+        Mode::Thru => {
+            text(fb, &BODY, "Plays the input unchanged", label, y, LEFT, TEXT_MUTED);
         }
         Mode::Pitch => {
             text(fb, &BODY, "Divide by", label, y, LEFT, TEXT_MUTED);

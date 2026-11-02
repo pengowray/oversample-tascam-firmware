@@ -8,9 +8,10 @@ The patch is linked to run from SDRAM 0x81830000 (see crates/x8-patch). The
 bootloader copies flash 0x20000 onwards into SDRAM from 0x80000000, so storing
 the patch at flash 0x1850000, straight after the stock image (which ends with
 its checksum at 0x184ffff), puts it at that address before the application
-starts. The tool then points the stock firmware's hook words at the patch's
-entry points, which it reads from the patch's header, and packs the result
-with `x8fw.py pack --base`, which refuses changes to the bootloader and the
+starts. The tool then points the stock firmware's hook words, one tail call
+and one call at the patch's entry points, and the TUNER tile's launcher texts
+at the patch's strings, all read from the patch's header (see BUILDS), and
+packs the result with `x8fw.py pack --base`, which refuses changes to the bootloader and the
 known start-up and update-mode code, and refuses an image long enough to reach
 the settings sectors.
 
@@ -39,6 +40,7 @@ def flash(address):
 #
 # words: a word holding a stock function pointer, replaced by a header field.
 # branches: a `b.w` tail call, retargeted to a header field's function.
+# calls: a `bl` call, retargeted the same way.
 # texts: one launcher text (the TUNER tile's title or a line of its
 #   description), replaced by a header field's string. Each is set in three
 #   places: the English literal word, the `mov.w r1,#length<<8` that gives the
@@ -59,6 +61,11 @@ BUILDS = {
             # the bridge setter, with r1 = 6 (the app property), r2 = 7 (TUNER).
             ("TUNER tile", 0x81732C10, 0x80D6946C, "launch_hook"),
         ],
+        "calls": [
+            # The touch poll's only call that passes a touch to Qt,
+            # `FUN_80e0364a(x, y, pressed)` (work/notes/input.md section 3).
+            ("touch to Qt", 0x80DF501A, 0x80E0364A, "touch_hook"),
+        ],
         "texts": [
             # (name, literal, stock string, mov.w at, stock length, table)
             ("tile title", 0x80F23D9C, 0x813614F4, 0x80F2347C, 5, 0x813B0E48, "title"),
@@ -72,14 +79,16 @@ BUILDS = {
 }
 LANGUAGES = 10
 
-HEADER_FIELDS = ["magic", "version", "key_hook", "rec_key_hook", "launch_hook",
+HEADER_FIELDS = ["magic", "version", "key_hook", "rec_key_hook", "launch_hook", "touch_hook",
                  "title", "line1", "line2", "line3", "line4", "line5"]
-HEADER_FORMAT = "<4s10I"
+HEADER_FORMAT = "<4s11I"
+
+B_W, BL = 0x9000, 0xD000   # bits 15, 14 and 12 of the second halfword
 
 
-def decode_bw(hw1, hw2, at):
-    """Target of a Thumb-2 `b.w` (encoding T4) at `at`, or None."""
-    if hw1 & 0xF800 != 0xF000 or hw2 & 0xD000 != 0x9000:
+def decode_bw(hw1, hw2, at, kind=B_W):
+    """Target of a Thumb-2 `b.w` (encoding T4) or `bl` (kind=BL) at `at`, or None."""
+    if hw1 & 0xF800 != 0xF000 or hw2 & 0xD000 != kind:
         return None
     s = hw1 >> 10 & 1
     i1 = 1 - ((hw2 >> 13 & 1) ^ s)
@@ -90,7 +99,7 @@ def decode_bw(hw1, hw2, at):
     return at + 4 + offset
 
 
-def encode_bw(at, target):
+def encode_bw(at, target, kind=B_W):
     offset = target - (at + 4)
     if offset & 1 or not -(1 << 24) <= offset < (1 << 24):
         raise ValueError(f"b.w at 0x{at:08x} cannot reach 0x{target:08x}")
@@ -98,8 +107,8 @@ def encode_bw(at, target):
     i1, i2 = offset >> 23 & 1, offset >> 22 & 1
     j1, j2 = (1 - i1) ^ s, (1 - i2) ^ s
     hw1 = 0xF000 | s << 10 | (offset >> 12 & 0x3FF)
-    hw2 = 0x9000 | j1 << 13 | j2 << 11 | (offset >> 1 & 0x7FF)
-    assert decode_bw(hw1, hw2, at) == target
+    hw2 = kind | j1 << 13 | j2 << 11 | (offset >> 1 & 0x7FF)
+    assert decode_bw(hw1, hw2, at, kind) == target
     return hw1, hw2
 
 
@@ -154,17 +163,18 @@ def apply(image, patch, fields, build):
         put_word(address, target)
         print(f"{name}: 0x{stock:08x} -> 0x{target:08x}")
 
-    for name, address, stock, field in build["branches"]:
+    branches = [(b, B_W, "b.w") for b in build["branches"]] + [(c, BL, "bl") for c in build["calls"]]
+    for (name, address, stock, field), kind, mnemonic in branches:
         target = fields[field]
-        current = decode_bw(half(address), half(address + 2), address)
-        if current != stock or encode_bw(address, stock) != (half(address), half(address + 2)):
-            return f"{name}: no b.w 0x{stock:08x} at 0x{address:08x}"
+        current = decode_bw(half(address), half(address + 2), address, kind)
+        if current != stock or encode_bw(address, stock, kind) != (half(address), half(address + 2)):
+            return f"{name}: no {mnemonic} 0x{stock:08x} at 0x{address:08x}"
         if not (target & 1 and in_patch(target)):
             return f"{field} = 0x{target:08x} is not a Thumb address inside the patch"
-        hw1, hw2 = encode_bw(address, target & ~1)
+        hw1, hw2 = encode_bw(address, target & ~1, kind)
         put_half(address, hw1)
         put_half(address + 2, hw2)
-        print(f"{name}: b.w 0x{stock:08x} -> 0x{target & ~1:08x}")
+        print(f"{name}: {mnemonic} 0x{stock:08x} -> 0x{target & ~1:08x}")
 
     for name, literal, stock, mov_at, stock_len, table, field in build["texts"]:
         target = fields[field]

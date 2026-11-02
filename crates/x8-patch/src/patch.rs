@@ -32,9 +32,9 @@ mod stock {
     /// The display controller's current and next buffer registers.
     pub const LCDIF_CUR_BUF: *const usize = 0x402b_8040 as *const usize;
     pub const LCDIF_NEXT_BUF: *mut usize = 0x402b_8050 as *mut usize;
-    /// Touch polling runs only while this word is non-zero (it is 1 once the
-    /// touch controller is set up).
-    pub const TOUCH_ENABLED: *mut u32 = 0x8198_edbc as *mut u32;
+    /// `FUN_80e0364a(x, y, pressed)`: posts a touch to Qt's event queue;
+    /// the touch poll (task 9) calls it on every change (Thumb address).
+    pub const QT_TOUCH: usize = 0x80e0_364b;
 
     /// Where `EDMA_SetCallback` stored the audio callback: the channel 9
     /// (SAI1 receive) eDMA handle's first word.
@@ -131,6 +131,8 @@ pub struct Header {
     rec_key_hook: Handler,
     /// Replaces the TUNER tile's call that opens the tuner.
     launch_hook: Handler,
+    /// Replaces the touch poll's call that passes a touch to Qt.
+    touch_hook: Handler,
     /// The TUNER tile's launcher texts: its title, then the five lines of its
     /// description (ASCII, NUL-terminated; empty for an unused line).
     tile_texts: [*const u8; 6],
@@ -142,10 +144,11 @@ unsafe impl Sync for Header {}
 #[unsafe(link_section = ".header")]
 pub static X8_PATCH_HEADER: Header = Header {
     magic: *b"BATX",
-    version: 7,
+    version: 8,
     key_hook,
     rec_key_hook,
     launch_hook,
+    touch_hook,
     tile_texts: [
         b"BATS\0".as_ptr(),
         b"Hear and see bat calls\0".as_ptr(),
@@ -176,9 +179,6 @@ const SLEEP_MS: u32 = 2;
 /// ceiling of -6 dBFS: bat calls are often 40 to 60 dB below full scale.
 const OUTPUT_GAIN: f32 = 8.0;
 const OUTPUT_CEILING: f32 = 0.5;
-/// MARK presses with the bat screen closed are held this long (0.5 s), in case
-/// two more follow, before they are passed on to the stock app.
-const MARK_HOLD_DIVISOR: u32 = 2;
 
 /// The DSP task: unused ids at start-up (the table at 0x8131dac4 uses 1, 2,
 /// 4 to 7, 9 to 12 and 15 to 22), tried in turn. Priority 16 is below task 1
@@ -206,11 +206,6 @@ static CALLS_PER_S: AtomicU32 = AtomicU32::new(0);
 static LAST_SECOND: AtomicU32 = AtomicU32::new(0);
 static CALLS_AT_SECOND: AtomicU32 = AtomicU32::new(0);
 static LAST_EVENT: AtomicU32 = AtomicU32::new(0);
-static MARK_TIMES: [AtomicU32; 2] = [AtomicU32::new(0), AtomicU32::new(0)];
-/// MARK presses held back while the bat screen is closed, and when the last
-/// one came (audio block count).
-static MARKS_HELD: AtomicU32 = AtomicU32::new(0);
-static MARK_HELD_AT: AtomicU32 = AtomicU32::new(0);
 static AUDIO_STATE: AtomicU32 = AtomicU32::new(AUDIO_NOT_TRIED);
 const AUDIO_NOT_TRIED: u32 = 0;
 const AUDIO_INSTALLED: u32 = 1;
@@ -219,7 +214,6 @@ static APP_READY: AtomicBool = AtomicBool::new(false);
 static LAST_RENDER: AtomicU32 = AtomicU32::new(0);
 static SAVED_LITERAL: AtomicU32 = AtomicU32::new(0);
 static SAVED_BUFFER: AtomicU32 = AtomicU32::new(0);
-static SAVED_TOUCH: AtomicU32 = AtomicU32::new(0);
 /// Set from task 1 for the work to run on the patch stack.
 static PENDING: AtomicU32 = AtomicU32::new(0);
 const WORK_ENTER: u32 = 1;
@@ -235,7 +229,6 @@ static ACTIONS: [AtomicU32; 32] = [const { AtomicU32::new(0) }; 32];
 static ACTIONS_WRITE: AtomicU32 = AtomicU32::new(0);
 static ACTIONS_READ: AtomicU32 = AtomicU32::new(0);
 const ACTION_MARK: u32 = 1;
-const ACTION_NEXT_MODE: u32 = 3;
 const ACTION_WHEEL: u32 = 4;
 /// Set when the TUNER tile (now BATS) was tapped: the bat screen opens once
 /// the C core has switched to the app the tile asked for.
@@ -243,7 +236,7 @@ static LAUNCHING: AtomicBool = AtomicBool::new(false);
 static LAUNCH_FROM: AtomicU32 = AtomicU32::new(0);
 static LAUNCH_AT: AtomicU32 = AtomicU32::new(0);
 /// The app (C numbering) the bat screen was opened in, or NO_APP. It stays
-/// set while MARK x3 shows the app's own screen, and is cleared when the app
+/// set while PLAY shows the app's own screen, and is cleared when the app
 /// changes.
 static SCREEN_APP: AtomicU32 = AtomicU32::new(NO_APP);
 const NO_APP: u32 = 0x100;
@@ -440,6 +433,64 @@ unsafe extern "C" fn launch_hook(bridge: usize, property: usize, value: usize, d
     unsafe { set(bridge, property, stock::QT_MANUAL, d) }
 }
 
+/// Touches for the app, from task 9: pressed << 31 | x << 16 | y.
+static TOUCHES: [AtomicU32; 16] = [const { AtomicU32::new(0) }; 16];
+static TOUCH_WRITE: AtomicU32 = AtomicU32::new(0);
+static TOUCH_READ: AtomicU32 = AtomicU32::new(0);
+/// The last touch seen, for the debug strip.
+static LAST_TOUCH: AtomicU32 = AtomicU32::new(0);
+/// Qt has been sent a press without its release (task 9).
+static QT_PRESSED: AtomicBool = AtomicBool::new(false);
+/// The context running the app: a finger is down, and it went down where a
+/// drag tunes.
+static TOUCH_DOWN: AtomicBool = AtomicBool::new(false);
+static DRAGGING: AtomicBool = AtomicBool::new(false);
+
+/// Replaces the touch poll's call to Qt (task 9, on every change of x, y or
+/// pressed). While the bat screen is up, touches go to the bat app instead,
+/// except the release of a touch Qt saw start, so Qt never keeps a press.
+unsafe extern "C" fn touch_hook(x: usize, y: usize, pressed: usize, d: usize) -> usize {
+    // SAFETY: the stock function the poll called, with its arguments.
+    let qt: Handler = unsafe { core::mem::transmute(stock::QT_TOUCH) };
+    let event = ((pressed != 0) as u32) << 31 | (x as u32 & 0x7fff) << 16 | (y as u32 & 0xffff);
+    LAST_TOUCH.store(event, Relaxed);
+    if system_mode() > 1 || !BAT_ACTIVE.load(Acquire) {
+        QT_PRESSED.store(pressed != 0, Relaxed);
+        return unsafe { qt(x, y, pressed, d) };
+    }
+    if pressed == 0 && QT_PRESSED.load(Relaxed) {
+        QT_PRESSED.store(false, Relaxed);
+        unsafe { qt(x, y, 0, d) };
+    }
+    let write = TOUCH_WRITE.load(Relaxed);
+    if write.wrapping_sub(TOUCH_READ.load(Acquire)) < TOUCHES.len() as u32 {
+        TOUCHES[write as usize % TOUCHES.len()].store(event, Relaxed);
+        TOUCH_WRITE.store(write.wrapping_add(1), Release);
+    }
+    0
+}
+
+/// Apply the queued touches (the context running the app): a touch down is a
+/// tap; moves while down on the waterfall tune HET and COMB.
+fn apply_touches(app: &mut BatApp<'static>) {
+    let mut read = TOUCH_READ.load(Relaxed);
+    while read != TOUCH_WRITE.load(Acquire) {
+        let event = TOUCHES[read as usize % TOUCHES.len()].load(Relaxed);
+        let (x, y) = ((event >> 16 & 0x7fff) as i32, (event & 0xffff) as i32);
+        if event >> 31 == 0 {
+            TOUCH_DOWN.store(false, Relaxed);
+        } else if !TOUCH_DOWN.load(Relaxed) {
+            TOUCH_DOWN.store(true, Relaxed);
+            DRAGGING.store(app.is_draggable(x, y), Relaxed);
+            app.touch(x, y);
+        } else if DRAGGING.load(Relaxed) {
+            app.drag(x, y);
+        }
+        read = read.wrapping_add(1);
+        TOUCH_READ.store(read, Release);
+    }
+}
+
 /// Task 1, for each message, from either key hook.
 unsafe fn on_message(msg: usize, via: Via) {
     if system_mode() > 1 {
@@ -449,9 +500,6 @@ unsafe fn on_message(msg: usize, via: Via) {
         install_audio_hook();
     }
     count_call();
-    if via == Via::App {
-        replay_held_marks();
-    }
     if AUDIO_STATE.load(Relaxed) == AUDIO_INSTALLED {
         follow_app();
     }
@@ -557,28 +605,6 @@ fn install_audio_hook() {
     AUDIO_STATE.store(AUDIO_INSTALLED, Relaxed);
 }
 
-/// Pass held MARK presses on to the stock app once no more have come for
-/// 0.5 s, by calling the stock key handler with a MARK message, as task 1
-/// would have.
-fn replay_held_marks() {
-    let held = MARKS_HELD.load(Relaxed);
-    if held == 0 || BLOCKS.load(Relaxed).wrapping_sub(MARK_HELD_AT.load(Relaxed)) < blocks_per_second() / MARK_HOLD_DIVISOR {
-        return;
-    }
-    MARKS_HELD.store(0, Relaxed);
-    if BAT_ACTIVE.load(Relaxed) {
-        return;
-    }
-    // SAFETY: the stock handler, from task 1, with a message laid out as task
-    // 1's copies are (0x14 bytes: category 0, kind 0 at +4, code at +8).
-    let stock_handler: Handler = unsafe { core::mem::transmute(stock::KEY_HANDLER) };
-    for _ in 0..held {
-        let mut message = [0u32; 5];
-        message[2] = stock::MARK as u32;
-        unsafe { stock_handler(message.as_mut_ptr() as usize, stock::KEY_HANDLER, 0, 0) };
-    }
-}
-
 fn count_call() {
     let calls = CALLS.load(Relaxed).wrapping_add(1);
     CALLS.store(calls, Relaxed);
@@ -588,20 +614,6 @@ fn count_call() {
         CALLS_AT_SECOND.store(calls, Relaxed);
         LAST_SECOND.store(now, Relaxed);
     }
-}
-
-/// Three MARK presses within 1.5 s.
-fn mark_triple() -> bool {
-    let now = BLOCKS.load(Relaxed);
-    let first = MARK_TIMES[0].load(Relaxed);
-    MARK_TIMES[0].store(MARK_TIMES[1].load(Relaxed), Relaxed);
-    MARK_TIMES[1].store(now, Relaxed);
-    if first != 0 && now.wrapping_sub(first) < blocks_per_second() * 3 / 2 {
-        MARK_TIMES[0].store(0, Relaxed);
-        MARK_TIMES[1].store(0, Relaxed);
-        return true;
-    }
-    false
 }
 
 unsafe fn handle_message(msg: usize, via: Via) {
@@ -620,28 +632,22 @@ unsafe fn handle_message(msg: usize, via: Via) {
     let active = BAT_ACTIVE.load(Relaxed);
     let swallow_button = || unsafe { ptr::write_volatile(value_ptr, stock::NO_KEY) };
     match (kind, value) {
-        (stock::KIND_BUTTON, stock::MARK) => {
-            // Three presses within 1.5 s show or hide the bat screen. During a
-            // take, MARK goes on to the recording screen's handler at once, so
-            // the file's marks are where they were pressed (a triple leaves two).
-            // Otherwise it is held back from the stock app: in MANUAL without
-            // a file, MARK opens a pop-up that takes the next presses. With the
-            // screen closed, presses that do not make a triple are passed on
-            // after 0.5 s.
-            let take = via == Via::Rec && matches!(read_byte(stock::TRANSPORT), 3 | 4);
-            let triple = mark_triple();
-            if triple || !take {
+        (stock::KIND_BUTTON, stock::MARK) if active => {
+            // A mark in the bat app (in TE, a capture). During a take MARK also
+            // goes on to the recording screen's handler, which marks the file.
+            // Otherwise it is kept from the app: in MANUAL without a file,
+            // MARK opens a pop-up.
+            queue_action(ACTION_MARK, 0);
+            if !(via == Via::Rec && matches!(read_byte(stock::TRANSPORT), 3 | 4)) {
                 swallow_button();
             }
-            if triple {
-                MARKS_HELD.store(0, Relaxed);
-                if active { leave_bat_screen() } else { request_enter() }
-            } else if active {
-                queue_action(ACTION_MARK, 0);
-            } else if via == Via::App {
-                MARKS_HELD.store(MARKS_HELD.load(Relaxed) + 1, Relaxed);
-                MARK_HELD_AT.store(BLOCKS.load(Relaxed), Relaxed);
-            }
+        }
+        (stock::KIND_BUTTON, stock::PLAY) if SCREEN_APP.load(Relaxed) == app_byte() as u32 => {
+            // In the app the bat screen was opened in (from BATS), PLAY swaps
+            // between the bat screen and the app's own screen; the app's own
+            // playback is not used there.
+            swallow_button();
+            if active { leave_bat_screen() } else { request_enter() }
         }
         (stock::KIND_BUTTON, stock::HOME) if active && app_byte() == 0 => {
             // On the LAUNCHER, where holding HOME does nothing. In an app a
@@ -649,10 +655,6 @@ unsafe fn handle_message(msg: usize, via: Via) {
             // stock apps) and holding HOME returns to the LAUNCHER.
             swallow_button();
             leave_bat_screen();
-        }
-        (stock::KIND_BUTTON, stock::PLAY) if active => {
-            swallow_button();
-            queue_action(ACTION_NEXT_MODE, 0);
         }
         (stock::KIND_WHEEL, count) if active => {
             // SAFETY: the kind field of the message copy.
@@ -680,7 +682,6 @@ fn apply_actions(app: &mut BatApp<'static>) {
         let value = ((a << 8) as i32) >> 8;
         match a >> 24 {
             ACTION_MARK => app.button(Button::Mark),
-            ACTION_NEXT_MODE => app.next_mode(),
             ACTION_WHEEL => app.wheel(value),
             _ => {}
         }
@@ -728,6 +729,8 @@ fn new_session() {
         IN_READ.store(IN_WRITE.load(Acquire), Release);
         OUT_WRITE.store(OUT_READ.load(Acquire), Release);
         ACTIONS_READ.store(ACTIONS_WRITE.load(Acquire), Release);
+        TOUCH_READ.store(TOUCH_WRITE.load(Acquire), Release);
+        TOUCH_DOWN.store(false, Relaxed);
     }
 }
 
@@ -794,6 +797,7 @@ extern "C" fn dsp_task(_: isize) {
         let app = unsafe { app() };
         new_session();
         apply_actions(app);
+        apply_touches(app);
         let start = BLOCKS.load(Relaxed);
         process_input(app, u32::MAX, PASS_BLOCKS);
         drop_backlog();
@@ -849,8 +853,6 @@ extern "C" fn enter_work() {
         SAVED_LITERAL.store(ptr::read_volatile(stock::PRESENT_LCDIF_LITERAL) as u32, Relaxed);
         (*DUMMY_LCDIF.0.get()).write([0; 32]);
         ptr::write_volatile(stock::PRESENT_LCDIF_LITERAL, DUMMY_LCDIF.0.get() as usize);
-        SAVED_TOUCH.store(ptr::read_volatile(stock::TOUCH_ENABLED), Relaxed);
-        ptr::write_volatile(stock::TOUCH_ENABLED, 0);
     }
     if task_running() {
         // The DSP task may still be finishing a chunk from the last opening,
@@ -889,7 +891,6 @@ fn leave_bat_screen() {
         if stock::FRAMEBUFFERS.contains(&back) {
             ptr::write_volatile(stock::LCDIF_NEXT_BUF, back);
         }
-        ptr::write_volatile(stock::TOUCH_ENABLED, SAVED_TOUCH.load(Relaxed));
     }
 }
 
@@ -912,6 +913,7 @@ extern "C" fn tick_work() {
     let app = unsafe { app() };
     new_session();
     apply_actions(app);
+    apply_touches(app);
     process_input(app, MAX_FRAMES_PER_CALL, PASS_BLOCKS);
     let now = BLOCKS.load(Relaxed);
     if now.wrapping_sub(LAST_RENDER.load(Relaxed)) >= blocks_per_second() / RENDERS_PER_SECOND {
@@ -994,13 +996,16 @@ fn render() {
     let mut line = Line::new();
     let _ = write!(
         line,
-        "audio irq: stock {}% hook {}% | in {} out {} | dry {} lost {}",
+        "irq {}% hook {}% | in {} out {} | dry {} lost {} | touch {} {},{}",
         percent(STOCK_CYCLES_PER_S.load(Relaxed), all),
         percent(HOOK_CYCLES_PER_S.load(Relaxed), all),
         IN_WRITE.load(Relaxed).wrapping_sub(IN_READ.load(Relaxed)),
         OUT_WRITE.load(Relaxed).wrapping_sub(OUT_READ.load(Relaxed)),
         UNDERRUNS.load(Relaxed),
         IN_DROPPED.load(Relaxed).wrapping_add(BACKLOG_DROPPED.load(Relaxed)),
+        if LAST_TOUCH.load(Relaxed) >> 31 != 0 { "down" } else { "up" },
+        LAST_TOUCH.load(Relaxed) >> 16 & 0x7fff,
+        LAST_TOUCH.load(Relaxed) & 0xffff,
     );
     draw_strip(&mut fb, STRIP_ROWS as i32, &line, Rgb565::new(4, 8, 4));
     // Peak level of each input word since the last redraw, in dB below full
@@ -1180,7 +1185,7 @@ fn draw_strip(target: &mut Rgb565Buffer<'_>, top: i32, line: &Line, background: 
 fn draw_status_strip() {
     let mut line = Line::new();
     let audio = match AUDIO_STATE.load(Relaxed) {
-        AUDIO_INSTALLED => "MARK x3: bat screen",
+        AUDIO_INSTALLED => "audio hooked",
         AUDIO_SLOT_UNEXPECTED => "audio NOT hooked",
         _ => "waiting for audio",
     };

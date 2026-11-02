@@ -85,9 +85,9 @@ fn wheel_and_taps_change_the_heterodyne_frequency() {
     assert_eq!(app.het_lo_hz(), 47_000.0);
     app.wheel(-1000);
     assert_eq!(app.het_lo_hz(), 15_000.0);
-    // A tap at the vertical middle of the waterfall is about 55.5 kHz.
+    // A tap at the vertical middle of the waterfall (0 to 96 kHz) is about 48 kHz.
     app.touch(layout::WF_X + 10, layout::WF_Y + layout::WF_H as i32 / 2);
-    assert!((app.het_lo_hz() - 55_500.0).abs() <= 500.0, "{}", app.het_lo_hz());
+    assert!((app.het_lo_hz() - 48_000.0).abs() <= 500.0, "{}", app.het_lo_hz());
 }
 
 #[test]
@@ -125,18 +125,36 @@ fn rec_toggles_and_counts_recorded_time() {
 }
 
 #[test]
-fn without_pitch_four_buttons_fill_the_row_and_play_cycles_them() {
+fn without_pitch_the_buttons_fill_the_row_and_next_mode_cycles_them() {
     let mut storage = vec![0.0f32; 1024];
     let mut app = BatApp::new(FS, &mut storage, buffers());
     app.set_mode(Mode::Pitch);
     app.set_modes(&Mode::WITHOUT_PITCH);
     assert_eq!(app.mode(), Mode::Het);
-    let last = layout::mode_button(3, 4);
+    let last = layout::mode_button(3, 5);
     app.touch(last.center().x, last.center().y);
     assert_eq!(app.mode(), Mode::Te);
-    assert!(last.top_left.x + last.size.width as i32 > 300);
+    let end = layout::mode_button(4, 5);
+    assert!(end.top_left.x + end.size.width as i32 > 300);
+    app.next_mode();
+    assert_eq!(app.mode(), Mode::Thru);
     app.next_mode();
     assert_eq!(app.mode(), Mode::Het);
+}
+
+#[test]
+fn dragging_on_the_waterfall_tunes_het() {
+    let mut storage = vec![0.0f32; 1024];
+    let mut app = BatApp::new(FS, &mut storage, buffers());
+    let wf = layout::waterfall();
+    let (x, top) = (wf.center().x, wf.top_left.y);
+    assert!(app.is_draggable(x, top + 10));
+    app.touch(x, top + 10);
+    let high = app.het_lo_hz();
+    app.drag(x, top + 60);
+    assert!(app.het_lo_hz() < high - 10_000.0, "{high} -> {}", app.het_lo_hz());
+    app.set_mode(Mode::Thru);
+    assert!(!app.is_draggable(x, top + 10));
 }
 
 #[test]
