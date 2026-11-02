@@ -423,6 +423,44 @@ install the pointer from, and a place to run the heavier DSP.
 Full notes from this part of the work are in `work/notes/audio.md` (not in
 git).
 
+**Phantom power** (checked in 0x80da8e4c and 0x81360ae4; details in
+`work/notes/phantom.md`). The firmware switches it per input, inputs 3 to 6 as
+index 0 to 3, not per pair: four on/off bytes in the settings, four FPGA bits,
+and the same index in the UI messages. Stereo link copies the mic/line setting
+to the partner input but not phantom; only the factory test mode switches it in
+pairs.
+
+- Settings: the settings record is at 0x81e8c87c (returned by 0x80d9ff40),
+  phantom on/off is one byte per input at +0x254 to +0x257, and the phantom
+  voltage is one byte at +0x1dd (0 = 48 V, the default; 1 = 24 V, fairly sure).
+  The record is the `DR-TURBO` record in the settings sectors (16 slots of
+  4 KB, byte-sum checksum at +0xffc), loaded by 0x80da0774 and saved by
+  0x80da2778 at power-off and from a save task.
+- Hardware: FPGA register 6, bit 1 << index, written as a 2-byte frame on
+  LPSPI4 by 0x81360b70 (reached through the FPGA driver table at 0x819212b4,
+  entry +0x14). The shared supply is FPGA register 3 bit 0x08; the voltage is
+  register 3 bit 0x20 with register 10 bit 0x08. Not a processor GPIO pin and
+  not an ADC register.
+- 0x80da8e4c(index, on) turns the shared supply on first if needed and waits
+  until it is ready, sets the input's bit, and turns the supply off when no input
+  has phantom on. A supply task (0x80dacbde) mutes all six inputs while the
+  supply comes up from off (30 ms, then polls a ready bit every 100 ms). There is
+  no ramp and no battery check.
+- At start-up and on changing app the firmware does not switch phantom on by
+  itself: it marks the input as pending and shows a prompt (UI event 0x87).
+- From a patch: post the stock message from an RTOS task with 0x80dd01ee: 20
+  bytes, u16 values {0, 0, 0x0ff0, index, 1, 0, ...}, after checking that
+  settings+0x26a is 0, the word at 0x8196a444 is 0, and the pending flags at
+  0x81e86864 to 0x81e86867 are clear. Then wait for 0x8196866b to return to 0
+  and give the microphone time to settle. Calling 0x80da8e4c directly switches
+  the supply straight back off unless the settings byte is already 1. Never call
+  any of this from an interrupt: the SPI bus lock is skipped there and some of
+  these functions wait on the RTOS.
+- Plug-in power for inputs 1 and 2 seems to follow the jack-detect inputs
+  (FPGA register 8 bit 0x02 and AK5704 register 0x01 bit 0x10, on LPI2C1
+  address 0x10 and LPI2C4 address 0x11); no user setting was found. Not
+  confirmed against the AK5704 datasheet.
+
 **Not mapped yet:** the buttons, the wheel and the touch screen; the recording
 apps' screens; the WAV writer.
 
