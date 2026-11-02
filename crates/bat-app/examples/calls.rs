@@ -11,6 +11,13 @@ use bat_dsp::classify::{CallClassifier, CallKind};
 use bat_dsp::detector::CallDetector;
 use bat_dsp::spectrum::SpectrumAnalyzer;
 
+/// `AUDIBLE=LO,HI` (Hz) overrides the detector's audible band, for tuning.
+fn audible_band_from_env() -> Option<(f32, f32)> {
+    let v = std::env::var("AUDIBLE").ok()?;
+    let (a, b) = v.split_once(',')?;
+    Some((a.parse().ok()?, b.parse().ok()?))
+}
+
 fn main() {
     let args: Vec<String> = std::env::args().collect();
     let mut reader = hound::WavReader::open(&args[1]).expect("open wav");
@@ -23,6 +30,9 @@ fn main() {
     let mut analyzer: SpectrumAnalyzer<512> = SpectrumAnalyzer::new(fs);
     analyzer.set_hop(128);
     let mut detector: CallDetector<512> = CallDetector::new(fs);
+    if let Some((lo, hi)) = audible_band_from_env() {
+        detector.set_audible_band(lo, hi);
+    }
     let mut events = Vec::new();
     let mut mono = Vec::with_capacity(4096);
     let mut frame = Vec::with_capacity(ch);

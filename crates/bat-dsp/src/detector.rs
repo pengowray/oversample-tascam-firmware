@@ -67,7 +67,7 @@ const WORDS: usize = MAX_BINS / 64;
 const RANGE_GAP_BINS: usize = 2;
 /// The audible band checked during a call: bats are silent here, while
 /// birds, voices, footsteps, pecking and other everyday sounds are not.
-pub const AUDIBLE_BAND_HZ: (f32, f32) = (2_000.0, 12_000.0);
+pub const DEFAULT_AUDIBLE_BAND_HZ: (f32, f32) = (2_000.0, 12_000.0);
 
 /// Time after construction or reset during which the detector only learns
 /// the floor and reports nothing.
@@ -89,7 +89,7 @@ pub struct CallEvent {
     pub peak_freq_hz: f32,
     /// How far the call rose above the floor at that frequency, in dB.
     pub peak_db_above_floor: f32,
-    /// How far the audible band ([`AUDIBLE_BAND_HZ`]) rose above its own
+    /// How far the audible band (default [`DEFAULT_AUDIBLE_BAND_HZ`]) rose above its own
     /// floor during the call, averaged across the band, in the loudest
     /// column. Near 0 for a bat call; high when an audible sound came at the
     /// same moment, which usually means the detection was that sound.
@@ -175,6 +175,7 @@ where
     bin_hz: f32,
     band_hz: (f32, f32),
     band_bins: (usize, usize),
+    audible_band_hz: (f32, f32),
     threshold_db: f32,
     release_db: f32,
     range_db: f32,
@@ -224,6 +225,7 @@ where
             bin_hz: 0.0,
             band_hz: (0.0, 0.0),
             band_bins: (0, 0),
+            audible_band_hz: DEFAULT_AUDIBLE_BAND_HZ,
             threshold_db: DEFAULT_THRESHOLD_DB,
             release_db: DEFAULT_RELEASE_DB,
             range_db: DEFAULT_RANGE_DB,
@@ -255,6 +257,7 @@ where
         self.range_db = DEFAULT_RANGE_DB;
         self.settle = self.ms_to_samples(SETTLE_MS);
         self.set_band(DEFAULT_BAND_LO_HZ, DEFAULT_BAND_HI_HZ);
+        self.audible_band_hz = DEFAULT_AUDIBLE_BAND_HZ;
         self.set_min_call_ms(DEFAULT_MIN_CALL_MS);
         self.set_merge_gap_ms(DEFAULT_MERGE_GAP_MS);
         self.set_max_call_ms(DEFAULT_MAX_CALL_MS);
@@ -274,6 +277,16 @@ where
 
     pub fn band(&self) -> (f32, f32) {
         self.band_hz
+    }
+
+    /// The audible band measured during each call, in Hz; see
+    /// [`CallEvent::audible_db_above_floor`].
+    pub fn set_audible_band(&mut self, lo_hz: f32, hi_hz: f32) {
+        self.audible_band_hz = (lo_hz.min(hi_hz), lo_hz.max(hi_hz));
+    }
+
+    pub fn audible_band(&self) -> (f32, f32) {
+        self.audible_band_hz
     }
 
     /// dB above the floor that starts a call.
@@ -529,8 +542,8 @@ where
         }
         // Average excess across the audible band.
         let (a0, a1) = (
-            (AUDIBLE_BAND_HZ.0 / bin_hz) as usize,
-            ((AUDIBLE_BAND_HZ.1 / bin_hz) as usize).min(N / 2),
+            (self.audible_band_hz.0 / bin_hz) as usize,
+            ((self.audible_band_hz.1 / bin_hz) as usize).min(N / 2),
         );
         if a1 > a0 {
             let (mean, spread) = (self.mean.as_ref(), self.spread.as_ref());

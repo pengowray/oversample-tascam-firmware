@@ -59,3 +59,13 @@ recordings:
 ```bash
 cargo run -p bat-app --release --example calls -- IN.wav [FROM_S] [TO_S]
 ```
+
+`crates/bat-app/examples/library.rs` does the same over a folder of
+Xeno-canto recordings with their `.xc.json` metadata (as Oversample's xc-fetch
+saves them), resampling each to 192 kHz, and writes one CSV row per recording:
+
+```bash
+cargo run -p bat-app --release --example library -- DIR OUT.csv
+```
+
+Both take `AUDIBLE=LO,HI` (Hz) to try another audible band.

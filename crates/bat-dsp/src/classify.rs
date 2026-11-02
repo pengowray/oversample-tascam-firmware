@@ -28,7 +28,16 @@
 //! 50 kHz it kept 94, it kept 97 of 98 calls in two annotated passes, and in
 //! two recordings with no bats (birds feeding beside the mics, traffic,
 //! sweeping) it reduced detections from 96 and 39 a minute to 7.4 and 2.0.
-//! A recording of one bat species in one place: check it on others.
+//!
+//! Checked on 247 Xeno-canto echolocation recordings of 76 genera from
+//! around the world, resampled to 192 kHz (`bat-app` example `library`):
+//! 239 gave bat calls, and 69% of all detections in them were classified as
+//! bat calls. The 8 that gave none were free-tails calling below 20 kHz (3),
+//! horseshoe bats above 100 kHz, beyond the X8's range (2), clips of 0.3 s
+//! (2), and a low-quality recording with loud background sound. Lowering the
+//! lowest bat frequency to 16 kHz keeps 65% of free-tail calls instead of
+//! 54%, but adds about half as many false detections again; a lower audible
+//! band and laxer thresholds traded similarly, so the defaults stay.
 
 use crate::detector::CallEvent;
 
