@@ -137,7 +137,15 @@ bootloader, and refuses changes to the start-up and update-mode code listed in
 [Keeping the bricking risk low](#keeping-the-bricking-risk-low) unless
 `--allow-boot-path` is given. Files in `work/` are ignored by git.
 
-## Step 2 test files (built 2026-11-02, not yet installed)
+## Step 2 test files (installed 2026-11-02: the X8 accepts a repacked file)
+
+**Result.** On 2026-11-02 the build 218 test file installed on the user's X8
+through the normal update procedure (the update screen showed B218), the unit
+started normally, and SONAR showed both as the app's name on the LAUNCHER screen
+and as the tuner app's title, in the stock font. So the updater accepts a
+repacked file with recomputed sums, and no signature or other check stopped it.
+Still to do: install the official `#PortaX8_0217.203` again, to prove going back
+to stock from the SD card.
 
 Two update files for step 2 of the [plan](#plan): one to test that the X8 accepts
 a repacked update file, and one to put the stock firmware back.
@@ -435,7 +443,7 @@ number, pack the update file with `x8fw.py pack --base`, and install it with the
 official update procedure. This confirms that the updater accepts a repacked update
 file. Then install the official file again, to prove the SD card recovery path. The
 files are built; see [Step 2 test
-files](#step-2-test-files-built-2026-11-02-not-yet-installed).
+files](#step-2-test-files-installed-2026-11-02-the-x8-accepts-a-repacked-file).
 
 **Step 3: add code.**
 
