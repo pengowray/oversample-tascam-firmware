@@ -65,6 +65,60 @@ pub fn mode_button_at(x: i32, y: i32) -> Option<Mode> {
     (0..Mode::ALL.len()).find(|&i| mode_button(i).contains(p)).map(|i| Mode::ALL[i])
 }
 
+/// Menu button at the left of the title bar, as on the stock apps: opens the
+/// settings screen.
+pub const MENU: Rectangle = Rectangle::new(Point::new(0, 0), Size::new(40, TITLE_H as u32));
+
+/// Settings screen: one panel per setting, with its name and value on the
+/// left, - and + buttons on the right, and a line saying what it does.
+pub const SETTINGS_TOP: i32 = 34;
+pub const SETTING_H: i32 = 76;
+const SETTING_GAP: i32 = 8;
+const STEP_W: u32 = 48;
+const STEP_H: u32 = 40;
+/// Closes the settings screen, where the mode buttons are on the main screen.
+pub const DONE: Rectangle = Rectangle::new(Point::new(6, BUTTONS_Y), Size::new(308, BUTTON_H as u32));
+
+pub fn setting_row(i: usize) -> Rectangle {
+    Rectangle::new(Point::new(6, SETTINGS_TOP + i as i32 * (SETTING_H + SETTING_GAP)), Size::new(308, SETTING_H as u32))
+}
+
+pub fn setting_minus(i: usize) -> Rectangle {
+    let r = setting_row(i);
+    Rectangle::new(Point::new(204, r.top_left.y + 10), Size::new(STEP_W, STEP_H))
+}
+
+pub fn setting_plus(i: usize) -> Rectangle {
+    let r = setting_row(i);
+    Rectangle::new(Point::new(258, r.top_left.y + 10), Size::new(STEP_W, STEP_H))
+}
+
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum SettingsHit {
+    Row(usize),
+    Minus(usize),
+    Plus(usize),
+    Done,
+}
+
+pub fn settings_hit(x: i32, y: i32, rows: usize) -> Option<SettingsHit> {
+    let p = Point::new(x, y);
+    if DONE.contains(p) {
+        return Some(SettingsHit::Done);
+    }
+    (0..rows).find_map(|i| {
+        if setting_minus(i).contains(p) {
+            Some(SettingsHit::Minus(i))
+        } else if setting_plus(i).contains(p) {
+            Some(SettingsHit::Plus(i))
+        } else if setting_row(i).contains(p) {
+            Some(SettingsHit::Row(i))
+        } else {
+            None
+        }
+    })
+}
+
 pub fn waterfall() -> Rectangle {
     Rectangle::new(Point::new(WF_X, WF_Y), Size::new(WF_W as u32, WF_H as u32))
 }

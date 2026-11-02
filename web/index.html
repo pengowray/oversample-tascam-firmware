@@ -21,7 +21,7 @@
     <canvas id="screen" width="320" height="480" aria-label="Recorder screen. Click to tap, scroll to turn the wheel."></canvas>
     <div class="controls">
     <div class="hw" role="group" aria-label="Recorder buttons">
-      <button type="button" data-button="home" disabled title="Returns to the X8's app launcher, which is not emulated">HOME</button>
+      <button type="button" data-button="home" title="Closes the settings screen (H). On the main screen it would return to the X8's app launcher, which is not emulated.">HOME<kbd>H</kbd></button>
       <button type="button" data-button="play" title="Play or pause the input file (Space)">PLAY<kbd>Space</kbd></button>
       <button type="button" data-button="rec" class="rec" title="Start or stop recording (R)">REC<kbd>R</kbd></button>
       <button type="button" data-button="mark" title="Add a mark; in TE mode, capture now (M)">MARK<kbd>M</kbd></button>
@@ -51,13 +51,6 @@
   </section>
 
   <section class="panel settings" aria-label="Emulator settings">
-    <h2>Listen to</h2>
-    <div class="row" role="radiogroup" aria-label="Input sent to the headphones">
-      <label class="check"><input type="radio" name="source" value="mix" checked> Inputs 3 and 4 mixed</label>
-      <label class="check"><input type="radio" name="source" value="3"> Input 3 (file channel 1)</label>
-      <label class="check"><input type="radio" name="source" value="4"> Input 4 (file channel 2)</label>
-    </div>
-
     <h2>Volume</h2>
     <div class="row">
       <input id="volume" type="range" min="0" max="60" step="1" value="30" aria-label="Volume">
@@ -68,6 +61,7 @@
     <table class="keys">
       <tr><td><kbd>Space</kbd></td><td>Play or pause the file</td></tr>
       <tr><td><kbd>R</kbd></td><td>Start or stop recording</td></tr>
+      <tr><td><kbd>H</kbd></td><td>HOME: close the settings screen</td></tr>
       <tr><td><kbd>M</kbd></td><td>Mark; in TE mode, capture now</td></tr>
       <tr><td><kbd>&larr;</kbd> <kbd>&rarr;</kbd></td><td>Turn the wheel (or scroll over the screen)</td></tr>
       <tr><td><kbd>1</kbd> to <kbd>5</kbd></td><td>Mode: HET, COMB, FD, TE, PITCH</td></tr>
@@ -76,6 +70,7 @@
 
     <h2>On the screen</h2>
     <table class="keys legend">
+      <tr><td><span class="swatch menu"></span></td><td>Three lines at the top left: settings (lowest bat call, which input to listen to). File channels 1 and 2 play as inputs 3 and 4.</td></tr>
       <tr><td><span class="swatch" style="background:#0092e5"></span></td><td>Solid line: the tuned frequency (HET, COMB)</td></tr>
       <tr><td><span class="swatch dashed"></span></td><td>Dashed lines: the band HET hears, 15 kHz either side</td></tr>
       <tr><td><span class="swatch" style="background:#0092e5"></span></td><td>Box (TE): the window being captured or played back</td></tr>

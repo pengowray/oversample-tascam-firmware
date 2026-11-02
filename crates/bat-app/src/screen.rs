@@ -12,7 +12,10 @@ use u8g2_fonts::{FontRenderer, fonts};
 use crate::fb::Rgb565Buffer;
 use crate::layout::*;
 use crate::palette::*;
-use crate::{BatApp, DEFAULT_CUTOFF_HZ, Meter, Mode, TeStatus, VIEW_HI_HZ, VIEW_LO_HZ, WF_COLUMN_MS};
+use crate::{
+    BatApp, DEFAULT_CUTOFF_HZ, Meter, Mode, MonitorSource, Screen, Setting, TeStatus, VIEW_HI_HZ, VIEW_LO_HZ,
+    WF_COLUMN_MS,
+};
 use bat_dsp::heterodyne::DEFAULT_COMB_SPACING_HZ;
 use bat_dsp::time_expansion::{DEFAULT_POST_MS, DEFAULT_PRE_MS};
 
@@ -65,7 +68,12 @@ fn hline(fb: Fb, x0: i32, x1: i32, y: i32, color: Rgb565) {
 
 pub fn draw(app: &BatApp, fb: Fb) {
     let _ = fb.clear(BACKGROUND);
-    title_bar(fb);
+    if app.screen == Screen::Settings {
+        title_bar(fb, "SETTINGS", false);
+        settings(app, fb);
+        return;
+    }
+    title_bar(fb, "BAT DETECTOR", true);
     status_bar(app, fb);
     meters(app, fb);
     waterfall(app, fb);
@@ -74,9 +82,15 @@ pub fn draw(app: &BatApp, fb: Fb) {
     mode_buttons(app, fb);
 }
 
-fn title_bar(fb: Fb) {
+fn title_bar(fb: Fb, title: &str, menu: bool) {
     fill(fb, Rectangle::new(Point::zero(), Size::new(320, TITLE_H as u32)), TITLE);
-    text(fb, &BODY_BOLD, "BAT DETECTOR", 160, 17, CENTER, TEXT);
+    text(fb, &BODY_BOLD, title, 160, 17, CENTER, TEXT);
+    if menu {
+        // Three lines, as the stock apps' Shortcut Menu button.
+        for y in [7, 11, 15] {
+            fill(fb, Rectangle::new(Point::new(12, y), Size::new(16, 2)), TEXT);
+        }
+    }
     // Battery, as in the stock title bars. The emulator always shows it full.
     let outline = PrimitiveStyleBuilder::new().stroke_color(TEXT).stroke_width(1).build();
     let _ = Rectangle::new(Point::new(288, 7), Size::new(21, 11)).into_styled(outline).draw(fb);
@@ -345,4 +359,49 @@ fn mode_buttons(app: &BatApp, fb: Fb) {
         rounded(fb, r, 4, if selected { ACCENT } else { BUTTON });
         text(fb, &BODY_BOLD, mode.label(), r.center().x, r.top_left.y + 28, CENTER, TEXT);
     }
+}
+
+fn settings(app: &BatApp, fb: Fb) {
+    for (i, setting) in Setting::ALL.iter().enumerate() {
+        let r = setting_row(i);
+        rounded(fb, r, 6, PANEL);
+        if app.selected_setting() == *setting {
+            // The row the wheel changes.
+            let outline = PrimitiveStyleBuilder::new().stroke_color(ACCENT).stroke_width(2).build();
+            let _ = RoundedRectangle::new(r, CornerRadii::new(Size::new(6, 6))).into_styled(outline).draw(fb);
+        }
+        let (x, y) = (r.top_left.x + 10, r.top_left.y);
+        let (label, help) = match setting {
+            Setting::LowestBatCall => ("Lowest bat call", "Sounds peaking below this are not counted as bat calls."),
+            Setting::ListenTo => ("Listen to", "Heard in the headphones and shown on the waterfall."),
+        };
+        text(fb, &BODY, label, x, y + 20, LEFT, TEXT_MUTED);
+        match setting {
+            Setting::LowestBatCall => {
+                text(fb, &VALUE, format_args!("{:.0} kHz", app.lowest_bat_call_hz() / 1000.0), x, y + 44, LEFT, TEXT)
+            }
+            Setting::ListenTo => {
+                let value = match app.source {
+                    MonitorSource::Mix => "Inputs 3 and 4",
+                    MonitorSource::Input3 => "Input 3",
+                    MonitorSource::Input4 => "Input 4",
+                };
+                text(fb, &VALUE, value, x, y + 44, LEFT, TEXT)
+            }
+        };
+        text(fb, &SMALL, help, x, y + 66, LEFT, TEXT_MUTED);
+        for (b, plus) in [(setting_minus(i), false), (setting_plus(i), true)] {
+            rounded(fb, b, 4, BUTTON);
+            let c = b.center();
+            fill(fb, Rectangle::with_center(c, Size::new(14, 2)), TEXT);
+            if plus {
+                fill(fb, Rectangle::with_center(c, Size::new(2, 14)), TEXT);
+            }
+        }
+    }
+    let below = setting_row(Setting::ALL.len() - 1).top_left.y + SETTING_H + 20;
+    text(fb, &BODY, "Settings go back to their defaults", 10, below, LEFT, TEXT_MUTED);
+    text(fb, &BODY, "when the recorder is turned off.", 10, below + 16, LEFT, TEXT_MUTED);
+    rounded(fb, DONE, 4, ACCENT);
+    text(fb, &BODY_BOLD, "Done", DONE.center().x, DONE.top_left.y + 28, CENTER, TEXT);
 }

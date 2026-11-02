@@ -3,7 +3,8 @@
 //! cargo run -p bat-app --release --example screenshot -- IN.wav OUT.png [SECONDS] [MODE] [SCALE] [OFFSET RANGE PER_ROW]
 //!
 //! SECONDS: how much of the file to play first (default: all of it).
-//! MODE: het, comb, fd, te or pitch (default het). SCALE: 1 to 4 (default 2).
+//! MODE: het, comb, fd, te, pitch, or settings for the settings screen
+//! (default het). SCALE: 1 to 4 (default 2).
 //! OFFSET, RANGE (dB) and PER_ROW (0 or 1): waterfall contrast, as
 //! `BatApp::set_display` (default: the app's defaults).
 //! The file must be at 192 kHz; channel 1 feeds input 3, channel 2 input 4.
@@ -57,6 +58,9 @@ fn main() {
         app.process(&a[k..e], &b[k..e], &mut l[k..e], &mut r[k..e]);
     }
 
+    if args.get(4).map(String::as_str) == Some("settings") {
+        app.open_settings();
+    }
     let mut pixels = vec![0u16; WIDTH * HEIGHT];
     app.render(&mut Rgb565Buffer::new(&mut pixels, WIDTH, HEIGHT));
     let (w, h) = (WIDTH * scale, HEIGHT * scale);

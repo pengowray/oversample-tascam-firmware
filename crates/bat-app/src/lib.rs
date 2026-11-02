@@ -21,7 +21,7 @@ pub mod palette;
 mod screen;
 
 use bat_dsp::classify::{CallClassifier, CallKind};
-use bat_dsp::detector::{CallDetector, CallEvent, DEFAULT_BAND_LO_HZ};
+use bat_dsp::detector::{CallDetector, CallEvent, DEFAULT_AUDIBLE_BAND_HZ, DEFAULT_BAND_LO_HZ};
 use bat_dsp::freq_div::FrequencyDivider;
 use bat_dsp::heterodyne::{DEFAULT_COMB_SPACING_HZ, DEFAULT_CUTOFF_HZ, HetComb, Heterodyne};
 use bat_dsp::pitch_shift::PitchShifter;
@@ -77,6 +77,10 @@ const COMB_STEP_HZ: f32 = 1_000.0;
 const FD_DIVISIONS: [u32; 5] = [4, 8, 10, 16, 20];
 const TE_FACTORS: [f32; 6] = [5.0, 8.0, 10.0, 16.0, 20.0, 32.0];
 const PITCH_FACTORS: [f32; 6] = [4.0, 8.0, 10.0, 16.0, 20.0, 32.0];
+/// Choices for the lowest bat call frequency, in kHz; 16 kHz is the default.
+const MIN_BAT_KHZ: [f32; 5] = [14.0, 16.0, 18.0, 20.0, 25.0];
+const MIN_BAT_DEFAULT: usize = 1;
+const SOURCES: [MonitorSource; 3] = [MonitorSource::Mix, MonitorSource::Input3, MonitorSource::Input4];
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum Mode {
@@ -118,6 +122,26 @@ pub enum Button {
     Rec,
     /// Add a mark; in TE mode also captures a window now.
     Mark,
+}
+
+/// Which screen is showing.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum Screen {
+    Main,
+    Settings,
+}
+
+/// Rows of the settings screen, top to bottom.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum Setting {
+    /// Sounds peaking below this are not counted as bat calls.
+    LowestBatCall,
+    /// The input heard in the headphones and analysed.
+    ListenTo,
+}
+
+impl Setting {
+    pub const ALL: [Setting; 2] = [Setting::LowestBatCall, Setting::ListenTo];
 }
 
 /// Which input feeds the headphones and the detector.
@@ -196,6 +220,10 @@ pub struct BatApp<'a> {
     sample_rate: f32,
     mode: Mode,
     source: MonitorSource,
+    screen: Screen,
+    /// Selected row on the settings screen; the wheel changes it.
+    setting: usize,
+    min_bat_index: usize,
     /// Samples processed since start.
     samples: u64,
 
@@ -267,6 +295,9 @@ impl<'a> BatApp<'a> {
             sample_rate,
             mode: Mode::Het,
             source: MonitorSource::Mix,
+            screen: Screen::Main,
+            setting: 0,
+            min_bat_index: MIN_BAT_DEFAULT,
             samples: 0,
             het: Heterodyne::new(sample_rate, 45_000.0),
             comb: HetComb::new(sample_rate, 25_000.0, DEFAULT_COMB_SPACING_HZ, COMB_COUNT),
@@ -311,6 +342,7 @@ impl<'a> BatApp<'a> {
         // scales its sum by 1 / count, so restore that to match HET's level.
         app.comb.set_gain(COMB_COUNT as f32);
         app.apply_settings();
+        app.apply_lowest_bat_call();
         app
     }
 
@@ -345,6 +377,54 @@ impl<'a> BatApp<'a> {
         self.source
     }
 
+    pub fn screen(&self) -> Screen {
+        self.screen
+    }
+
+    /// Show the settings screen, as the menu button does.
+    pub fn open_settings(&mut self) {
+        self.screen = Screen::Settings;
+    }
+
+    /// Lowest frequency counted as a bat call, in Hz.
+    pub fn lowest_bat_call_hz(&self) -> f32 {
+        MIN_BAT_KHZ[self.min_bat_index] * 1000.0
+    }
+
+    /// Selected row on the settings screen.
+    pub fn selected_setting(&self) -> Setting {
+        Setting::ALL[self.setting]
+    }
+
+    /// Step a setting through its choices (clamped at the ends).
+    pub fn change_setting(&mut self, setting: Setting, steps: i32) {
+        let step = |i: usize, len: usize| (i as i32 + steps).clamp(0, len as i32 - 1) as usize;
+        match setting {
+            Setting::LowestBatCall => {
+                self.min_bat_index = step(self.min_bat_index, MIN_BAT_KHZ.len());
+                self.apply_lowest_bat_call();
+            }
+            Setting::ListenTo => {
+                let i = SOURCES.iter().position(|&s| s == self.source).unwrap_or(0);
+                self.source = SOURCES[step(i, SOURCES.len())];
+            }
+        }
+    }
+
+    /// Set the classifier's lowest bat frequency. Below 16 kHz the detector's
+    /// band starts lower too (it starts at 15 kHz), so calls there are not
+    /// mistaken for broadband sounds reaching the band's bottom; the audible
+    /// band then stops below it.
+    fn apply_lowest_bat_call(&mut self) {
+        let min = self.lowest_bat_call_hz();
+        let band_lo = (min - 1_000.0).min(DEFAULT_BAND_LO_HZ);
+        let (_, band_hi) = self.detector.band();
+        self.detector.set_band(band_lo, band_hi);
+        self.detector.set_audible_band(DEFAULT_AUDIBLE_BAND_HZ.0, DEFAULT_AUDIBLE_BAND_HZ.1.min(band_lo - 1_000.0));
+        self.classifier.set_band_lo_hz(band_lo);
+        self.classifier.set_min_bat_hz(min);
+    }
+
     pub fn het_lo_hz(&self) -> f32 {
         self.het.lo()
     }
@@ -377,13 +457,20 @@ impl<'a> BatApp<'a> {
                     self.trigger_te();
                 }
             }
-            Button::Home | Button::Play => {}
+            // HOME closes the settings screen; on the main screen it belongs to
+            // the X8's launcher.
+            Button::Home => self.screen = Screen::Main,
+            Button::Play => {}
         }
     }
 
     /// Turn of the wheel, in detents (positive clockwise): changes the
     /// current mode's setting.
     pub fn wheel(&mut self, steps: i32) {
+        if self.screen == Screen::Settings {
+            self.change_setting(self.selected_setting(), steps);
+            return;
+        }
         let step = |i: usize, len: usize| (i as i32 + steps).clamp(0, len as i32 - 1) as usize;
         match self.mode {
             Mode::Het => self.set_het_lo(self.het.lo() + steps as f32 * HET_STEP_HZ),
@@ -397,7 +484,25 @@ impl<'a> BatApp<'a> {
 
     /// A tap on the touchscreen, in screen pixels.
     pub fn touch(&mut self, x: i32, y: i32) {
-        if let Some(mode) = layout::mode_button_at(x, y) {
+        if self.screen == Screen::Settings {
+            match layout::settings_hit(x, y, Setting::ALL.len()) {
+                Some(layout::SettingsHit::Row(i)) => self.setting = i,
+                Some(layout::SettingsHit::Minus(i)) => {
+                    self.setting = i;
+                    self.change_setting(Setting::ALL[i], -1);
+                }
+                Some(layout::SettingsHit::Plus(i)) => {
+                    self.setting = i;
+                    self.change_setting(Setting::ALL[i], 1);
+                }
+                Some(layout::SettingsHit::Done) => self.screen = Screen::Main,
+                None => {}
+            }
+            return;
+        }
+        if layout::MENU.contains(embedded_graphics::prelude::Point::new(x, y)) {
+            self.screen = Screen::Settings;
+        } else if let Some(mode) = layout::mode_button_at(x, y) {
             self.set_mode(mode);
         } else if let Some(hz) = layout::waterfall_freq_at(x, y) {
             match self.mode {
@@ -608,10 +713,15 @@ impl<'a> BatApp<'a> {
         self.display_per_row = per_row;
     }
 
-    /// Whether a tap at (x, y) would do something: a mode button, or the
-    /// waterfall in HET or COMB mode, where a tap tunes.
+    /// Whether a tap at (x, y) would do something: the menu button, a mode
+    /// button, the waterfall in HET or COMB mode (where a tap tunes), or a
+    /// control on the settings screen.
     pub fn is_tappable(&self, x: i32, y: i32) -> bool {
-        layout::mode_button_at(x, y).is_some()
+        if self.screen == Screen::Settings {
+            return layout::settings_hit(x, y, Setting::ALL.len()).is_some();
+        }
+        layout::MENU.contains(embedded_graphics::prelude::Point::new(x, y))
+            || layout::mode_button_at(x, y).is_some()
             || (matches!(self.mode, Mode::Het | Mode::Comb) && layout::waterfall_freq_at(x, y).is_some())
     }
 

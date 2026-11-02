@@ -140,3 +140,57 @@ fn a_single_call_is_not_shown_as_a_bat() {
     run(&mut app, &x, 4096);
     assert!(app.last_call().is_none());
 }
+
+#[test]
+fn settings_screen_opens_changes_and_closes() {
+    let mut storage = vec![0.0f32; 1024];
+    let mut app = BatApp::new(FS, &mut storage);
+    assert_eq!(app.lowest_bat_call_hz(), 16_000.0);
+    let m = layout::MENU.center();
+    app.touch(m.x, m.y);
+    assert_eq!(app.screen(), Screen::Settings);
+    // The wheel changes the selected row: the first, lowest bat call.
+    app.wheel(1);
+    assert_eq!(app.lowest_bat_call_hz(), 18_000.0);
+    let minus = layout::setting_minus(0).center();
+    app.touch(minus.x, minus.y);
+    app.touch(minus.x, minus.y);
+    assert_eq!(app.lowest_bat_call_hz(), 14_000.0);
+    // + on the second row selects it and moves Listen to on from the mix.
+    let plus = layout::setting_plus(1).center();
+    app.touch(plus.x, plus.y);
+    assert_eq!(app.selected_setting(), Setting::ListenTo);
+    assert_eq!(app.source(), MonitorSource::Input3);
+    app.wheel(5);
+    assert_eq!(app.source(), MonitorSource::Input4);
+    assert!(draw(&app).iter().any(|&p| p != 0));
+    let done = layout::DONE.center();
+    app.touch(done.x, done.y);
+    assert_eq!(app.screen(), Screen::Main);
+    app.touch(m.x, m.y);
+    app.button(Button::Home);
+    assert_eq!(app.screen(), Screen::Main);
+}
+
+#[test]
+fn a_lower_lowest_bat_call_finds_a_14_khz_train() {
+    // Three 18 to 14 kHz calls: below the default, kept once lowered.
+    let mut x = noise(0.003, FS as usize);
+    for k in 0..3 {
+        let at = 96_000 + k * 15_360;
+        for (v, c) in x[at..].iter_mut().zip(chirp(17_000.0, 14_000.0, 0.1, 1_920)) {
+            *v += c;
+        }
+    }
+    let mut s1 = vec![0.0f32; 1024];
+    let mut app = BatApp::new(FS, &mut s1);
+    run(&mut app, &x, 4096);
+    assert!(app.last_call().is_none());
+    let mut s2 = vec![0.0f32; 1024];
+    let mut low = BatApp::new(FS, &mut s2);
+    low.change_setting(Setting::LowestBatCall, -1);
+    assert_eq!(low.lowest_bat_call_hz(), 14_000.0);
+    run(&mut low, &x, 4096);
+    let call = low.last_call().expect("the 14 kHz train was not found");
+    assert!(call.peak_freq_hz < 17_500.0, "{call:?}");
+}

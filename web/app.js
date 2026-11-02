@@ -289,7 +289,6 @@ function updateRecButton() {
 
 document.querySelectorAll('[data-button]').forEach((b) => b.addEventListener('click', () => pressButton(b.dataset.button)));
 document.querySelectorAll('[data-wheel]').forEach((b) => b.addEventListener('click', () => { resumeAudio(); emu.wheel(Number(b.dataset.wheel)); }));
-document.querySelectorAll('input[name="source"]').forEach((r) => r.addEventListener('change', () => emu.set_source(r.value)));
 
 document.addEventListener('keydown', (ev) => {
   if (ev.target.closest('input, textarea, select') && ev.target.type !== 'radio' && ev.target.type !== 'checkbox') return;
@@ -299,6 +298,7 @@ document.addEventListener('keydown', (ev) => {
     ' ': () => pressButton('play'),
     r: () => pressButton('rec'),
     m: () => pressButton('mark'),
+    h: () => pressButton('home'),
     arrowleft: () => emu.wheel(-1),
     arrowdown: () => emu.wheel(-1),
     arrowright: () => emu.wheel(1),

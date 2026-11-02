@@ -160,6 +160,7 @@ input[type="radio"], input[type="checkbox"] { accent-color: var(--accent); width
 .keys td { padding: 3px 8px 3px 0; vertical-align: top; }
 .keys td:first-child { white-space: nowrap; width: 1%; }
 .swatch { display: inline-block; width: 18px; height: 4px; vertical-align: middle; }
+.swatch.menu { height: 10px; background: repeating-linear-gradient(180deg, var(--text) 0 2px, transparent 2px 4px); }
 .swatch.dashed { background: repeating-linear-gradient(90deg, #0092e5 0 4px, transparent 4px 8px); }
 .swatch.resistor { background: linear-gradient(90deg, #ff0000 0 25%, #ffa500 25% 50%, #ffff00 50% 75%, #008000 75%); }
 

@@ -5,7 +5,7 @@
 //! events, and after [`Emulator::render`] copies [`Emulator::frame_ptr`]
 //! (RGBA, 320 × 480) out of the WebAssembly memory into the canvas.
 
-use bat_app::{BatApp, Button, Mode, MonitorSource, Rgb565Buffer, HEIGHT, WIDTH};
+use bat_app::{BatApp, Button, HEIGHT, Mode, Rgb565Buffer, WIDTH};
 use wasm_bindgen::prelude::*;
 
 #[wasm_bindgen]
@@ -71,16 +71,6 @@ impl Emulator {
 
     pub fn mode_label(&self) -> String {
         self.app.mode().label().to_string()
-    }
-
-    /// `3`, `4` or `mix`.
-    pub fn set_source(&mut self, name: &str) {
-        let source = match name {
-            "3" => MonitorSource::Input3,
-            "4" => MonitorSource::Input4,
-            _ => MonitorSource::Mix,
-        };
-        self.app.set_source(source);
     }
 
     /// Whether a tap at screen pixel (x, y) would do something.
