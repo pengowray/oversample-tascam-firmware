@@ -10,7 +10,9 @@
 //!    band. Clicks and rustles are loudest at low frequencies and reach down
 //!    to it; bat calls stop well above it.
 //! 2. **Too low**: the peak is below the lowest bat frequency (default
-//!    20 kHz, settable for the few bats that call lower).
+//!    16 kHz, which keeps most free-tailed bats; settable). With the
+//!    detector's band starting at 15 kHz, most sounds this low are already
+//!    caught as broadband.
 //! 3. **Audible**: the audible band (2 to 12 kHz) was loud at the same moment
 //!    (default: more than 4 dB above its floor). Bats are silent there; birds,
 //!    voices and footsteps are not.
@@ -27,21 +29,22 @@
 //! 512-point columns every 128 samples): of 97 calls from a bat at 45 to
 //! 50 kHz it kept 94, it kept 97 of 98 calls in two annotated passes, and in
 //! two recordings with no bats (birds feeding beside the mics, traffic,
-//! sweeping) it reduced detections from 96 and 39 a minute to 7.4 and 2.0.
+//! sweeping) it reduced detections from 96 and 39 a minute to 11.1 and 3.6
+//! (7.4 and 2.0 with the lowest bat frequency at 20 kHz).
 //!
 //! Checked on 247 Xeno-canto echolocation recordings of 76 genera from
 //! around the world, resampled to 192 kHz (`bat-app` example `library`):
-//! 239 gave bat calls, and 69% of all detections in them were classified as
-//! bat calls. The 8 that gave none were free-tails calling below 20 kHz (3),
+//! 240 gave bat calls, and 72% of all detections in them were classified as
+//! bat calls (65% for free-tailed bats; 54% with the lowest bat frequency at
+//! 20 kHz). The 7 that gave none were free-tails calling below 16 kHz (2),
 //! horseshoe bats above 100 kHz, beyond the X8's range (2), clips of 0.3 s
-//! (2), and a low-quality recording with loud background sound. Lowering the
-//! lowest bat frequency to 16 kHz keeps 65% of free-tail calls instead of
-//! 54%, but adds about half as many false detections again; a lower audible
-//! band and laxer thresholds traded similarly, so the defaults stay.
+//! (2), and a low-quality recording with loud background sound. A lower
+//! audible band and laxer thresholds gained little recall for many more
+//! false detections, so those defaults stay.
 
 use crate::detector::CallEvent;
 
-pub const DEFAULT_MIN_BAT_HZ: f32 = 20_000.0;
+pub const DEFAULT_MIN_BAT_HZ: f32 = 16_000.0;
 pub const DEFAULT_MAX_AUDIBLE_DB: f32 = 4.0;
 pub const DEFAULT_TRAIN_WINDOW_S: f32 = 0.6;
 pub const DEFAULT_TRAIN_FREQ_HZ: f32 = 5_000.0;
@@ -254,7 +257,10 @@ mod tests {
         let mut click = call(1.0, 22.0, 30.0);
         click.min_freq_hz = 15_000.0;
         assert_eq!(c.classify(&click).kind, CallKind::Broadband);
-        assert_eq!(c.classify(&call(1.1, 18.0, 30.0)).kind, CallKind::TooLow);
+        // Below the lowest bat frequency, with the band started lower so the
+        // call does not reach its bottom.
+        let mut low = CallClassifier::new(FS, 8_000.0);
+        assert_eq!(low.classify(&call(1.1, 14.0, 30.0)).kind, CallKind::TooLow);
         let mut bird = call(1.2, 26.0, 30.0);
         bird.audible_db_above_floor = 12.0;
         assert_eq!(c.classify(&bird).kind, CallKind::Audible);
@@ -265,7 +271,10 @@ mod tests {
     #[test]
     fn the_lowest_bat_frequency_is_settable() {
         let mut c = classifier();
-        c.set_min_bat_hz(16_000.0);
-        assert_eq!(c.classify(&call(1.0, 18.0, 30.0)).kind, CallKind::Single);
+        c.set_min_bat_hz(20_000.0);
+        assert_eq!(c.classify(&call(1.0, 18.0, 30.0)).kind, CallKind::TooLow);
+        c.set_band_lo_hz(8_000.0);
+        c.set_min_bat_hz(12_000.0);
+        assert_eq!(c.classify(&call(1.1, 14.0, 30.0)).kind, CallKind::Single);
     }
 }
