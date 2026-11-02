@@ -1,0 +1,167 @@
+/* Tokens. The accent and recording colours are the X8 firmware's own blue and
+   red, so the page matches the screen it frames. */
+:root {
+  --bg: #f4f4f2;
+  --panel: #ffffff;
+  --text: #1b1b1b;
+  --muted: #5a5a5a;
+  --line: #d6d6d2;
+  --accent: #0072b3;      /* X8 blue, darkened for 4.5:1 on white */
+  --accent-text: #ffffff;
+  --accent-fill: #0072b3; /* filled buttons: white text needs this darker blue for 4.5:1 */
+  --rec: #c81d25;
+  --device: #1a1a1a;
+  --focus: #0092e5;
+  color-scheme: light dark;
+}
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #121212;
+    --panel: #1c1c1c;
+    --text: #ececec;
+    --muted: #a6a6a6;
+    --line: #333333;
+    --accent: #0092e5;    /* X8 blue */
+    --accent-text: #ffffff;
+    --rec: #df252d;
+    --device: #000000;
+  }
+}
+
+* { box-sizing: border-box; }
+/* Elements given display rules below still hide when marked hidden. */
+[hidden] { display: none !important; }
+html { background: var(--bg); color: var(--text); }
+body {
+  margin: 0;
+  font: 15px/1.45 "Atkinson Hyperlegible Next", system-ui, sans-serif;
+  min-height: 100vh;
+}
+.num, kbd, input[type="range"] + .num { font-variant-numeric: tabular-nums; }
+kbd {
+  font: 12px "Atkinson Hyperlegible Mono", ui-monospace, monospace;
+  border: 1px solid var(--line);
+  border-radius: 4px;
+  padding: 0 4px;
+  color: var(--muted);
+}
+::selection { background: var(--accent); color: var(--accent-text); }
+:focus-visible { outline: 2px solid var(--focus); outline-offset: 2px; }
+
+header { padding: 16px 24px 0; }
+h1 { font-size: 20px; font-weight: 600; margin: 0; }
+header p { margin: 4px 0 0; color: var(--muted); }
+
+main {
+  display: grid;
+  grid-template-columns: max-content minmax(280px, 420px);
+  gap: 24px;
+  padding: 16px 24px 24px;
+  align-items: start;
+}
+
+.device {
+  background: var(--device);
+  border-radius: 18px;
+  padding: 16px;
+  width: max-content;
+  display: grid;
+  grid-template-columns: auto auto;
+  gap: 16px;
+  align-items: center;
+}
+/* Buttons beside the screen, so the screen can be as tall as the window allows. */
+.controls { display: grid; gap: 18px; }
+.controls .hw { flex-direction: column; }
+.controls .hw button { width: 104px; }
+/* The canvas is the X8's 320 x 480 panel. JS sets its CSS size to a whole or
+   half multiple that fits, and pixelated scaling keeps the device fonts sharp. */
+#screen {
+  display: block;
+  image-rendering: pixelated;
+  background: #000;
+  cursor: pointer;
+  touch-action: none;
+}
+.hw { display: flex; gap: 8px; }
+.hw button {
+  background: #2c2c2c;
+  color: #f0f0f0;
+  border: 0;
+  border-radius: 8px;
+  min-width: 72px;
+  min-height: 40px;
+  padding: 4px 10px;
+  font: 600 13px "Atkinson Hyperlegible Next", system-ui, sans-serif;
+  display: grid;
+  justify-items: center;
+  cursor: pointer;
+}
+.hw button kbd { border-color: #4a4a4a; color: #bdbdbd; margin-top: 2px; }
+.hw button:hover:not(:disabled) { background: #3a3a3a; }
+.hw button:disabled { opacity: 0.45; cursor: default; }
+.hw button.rec { color: #ff6b70; }
+/* Darker than the X8's red, so the white label and key hint reach 4.5:1. */
+.hw button.rec[aria-pressed="true"] { background: #b81c23; color: #fff; }
+.hw button.rec[aria-pressed="true"] kbd { color: #fff; border-color: rgba(255, 255, 255, 0.6); }
+
+.panel {
+  background: var(--panel);
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  padding: 4px 18px 16px;
+}
+.panel h2 {
+  font-size: 13px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--muted);
+  margin: 16px 0 6px;
+}
+.row { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; }
+.status { color: var(--muted); margin: 8px 0 0; }
+.notice { margin: 8px 0 0; font-weight: 600; }
+
+button, .button {
+  font: 600 14px "Atkinson Hyperlegible Next", system-ui, sans-serif;
+  color: var(--text);
+  background: transparent;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 7px 14px;
+  min-height: 36px;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+}
+button:hover, .button:hover { border-color: var(--muted); }
+.button.primary { background: var(--accent-fill); border-color: var(--accent-fill); color: var(--accent-text); }
+
+.transport {
+  display: grid;
+  grid-template-columns: auto 1fr auto;
+  gap: 10px;
+  align-items: center;
+  margin-top: 10px;
+}
+.transport .check { grid-column: 1 / -1; }
+.transport #play { min-width: 72px; justify-content: center; }
+input[type="range"] { accent-color: var(--accent); min-width: 120px; flex: 1; }
+.check { display: inline-flex; gap: 6px; align-items: center; cursor: pointer; }
+input[type="radio"], input[type="checkbox"] { accent-color: var(--accent); width: 16px; height: 16px; }
+
+.keys { border-collapse: collapse; width: 100%; }
+.keys td { padding: 3px 8px 3px 0; vertical-align: top; }
+.keys td:first-child { white-space: nowrap; width: 1%; }
+
+body.dropping main { outline: 3px dashed var(--accent); outline-offset: -8px; }
+
+@media (max-width: 760px) {
+  header, main { padding-left: 16px; padding-right: 16px; }
+  main { grid-template-columns: 1fr; }
+  .device { grid-template-columns: 1fr; justify-items: center; width: auto; }
+  .controls .hw button { width: auto; }
+  .controls { grid-auto-flow: row; }
+  .controls .hw { flex-direction: row; flex-wrap: wrap; justify-content: center; }
+}

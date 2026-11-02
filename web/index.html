@@ -1,0 +1,81 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>X8 bat app emulator</title>
+<meta name="color-scheme" content="light dark">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Atkinson+Hyperlegible+Next:wght@400;600&family=Atkinson+Hyperlegible+Mono:wght@400&display=swap">
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<header>
+  <h1>X8 bat app emulator</h1>
+  <p>The bat app's own code, running in the browser at 192 kHz. Recording is simulated: nothing is saved.</p>
+</header>
+
+<main>
+  <section class="device" aria-label="Recorder">
+    <canvas id="screen" width="320" height="480" aria-label="Recorder screen. Click to tap, scroll to turn the wheel."></canvas>
+    <div class="controls">
+    <div class="hw" role="group" aria-label="Recorder buttons">
+      <button type="button" data-button="home" disabled title="Returns to the X8's app launcher, which is not emulated">HOME<kbd>H</kbd></button>
+      <button type="button" data-button="play" title="Play or pause the input file (Space)">PLAY<kbd>Space</kbd></button>
+      <button type="button" data-button="rec" class="rec" title="Start or stop recording (R)">REC<kbd>R</kbd></button>
+      <button type="button" data-button="mark" title="Add a mark; in TE mode, capture now (M)">MARK<kbd>M</kbd></button>
+    </div>
+    <div class="hw wheel" role="group" aria-label="Wheel">
+      <button type="button" data-wheel="-1" title="Turn the wheel left (Left arrow)">Wheel left<kbd>&larr;</kbd></button>
+      <button type="button" data-wheel="1" title="Turn the wheel right (Right arrow)">Wheel right<kbd>&rarr;</kbd></button>
+    </div>
+    </div>
+  </section>
+
+  <section class="panel" aria-label="Emulator controls">
+    <h2>Input</h2>
+    <div class="row">
+      <label class="button primary">Open WAV file<input id="file" type="file" accept="audio/*,.wav" hidden></label>
+      <button type="button" id="mic">Use microphone</button>
+    </div>
+    <p id="input-status" class="status">No input yet. Open a file, drop one on the page, or use the microphone.</p>
+    <p id="audio-paused" class="notice" hidden>The browser has paused audio until you click the page or press a key.</p>
+
+    <div id="transport" class="transport" hidden>
+      <button type="button" id="play">Play</button>
+      <input id="seek" type="range" min="0" max="1000" value="0" aria-label="Position">
+      <span id="time" class="num">0:00 / 0:00</span>
+      <label class="check"><input id="loop" type="checkbox" checked> Loop</label>
+    </div>
+
+    <h2>Listen to</h2>
+    <div class="row" role="radiogroup" aria-label="Input sent to the headphones">
+      <label class="check"><input type="radio" name="source" value="mix" checked> Inputs 3 and 4 mixed</label>
+      <label class="check"><input type="radio" name="source" value="3"> Input 3</label>
+      <label class="check"><input type="radio" name="source" value="4"> Input 4</label>
+    </div>
+
+    <h2>Volume</h2>
+    <div class="row">
+      <input id="volume" type="range" min="0" max="60" step="1" value="30" aria-label="Volume">
+      <span id="volume-value" class="num">+30 dB</span>
+    </div>
+
+    <h2>Keys</h2>
+    <table class="keys">
+      <tr><td><kbd>Space</kbd></td><td>Play or pause the file</td></tr>
+      <tr><td><kbd>R</kbd></td><td>Start or stop recording</td></tr>
+      <tr><td><kbd>M</kbd></td><td>Mark; in TE mode, capture now</td></tr>
+      <tr><td><kbd>&larr;</kbd> <kbd>&rarr;</kbd></td><td>Turn the wheel (or scroll over the screen)</td></tr>
+      <tr><td><kbd>1</kbd> to <kbd>5</kbd></td><td>Mode: HET, COMB, FD, TE, PITCH</td></tr>
+      <tr><td>Click</td><td>Tap the screen (on the waterfall in HET mode: tune there)</td></tr>
+    </table>
+
+    <p id="load" class="status num"></p>
+  </section>
+</main>
+
+<script type="module" src="app.js"></script>
+</body>
+</html>

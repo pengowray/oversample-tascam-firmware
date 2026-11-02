@@ -144,7 +144,7 @@ fn meters(app: &BatApp, fb: Fb) {
             fill(fb, Rectangle::new(Point::new(hx, y), Size::new(2, METER_H as u32)), TEXT);
         }
     }
-    for db in [-48.0f32, -24.0, -12.0, -6.0, 0.0] {
+    for db in [-72.0f32, -48.0, -24.0, -12.0, -6.0, 0.0] {
         let x = meter_x(db);
         let align = if db == METER_MIN_DB { LEFT } else if db == 0.0 { RIGHT } else { CENTER };
         let x = if db == METER_MIN_DB { METER_X } else if db == 0.0 { METER_X + METER_W } else { x };

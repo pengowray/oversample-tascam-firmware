@@ -42,6 +42,9 @@ pub const VIEW_HI_HZ: f32 = 96_000.0;
 const WF_COLUMN_MS: f32 = 10.0;
 /// Range of levels shown, in dB above the display floor.
 const DISPLAY_RANGE_DB: f32 = 50.0;
+/// Lowest display floor. Without it, digital silence (-200 dB) pulls the
+/// floor down until the silence itself shows as faint colour.
+const MIN_FLOOR_DB: f32 = -140.0;
 /// Spectrum for the waterfall and the call detector: 512-point FFT (375 Hz
 /// bins at 192 kHz) every 128 samples.
 const FFT_N: usize = 512;
@@ -155,7 +158,7 @@ struct Meter {
 }
 
 impl Meter {
-    const FLOOR_DB: f32 = -60.0;
+    const FLOOR_DB: f32 = -90.0;
 
     const fn new() -> Self {
         Self { level_db: Self::FLOOR_DB, hold_db: Self::FLOOR_DB, hold_left: 0 }
@@ -274,6 +277,9 @@ impl<'a> BatApp<'a> {
             out: [0.0; CHUNK],
             te_out: [0.0; CHUNK],
         };
+        // Each call reaches about one of the comb's oscillators, and the comb
+        // scales its sum by 1 / count, so restore that to match HET's level.
+        app.comb.set_gain(COMB_COUNT as f32);
         app.apply_settings();
         app
     }
@@ -504,6 +510,7 @@ impl<'a> BatApp<'a> {
                     let mean = wf_accum.iter().sum::<f32>() / WF_H as f32;
                     if mean > -200.0 {
                         *floor_db += 0.02 * (mean - 3.0 - *floor_db);
+                        *floor_db = floor_db.max(MIN_FLOOR_DB);
                     }
                 }
                 let base = *wf_next * WF_H;

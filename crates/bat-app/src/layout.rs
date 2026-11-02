@@ -14,13 +14,14 @@ pub const TITLE_H: i32 = 24;
 /// Status bar: recording state, recorded time and clock.
 pub const STATUS: Rectangle = Rectangle::new(Point::new(6, 28), Size::new(308, 32));
 
-/// Meters for inputs 3 and 4, from -48 to 0 dBFS as on the stock meters.
+/// Meters for inputs 3 and 4, from -72 to 0 dBFS. The stock meters stop at
+/// -48 dBFS, but 32-bit float bat recordings often peak below that.
 pub const METER_X: i32 = 22;
 pub const METER_W: i32 = 268;
 pub const METER_Y: [i32; 2] = [66, 76];
 pub const METER_H: i32 = 6;
 pub const METER_SCALE_BASELINE: i32 = 92;
-pub const METER_MIN_DB: f32 = -48.0;
+pub const METER_MIN_DB: f32 = -72.0;
 
 /// Waterfall: time runs right to left, newest at the right edge, one pixel
 /// column per 10 ms (2.9 s across). Frequency runs up, 15 to 96 kHz, about
@@ -39,7 +40,7 @@ pub const SNAP_Y: i32 = 336;
 pub const SNAP_W: usize = 150;
 pub const SNAP_H: usize = 60;
 pub const SNAP_TEXT_X: i32 = 168;
-pub const SNAP_VALUE_X: i32 = 214;
+pub const SNAP_VALUE_X: i32 = 222;
 
 /// The current mode's setting.
 pub const VALUE_BASELINE: i32 = 420;
