@@ -166,8 +166,8 @@ Either change showing on the unit proves the patched image is running. A label
 drawn as an image would not change, which is why there are two. The letters S, O,
 N, A and R all appear in other text on both screens, so the fonts probably have
 them even if they hold only the characters the stock text uses; a name drawn
-blank or partly is still a visible change. A third "TUNER", on a button in the
-MUSIC app (offset 0x13d259c), is left as it is.
+blank or partly is still a visible change. A third "TUNER", in the POCKET STUDIO
+tuner screen (offset 0x13d259c), is left as it is.
 
 **The INFORMATION screen should still show V2.03.** The image holds its own
 version and build as numbers (203 and 217, big-endian, at offset 0x20400), and
