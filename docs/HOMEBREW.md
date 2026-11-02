@@ -620,6 +620,54 @@ single-cycle memories, with no cache to miss.
 "dsp" has dropped from about 73% in HET, whether PITCH now keeps up, and
 whether "lost" stays still.
 
+## Step 9 test file: the BATS tile, recording, pop-ups (built 2026-11-03, not yet installed)
+
+`work/patch7/#PortaX8_0225.203` (B225, SHA-256 `384bfbf2…7d114cfe`). The bat
+screen now opens like an app and works over MANUAL's recorder.
+
+- **BATS tile.** The TUNER tile's handler ends with a tail call
+  `b.w 0x80d6946c` (the Qt bridge setter, property 6, Qt app 7) at 0x81732c10;
+  the patch retargets it to `launch_hook`, which asks for Qt app 1 (MANUAL, C
+  app 2) instead and notes the tap. Task 1 opens the bat screen once the app
+  byte 0x81e8ca90 changes (or after 0.5 s if it already said MANUAL; it gives
+  up after 5 s). The tile's title and description are the patch's strings: the
+  tool repoints the English literal and all 10 language pointers of each, and
+  changes the English length in `mov.w r1,#length<<8` (launcher.md section 6).
+  The tile keeps the tuner icon, and the TUNER app can no longer be opened
+  from the LAUNCHER.
+- **Closing.** The bat screen closes when the app byte changes from the app it
+  was opened in, so holding HOME returns to the LAUNCHER as in the stock apps.
+  A short HOME press goes on to the app (it stops a take or playback). MARK
+  three times still shows or hides the bat screen in any app; on the LAUNCHER,
+  HOME also closes it.
+- **Recording.** REC goes to MANUAL as before. A second key hook replaces the
+  recording screen's handler (literal 0x80dd3a24, 0x80dd3f9d), which the
+  firmware installs from record standby to the end of a take, so the wheel,
+  PLAY and MARK x3 keep working during a take. During a take MARK also goes on
+  to the recorder at once, so the file gets a mark where it was pressed (a
+  triple leaves two). The status bar shows the recorder's real state from
+  0x8196a3e5 (stopped, standby with a blinking dot, recording, paused) and the
+  take's length from the recorder block, read directly rather than through
+  `FUN_80dae75c`, which writes.
+- **Pop-ups.** Pop-ups (No Card, No Armed Track and so on) install their own key
+  handler, so they used to sit hidden under the bat screen and take the next
+  presses. While task 1's state byte 0x8196a3e0 is 6, the DSP task gives the
+  display and touch back; the bat screen returns when the pop-up closes.
+- **Sample rate.** Below or above 192 kHz the app gets no input, so a notice
+  over the waterfall gives the current rate and how to change it (record rate
+  0x81cbe678).
+- **Modes.** PLAY cycles HET, COMB, FD and TE; PITCH is hidden on the X8.
+- **Debug strips.** Both strips now show `app` (the app byte), `st` (task 1's
+  state) and `rec` (the recorder byte).
+
+**What to check.** Tap BATS: does the bat screen open by itself, and what does
+MARK x3 show underneath (MANUAL, the tuner, or something half-drawn)? Press REC
+twice (standby, then recording) with the bat screen up: the status bar should
+blink, then turn red and count; after stopping, is there a 192 kHz file on the
+card, with marks where MARK was pressed? Do the wheel and PLAY work during the
+take? Does a pop-up (REC without a card) show and then give the bat screen back?
+Does holding HOME return to the LAUNCHER? At 48 kHz, does the notice show?
+
 ## Firmware map (V2.03, in progress)
 
 Found with `tools/x8ram.py` (unpacks the RAM runs) and a headless Ghidra 10.4

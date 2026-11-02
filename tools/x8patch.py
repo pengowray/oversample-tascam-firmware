@@ -29,17 +29,161 @@ PATCH_LIMIT = 0x81900000
 FLASH_AT = 0x1850000          # flash image offset of PATCH_BASE
 STOCK_IMAGE_LEN = 0x1850000
 
-# Hook words: flash image offset of a word holding a stock function pointer,
-# its stock value, and the header field (by index) that replaces it.
-HOOKS = {
-    (203, 217): [
-        # Literal that 0x80da98e0 installs as the app screens' key handler;
-        # nothing else reads it. Update mode installs its own handler instead.
-        ("app screen key handler", 0x80DA9A20 - x8fw.APP_BASE + x8fw.APP_OFFSET, 0x80DAC0D5, "key_hook"),
-    ],
-}
+def flash(address):
+    """Flash image offset of a running address in the stock application."""
+    return address - x8fw.APP_BASE + x8fw.APP_OFFSET
 
-HEADER_FIELDS = ["magic", "version", "key_hook"]
+
+# What the patch changes in each supported build. Addresses are running
+# addresses; the stock value at each is checked before it is changed.
+#
+# words: a word holding a stock function pointer, replaced by a header field.
+# branches: a `b.w` tail call, retargeted to a header field's function.
+# texts: one launcher text (the TUNER tile's title or a line of its
+#   description), replaced by a header field's string. Each is set in three
+#   places: the English literal word, the `mov.w r1,#length<<8` that gives the
+#   English length, and the 10 per-language pointers (whose length the
+#   firmware counts at run time). See work/notes/launcher.md section 6.
+BUILDS = {
+    (203, 217): {
+        "words": [
+            # Literal that 0x80da98e0 installs as the app screens' key handler;
+            # nothing else reads it. Update mode installs its own handler instead.
+            ("app screen key handler", 0x80DA9A20, 0x80DAC0D5, "key_hook"),
+            # Literal that 0x80dd2cfc installs as the key handler from record
+            # standby until the end of a take; nothing else reads it.
+            ("recording screen key handler", 0x80DD3A24, 0x80DD3F9D, "rec_key_hook"),
+        ],
+        "branches": [
+            # The TUNER tile's handler ends `pop.w {r4,lr}; b.w 0x80d6946c`,
+            # the bridge setter, with r1 = 6 (the app property), r2 = 7 (TUNER).
+            ("TUNER tile", 0x81732C10, 0x80D6946C, "launch_hook"),
+        ],
+        "texts": [
+            # (name, literal, stock string, mov.w at, stock length, table)
+            ("tile title", 0x80F23D9C, 0x813614F4, 0x80F2347C, 5, 0x813B0E48, "title"),
+            ("description line 1", 0x80F24670, 0x813614DC, 0x80F23B38, 22, 0x813B32FC, "line1"),
+            ("description line 2", 0x80F24AC0, 0x81361968, 0x80F23FA6, 26, 0x813B361C, "line2"),
+            ("description line 3", 0x80F24E4C, 0x813618EC, 0x80F2441C, 24, 0x813B3284, "line3"),
+            ("description line 4", 0x80F25444, 0x813617EC, 0x80F24856, 22, 0x813B8078, "line4"),
+            ("description line 5", 0x80F25744, 0x81361460, 0x80F24C58, 23, 0x813B8168, "line5"),
+        ],
+    },
+}
+LANGUAGES = 10
+
+HEADER_FIELDS = ["magic", "version", "key_hook", "rec_key_hook", "launch_hook",
+                 "title", "line1", "line2", "line3", "line4", "line5"]
+HEADER_FORMAT = "<4s10I"
+
+
+def decode_bw(hw1, hw2, at):
+    """Target of a Thumb-2 `b.w` (encoding T4) at `at`, or None."""
+    if hw1 & 0xF800 != 0xF000 or hw2 & 0xD000 != 0x9000:
+        return None
+    s = hw1 >> 10 & 1
+    i1 = 1 - ((hw2 >> 13 & 1) ^ s)
+    i2 = 1 - ((hw2 >> 11 & 1) ^ s)
+    offset = s << 24 | i1 << 23 | i2 << 22 | (hw1 & 0x3FF) << 12 | (hw2 & 0x7FF) << 1
+    if s:
+        offset -= 1 << 25
+    return at + 4 + offset
+
+
+def encode_bw(at, target):
+    offset = target - (at + 4)
+    if offset & 1 or not -(1 << 24) <= offset < (1 << 24):
+        raise ValueError(f"b.w at 0x{at:08x} cannot reach 0x{target:08x}")
+    s = offset >> 24 & 1
+    i1, i2 = offset >> 23 & 1, offset >> 22 & 1
+    j1, j2 = (1 - i1) ^ s, (1 - i2) ^ s
+    hw1 = 0xF000 | s << 10 | (offset >> 12 & 0x3FF)
+    hw2 = 0x9000 | j1 << 13 | j2 << 11 | (offset >> 1 & 0x7FF)
+    assert decode_bw(hw1, hw2, at) == target
+    return hw1, hw2
+
+
+def expand_imm(imm12):
+    """Arm's ThumbExpandImm: the value of a modified immediate constant."""
+    if imm12 >> 10 == 0:
+        x = imm12 & 0xFF
+        return [x, x * 0x00010001, x * 0x01000100, x * 0x01010101][imm12 >> 8 & 3]
+    value, rotate = 0x80 | imm12 & 0x7F, imm12 >> 7
+    return (value >> rotate | value << (32 - rotate)) & 0xFFFFFFFF
+
+
+def decode_mov_r1(hw1, hw2):
+    """The constant of `mov.w r1,#const` (encoding T2), or None."""
+    if hw1 & 0xFBFF != 0xF04F or hw2 & 0x8F00 != 0x0100:
+        return None
+    return expand_imm((hw1 >> 10 & 1) << 11 | (hw2 >> 12 & 7) << 8 | hw2 & 0xFF)
+
+
+def encode_mov_r1(value):
+    imm12 = next(i for i in range(4096) if expand_imm(i) == value)
+    hw1, hw2 = 0xF04F | (imm12 >> 11) << 10, (imm12 >> 8 & 7) << 12 | 0x0100 | imm12 & 0xFF
+    assert decode_mov_r1(hw1, hw2) == value
+    return hw1, hw2
+
+
+def patch_string(patch, address):
+    """The NUL-terminated ASCII string at `address` in the patch."""
+    at = address - PATCH_BASE
+    if not 0 <= at < len(patch) or b"\0" not in patch[at:]:
+        raise ValueError(f"string at 0x{address:08x} is not inside the patch")
+    text = patch[at:patch.index(b"\0", at)]
+    if not text.isascii() or len(text) > 255:
+        raise ValueError(f"string at 0x{address:08x} is not ASCII of 255 characters or fewer")
+    return text.decode()
+
+
+def apply(image, patch, fields, build):
+    """Make the build's changes in `image`; returns an error message or None."""
+    word = lambda address: struct.unpack_from("<I", image, flash(address))[0]
+    half = lambda address: struct.unpack_from("<H", image, flash(address))[0]
+    put_word = lambda address, value: struct.pack_into("<I", image, flash(address), value)
+    put_half = lambda address, value: struct.pack_into("<H", image, flash(address), value)
+    in_patch = lambda target: PATCH_BASE <= target < PATCH_BASE + len(patch)
+
+    for name, address, stock, field in build["words"]:
+        target = fields[field]
+        if word(address) != stock:
+            return f"{name} at 0x{address:08x} holds 0x{word(address):08x}, expected 0x{stock:08x}"
+        if not (target & 1 and in_patch(target)):
+            return f"{field} = 0x{target:08x} is not a Thumb address inside the patch"
+        put_word(address, target)
+        print(f"{name}: 0x{stock:08x} -> 0x{target:08x}")
+
+    for name, address, stock, field in build["branches"]:
+        target = fields[field]
+        current = decode_bw(half(address), half(address + 2), address)
+        if current != stock or encode_bw(address, stock) != (half(address), half(address + 2)):
+            return f"{name}: no b.w 0x{stock:08x} at 0x{address:08x}"
+        if not (target & 1 and in_patch(target)):
+            return f"{field} = 0x{target:08x} is not a Thumb address inside the patch"
+        hw1, hw2 = encode_bw(address, target & ~1)
+        put_half(address, hw1)
+        put_half(address + 2, hw2)
+        print(f"{name}: b.w 0x{stock:08x} -> 0x{target & ~1:08x}")
+
+    for name, literal, stock, mov_at, stock_len, table, field in build["texts"]:
+        target = fields[field]
+        text = patch_string(patch, target)
+        if word(literal) != stock or word(table) != stock:
+            return f"{name}: literal 0x{literal:08x} or table 0x{table:08x} does not hold 0x{stock:08x}"
+        if decode_mov_r1(half(mov_at), half(mov_at + 2)) != stock_len << 8:
+            return f"{name}: no mov.w r1,#0x{stock_len << 8:x} at 0x{mov_at:08x}"
+        for k in range(LANGUAGES):
+            if not 0x81300000 <= word(table + 4 * k) < 0x81900000:
+                return f"{name}: table entry {k} at 0x{table + 4 * k:08x} is not a string pointer"
+        put_word(literal, target)
+        hw1, hw2 = encode_mov_r1(len(text) << 8)
+        put_half(mov_at, hw1)
+        put_half(mov_at + 2, hw2)
+        for k in range(LANGUAGES):
+            put_word(table + 4 * k, target)
+        print(f"{name}: {text!r}")
+    return None
 
 
 def elf_symbols(data, shoff, shentsize, shnum):
@@ -105,8 +249,8 @@ def main(argv):
     if x8fw.check(info) or len(image) != STOCK_IMAGE_LEN:
         print("the base file is not an unmodified official update")
         return 1
-    hooks = HOOKS.get((info["version"], info["build"]))
-    if hooks is None:
+    build = BUILDS.get((info["version"], info["build"]))
+    if build is None:
         print(f"no hook addresses for V{info['version']} build {info['build']}")
         return 1
 
@@ -114,21 +258,17 @@ def main(argv):
     if patch[:4] != b"BATX":
         print("the patch does not start with its header (magic BATX)")
         return 1
-    fields = dict(zip(HEADER_FIELDS, struct.unpack_from("<4sII", patch, 0)))
+    fields = dict(zip(HEADER_FIELDS, struct.unpack_from(HEADER_FORMAT, patch, 0)))
     print(f"patch: {len(patch):,} bytes at 0x{PATCH_BASE:08x}, header version {fields['version']}")
 
     image = bytearray(image)
-    for name, offset, stock, field in hooks:
-        current, = struct.unpack_from("<I", image, offset)
-        if current != stock:
-            print(f"refused: {name} at flash 0x{offset:x} holds 0x{current:08x}, expected 0x{stock:08x}")
-            return 1
-        target = fields[field]
-        if not (target & 1 and PATCH_BASE <= target < PATCH_BASE + len(patch)):
-            print(f"refused: {field} = 0x{target:08x} is not a Thumb address inside the patch")
-            return 1
-        struct.pack_into("<I", image, offset, target)
-        print(f"{name}: 0x{stock:08x} -> 0x{target:08x}")
+    try:
+        error = apply(image, patch, fields, build)
+    except ValueError as e:
+        error = str(e)
+    if error:
+        print(f"refused: {error}")
+        return 1
 
     padded = patch + bytes(-len(patch) % 4)
     image = bytes(image) + padded + bytes(4)   # the last 4 bytes become the sum32 trailer

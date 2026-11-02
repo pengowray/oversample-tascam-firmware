@@ -13,8 +13,8 @@ use crate::fb::Rgb565Buffer;
 use crate::layout::*;
 use crate::palette::*;
 use crate::{
-    BatApp, CallKind, DEFAULT_CUTOFF_HZ, Meter, Mode, MonitorSource, Screen, Setting, TeStatus, VIEW_HI_HZ,
-    VIEW_LO_HZ, WF_COLUMN_MS,
+    BatApp, CallKind, DEFAULT_CUTOFF_HZ, Meter, Mode, MonitorSource, Recorder, Screen, Setting, TeStatus,
+    VIEW_HI_HZ, VIEW_LO_HZ, WF_COLUMN_MS,
 };
 use bat_dsp::heterodyne::DEFAULT_COMB_SPACING_HZ;
 use bat_dsp::time_expansion::{DEFAULT_POST_MS, DEFAULT_PRE_MS};
@@ -73,10 +73,13 @@ pub fn draw(app: &BatApp, fb: Fb) {
         settings(app, fb);
         return;
     }
-    title_bar(fb, "BAT DETECTOR", true);
+    title_bar(fb, "BATS", true);
     status_bar(app, fb);
     meters(app, fb);
     waterfall(app, fb);
+    if let Some(rate) = app.rate_warning() {
+        rate_warning(fb, rate);
+    }
     snapshot(app, fb);
     value_line(app, fb);
     mode_buttons(app, fb);
@@ -98,17 +101,33 @@ fn title_bar(fb: Fb, title: &str, menu: bool) {
     fill(fb, Rectangle::new(Point::new(290, 9), Size::new(17, 7)), TEXT);
 }
 
+/// The recorder's state as the X8's REC LED shows it: red while recording
+/// or paused, a blinking red dot in record standby.
 fn status_bar(app: &BatApp, fb: Fb) {
-    let recording = app.recording;
-    rounded(fb, STATUS, 6, if recording { RECORDING } else { PANEL });
+    let (state, secs) = app.recorder();
+    let red = matches!(state, Recorder::Recording | Recorder::Paused);
+    rounded(fb, STATUS, 6, if red { RECORDING } else { PANEL });
     let cy = STATUS.top_left.y + STATUS.size.height as i32 / 2;
-    if recording {
-        let _ = Circle::with_center(Point::new(24, cy), 14).into_styled(PrimitiveStyle::with_fill(TEXT)).draw(fb);
-    } else {
-        fill(fb, Rectangle::with_center(Point::new(24, cy), Size::new(12, 12)), TEXT);
+    let dot = |fb: Fb, colour| {
+        let _ = Circle::with_center(Point::new(24, cy), 14).into_styled(PrimitiveStyle::with_fill(colour)).draw(fb);
+    };
+    match state {
+        Recorder::Stopped => fill(fb, Rectangle::with_center(Point::new(24, cy), Size::new(12, 12)), TEXT),
+        Recorder::Standby => {
+            // Half a second on, half off, by sample time.
+            if (app.samples as f32 / (app.sample_rate * 0.5)) as u64 % 2 == 0 {
+                dot(fb, RECORDING);
+            }
+        }
+        Recorder::Recording => dot(fb, TEXT),
+        Recorder::Paused => {
+            for x in [18, 26] {
+                fill(fb, Rectangle::new(Point::new(x, cy - 6), Size::new(4, 12)), TEXT);
+            }
+        }
     }
+    let recording = red;
     // Recorded time in the stock style: large digits, small h m s.
-    let secs = app.recorded_seconds();
     let (h, m, s) = (secs / 3600 % 100, secs / 60 % 60, secs % 60);
     let baseline = cy + 9;
     let mut x = 42;
@@ -126,6 +145,32 @@ fn status_bar(app: &BatApp, fb: Fb) {
         RIGHT,
         if recording { TEXT } else { TEXT_MUTED },
     );
+}
+
+/// Over the waterfall while the input's sample rate is not 192 kHz: the app
+/// gets no sound then, so the waterfall would stay empty.
+fn rate_warning(fb: Fb, rate_hz: u32) {
+    let panel = Rectangle::new(Point::new(6, WF_Y + 8), Size::new(308, WF_H as u32 - 16));
+    rounded(fb, panel, 6, PANEL);
+    let x = panel.top_left.x + 10;
+    let mut y = panel.top_left.y + 22;
+    let tenths = (rate_hz + 50) / 100;
+    if tenths % 10 == 0 {
+        text(fb, &BODY_BOLD, format_args!("Wrong sample rate: {}kHz", tenths / 10), x, y, LEFT, TEXT);
+    } else {
+        text(fb, &BODY_BOLD, format_args!("Wrong sample rate: {}.{}kHz", tenths / 10, tenths % 10), x, y, LEFT, TEXT);
+    }
+    for line in [
+        "BATS needs a sample rate of 192kHz.",
+        "1. Hold HOME to return to the LAUNCHER.",
+        "2. Tap GENERAL SETTINGS (bottom right).",
+        "3. Open the REC SETTINGS page.",
+        "4. In FILE FORMAT, set SAMPLE to 192kHz.",
+        "5. Return to the LAUNCHER and tap BATS.",
+    ] {
+        y += 24;
+        text(fb, &BODY, line, x, y, LEFT, TEXT);
+    }
 }
 
 fn meter_x(db: f32) -> i32 {
@@ -390,8 +435,9 @@ fn value_line(app: &BatApp, fb: Fb) {
 }
 
 fn mode_buttons(app: &BatApp, fb: Fb) {
-    for (i, mode) in Mode::ALL.iter().enumerate() {
-        let r = mode_button(i);
+    let modes = app.modes();
+    for (i, mode) in modes.iter().enumerate() {
+        let r = mode_button(i, modes.len());
         let selected = *mode == app.mode;
         rounded(fb, r, 4, if selected { ACCENT } else { BUTTON });
         text(fb, &BODY_BOLD, mode.label(), r.center().x, r.top_left.y + 28, CENTER, TEXT);

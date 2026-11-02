@@ -94,7 +94,7 @@ fn wheel_and_taps_change_the_heterodyne_frequency() {
 fn tapping_a_mode_button_selects_it() {
     let mut storage = vec![0.0f32; 1024];
     let mut app = BatApp::new(FS, &mut storage, buffers());
-    let r = layout::mode_button(3);
+    let r = layout::mode_button(3, Mode::ALL.len());
     app.touch(r.center().x, r.center().y);
     assert_eq!(app.mode(), Mode::Te);
 }
@@ -122,6 +122,43 @@ fn rec_toggles_and_counts_recorded_time() {
     assert_eq!(app.recorded_seconds(), 2);
     app.button(Button::Rec);
     assert!(!app.is_recording());
+}
+
+#[test]
+fn without_pitch_four_buttons_fill_the_row_and_play_cycles_them() {
+    let mut storage = vec![0.0f32; 1024];
+    let mut app = BatApp::new(FS, &mut storage, buffers());
+    app.set_mode(Mode::Pitch);
+    app.set_modes(&Mode::WITHOUT_PITCH);
+    assert_eq!(app.mode(), Mode::Het);
+    let last = layout::mode_button(3, 4);
+    app.touch(last.center().x, last.center().y);
+    assert_eq!(app.mode(), Mode::Te);
+    assert!(last.top_left.x + last.size.width as i32 > 300);
+    app.next_mode();
+    assert_eq!(app.mode(), Mode::Het);
+}
+
+#[test]
+fn an_external_recorder_replaces_rec() {
+    let mut storage = vec![0.0f32; 1024];
+    let mut app = BatApp::new(FS, &mut storage, buffers());
+    app.set_recorder(Recorder::Standby, 0);
+    app.button(Button::Rec);
+    assert_eq!(app.recorder(), (Recorder::Standby, 0));
+    app.set_recorder(Recorder::Recording, 75);
+    assert!(app.is_recording());
+    assert_eq!(app.recorder(), (Recorder::Recording, 75));
+}
+
+#[test]
+fn the_rate_warning_follows_the_input_rate() {
+    let mut storage = vec![0.0f32; 1024];
+    let mut app = BatApp::new(FS, &mut storage, buffers());
+    app.set_input_rate(48_000);
+    assert_eq!(app.rate_warning(), Some(48_000));
+    app.set_input_rate(FS as u32);
+    assert_eq!(app.rate_warning(), None);
 }
 
 #[test]

@@ -10,8 +10,11 @@
 //! The file must be at 192 kHz; channel 1 feeds input 3, channel 2 input 4.
 //! `MARK=bat,tone,audible,broadband` chooses which kinds of detection are
 //! marked (default: bat).
+//! `X8=standby|recording|paused` shows the screen as on the X8: four mode
+//! buttons, and the X8's recorder in that state at 1 min 15 s.
+//! `RATE=48000` shows the warning for an input at that rate.
 
-use bat_app::{BatApp, Buffers, CallKind, HEIGHT, Mode, Rgb565Buffer, WIDTH};
+use bat_app::{BatApp, Buffers, CallKind, HEIGHT, Mode, Recorder, Rgb565Buffer, WIDTH};
 
 fn main() {
     let args: Vec<String> = std::env::args().collect();
@@ -60,6 +63,19 @@ fn main() {
         {
             app.set_marked(kind, kinds.contains(&name));
         }
+    }
+    if let Ok(state) = std::env::var("X8") {
+        app.set_modes(&Mode::WITHOUT_PITCH);
+        let state = match state.as_str() {
+            "standby" => Recorder::Standby,
+            "recording" => Recorder::Recording,
+            "paused" => Recorder::Paused,
+            _ => Recorder::Stopped,
+        };
+        app.set_recorder(state, 75);
+    }
+    if let Ok(rate) = std::env::var("RATE") {
+        app.set_input_rate(rate.parse().unwrap());
     }
     let ch = |c: usize| -> Vec<f32> { (0..n).map(|i| samples[i * channels + c.min(channels - 1)]).collect() };
     let (a, b) = (ch(0), ch(1));

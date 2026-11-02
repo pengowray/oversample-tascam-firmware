@@ -99,6 +99,8 @@ pub enum Mode {
 
 impl Mode {
     pub const ALL: [Mode; 5] = [Mode::Het, Mode::Comb, Mode::Fd, Mode::Te, Mode::Pitch];
+    /// The modes the X8 runs fast enough: PITCH cannot keep up there.
+    pub const WITHOUT_PITCH: [Mode; 4] = [Mode::Het, Mode::Comb, Mode::Fd, Mode::Te];
 
     /// Button label. HET, FD and TE are the usual names on bat detectors.
     pub fn label(self) -> &'static str {
@@ -123,6 +125,16 @@ pub enum Button {
     Rec,
     /// Add a mark; in TE mode also captures a window now.
     Mark,
+}
+
+/// What the recorder is doing, as the status bar shows it.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum Recorder {
+    Stopped,
+    /// Record standby: armed, waiting for a second REC press.
+    Standby,
+    Recording,
+    Paused,
 }
 
 /// Which screen is showing.
@@ -328,6 +340,13 @@ pub struct BatApp<'a> {
     meters: [Meter; 2],
     recording: bool,
     recorded_samples: u64,
+    /// The recorder's state and take length in seconds, when a recorder
+    /// outside the app (the X8's own) is running and REC belongs to it.
+    external_recorder: Option<(Recorder, u64)>,
+    /// The input's sample rate in Hz, when it is not one the app works at.
+    rate_warning: Option<u32>,
+    /// The mode buttons, left to right.
+    modes: &'static [Mode],
     clock_s: u32,
 
     mono: [f32; CHUNK],
@@ -419,6 +438,9 @@ impl<'a> BatApp<'a> {
             field!((*this).meters).write([Meter::new(); 2]);
             field!((*this).recording).write(false);
             field!((*this).recorded_samples).write(0);
+            field!((*this).external_recorder).write(None);
+            field!((*this).rate_warning).write(None);
+            field!((*this).modes).write(&Mode::ALL);
             field!((*this).clock_s).write(0);
             fill(field!((*this).mono), 0.0);
             fill(field!((*this).out), 0.0);
@@ -439,6 +461,30 @@ impl<'a> BatApp<'a> {
 
     pub fn mode(&self) -> Mode {
         self.mode
+    }
+
+    /// The modes offered, in button order.
+    pub fn modes(&self) -> &'static [Mode] {
+        self.modes
+    }
+
+    /// Offer only these modes (at least one). If the current mode is not
+    /// among them, the first one is selected.
+    pub fn set_modes(&mut self, modes: &'static [Mode]) {
+        if modes.is_empty() {
+            return;
+        }
+        self.modes = modes;
+        if !modes.contains(&self.mode) {
+            self.set_mode(modes[0]);
+        }
+    }
+
+    /// The next mode in button order, after the last the first: what the
+    /// X8's PLAY button selects.
+    pub fn next_mode(&mut self) {
+        let i = self.modes.iter().position(|&m| m == self.mode).map_or(0, |i| i + 1);
+        self.set_mode(self.modes[i % self.modes.len()]);
     }
 
     pub fn set_mode(&mut self, mode: Mode) {
@@ -533,7 +579,34 @@ impl<'a> BatApp<'a> {
     }
 
     pub fn is_recording(&self) -> bool {
-        self.recording
+        self.recorder().0 == Recorder::Recording
+    }
+
+    /// The recorder's state and the length of the current take in seconds.
+    pub fn recorder(&self) -> (Recorder, u64) {
+        match self.external_recorder {
+            Some(r) => r,
+            None if self.recording => (Recorder::Recording, self.recorded_seconds()),
+            None => (Recorder::Stopped, self.recorded_seconds()),
+        }
+    }
+
+    /// Show a recorder outside the app instead of the app's own: on the X8,
+    /// REC goes to the X8's recorder and this reports what it is doing.
+    pub fn set_recorder(&mut self, state: Recorder, take_seconds: u64) {
+        self.external_recorder = Some((state, take_seconds));
+    }
+
+    /// The input's sample rate in Hz, to warn when it is not the one the app
+    /// was built for (the warning covers the waterfall). Rates within 1 Hz
+    /// of the app's clear it.
+    pub fn set_input_rate(&mut self, rate_hz: u32) {
+        let ok = (rate_hz as f32 - self.sample_rate).abs() < 1.0;
+        self.rate_warning = if ok { None } else { Some(rate_hz) };
+    }
+
+    pub fn rate_warning(&self) -> Option<u32> {
+        self.rate_warning
     }
 
     /// The latest marked detection.
@@ -554,6 +627,7 @@ impl<'a> BatApp<'a> {
     /// A press of a hardware button.
     pub fn button(&mut self, button: Button) {
         match button {
+            Button::Rec if self.external_recorder.is_some() => {}
             Button::Rec => {
                 self.recording = !self.recording;
                 if self.recording {
@@ -617,7 +691,7 @@ impl<'a> BatApp<'a> {
         }
         if layout::MENU.contains(embedded_graphics::prelude::Point::new(x, y)) {
             self.screen = Screen::Settings;
-        } else if let Some(mode) = layout::mode_button_at(x, y) {
+        } else if let Some(mode) = layout::mode_button_at(x, y, self.modes) {
             self.set_mode(mode);
         } else if let Some(hz) = layout::waterfall_freq_at(x, y) {
             match self.mode {
@@ -838,7 +912,7 @@ impl<'a> BatApp<'a> {
             return layout::settings_hit(x, y, Setting::STEPPED, Setting::ALL.len()).is_some();
         }
         layout::MENU.contains(embedded_graphics::prelude::Point::new(x, y))
-            || layout::mode_button_at(x, y).is_some()
+            || layout::mode_button_at(x, y, self.modes).is_some()
             || (matches!(self.mode, Mode::Het | Mode::Comb) && layout::waterfall_freq_at(x, y).is_some())
     }
 

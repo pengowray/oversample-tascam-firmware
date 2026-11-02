@@ -49,24 +49,25 @@ pub const SNAP_VALUE_X: i32 = 222;
 /// The current mode's setting.
 pub const VALUE_BASELINE: i32 = 420;
 
-/// Mode buttons along the bottom: 59 × 46 px each, spanning the same
-/// 6..314 px as the panels above them.
+/// Mode buttons along the bottom, 46 px high with 3 px gaps, centred in the
+/// same 6..314 px as the panels above them: 59 px wide for five, 74 for four.
 pub const BUTTONS_Y: i32 = 430;
-pub const BUTTON_W: i32 = 59;
 pub const BUTTON_H: i32 = 46;
-const BUTTON_X0: i32 = 6;
-const BUTTON_PITCH: i32 = 62;
+const BUTTONS_X: i32 = 6;
+const BUTTONS_W: i32 = 308;
+const BUTTON_GAP: i32 = 3;
 
-pub fn mode_button(i: usize) -> Rectangle {
-    Rectangle::new(
-        Point::new(BUTTON_X0 + i as i32 * BUTTON_PITCH, BUTTONS_Y),
-        Size::new(BUTTON_W as u32, BUTTON_H as u32),
-    )
+/// Button `i` of `count`.
+pub fn mode_button(i: usize, count: usize) -> Rectangle {
+    let n = count.max(1) as i32;
+    let w = (BUTTONS_W - BUTTON_GAP * (n - 1)) / n;
+    let x0 = BUTTONS_X + (BUTTONS_W - (n * w + (n - 1) * BUTTON_GAP)) / 2;
+    Rectangle::new(Point::new(x0 + i as i32 * (w + BUTTON_GAP), BUTTONS_Y), Size::new(w as u32, BUTTON_H as u32))
 }
 
-pub fn mode_button_at(x: i32, y: i32) -> Option<Mode> {
+pub fn mode_button_at(x: i32, y: i32, modes: &[Mode]) -> Option<Mode> {
     let p = Point::new(x, y);
-    (0..Mode::ALL.len()).find(|&i| mode_button(i).contains(p)).map(|i| Mode::ALL[i])
+    (0..modes.len()).find(|&i| mode_button(i, modes.len()).contains(p)).map(|i| modes[i])
 }
 
 /// Menu button at the left of the title bar, as on the stock apps: opens the
