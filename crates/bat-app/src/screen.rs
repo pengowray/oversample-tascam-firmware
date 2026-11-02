@@ -319,20 +319,38 @@ fn snapshot(app: &BatApp, fb: Fb) {
     for (label, y) in [("Peak", y1), ("Range", y2), ("Length", y3)] {
         text(fb, &BODY, label, SNAP_TEXT_X, y, LEFT, TEXT_MUTED);
     }
-    let lo = call.min_freq_hz / 1000.0;
-    let hi = call.max_freq_hz / 1000.0;
-    text(fb, &BODY, format_args!("{:.1} kHz", call.peak_freq_hz / 1000.0), SNAP_VALUE_X, y1, LEFT, TEXT);
-    // A narrow range, such as a steady tone's, needs the decimal.
-    if hi - lo < 2.0 {
-        text(fb, &BODY, format_args!("{lo:.1}-{hi:.1} kHz"), SNAP_VALUE_X, y2, LEFT, TEXT);
-    } else {
-        text(fb, &BODY, format_args!("{lo:.0}-{hi:.0} kHz"), SNAP_VALUE_X, y2, LEFT, TEXT);
-    }
-    if length_ms >= 1000.0 {
-        text(fb, &BODY, format_args!("{:.1} s", length_ms / 1000.0), SNAP_VALUE_X, y3, LEFT, TEXT);
-    } else {
-        text(fb, &BODY, format_args!("{length_ms:.1} ms"), SNAP_VALUE_X, y3, LEFT, TEXT);
-    }
+    // Every number has one decimal, with its decimal point in a fixed
+    // column, so the digits stay in place as the values change: Peak, the
+    // range's low end and Length share one column, the range's high end has
+    // its own, and the units follow at fixed places.
+    let width = |s: &str| {
+        BODY.get_rendered_dimensions(s, Point::zero(), VerticalPosition::Baseline).map_or(0, |d| d.advance.x)
+    };
+    let (two_digits, point_digit, space) = (width("88"), width(".8"), width(" "));
+    let point1 = SNAP_VALUE_X + two_digits;
+    let unit1 = point1 + point_digit + space;
+    // 1 px in, to sit midway between the two numbers.
+    let dash = point1 + point_digit + 1;
+    let point2 = dash + width("-") + two_digits;
+    let unit2 = point2 + point_digit + space;
+
+    number_at_point(fb, &BODY, call.peak_freq_hz / 1000.0, point1, y1, TEXT);
+    text(fb, &BODY, "kHz", unit1, y1, LEFT, TEXT);
+    number_at_point(fb, &BODY, call.min_freq_hz / 1000.0, point1, y2, TEXT);
+    text(fb, &BODY, "-", dash, y2, LEFT, TEXT);
+    number_at_point(fb, &BODY, call.max_freq_hz / 1000.0, point2, y2, TEXT);
+    text(fb, &BODY, "kHz", unit2, y2, LEFT, TEXT);
+    let (length, unit) = if length_ms >= 1000.0 { (length_ms / 1000.0, "s") } else { (length_ms, "ms") };
+    number_at_point(fb, &BODY, length, point1, y3, TEXT);
+    text(fb, &BODY, unit, unit1, y3, LEFT, TEXT);
+}
+
+/// Draw `value` to one decimal place with its decimal point at `point_x`:
+/// the whole part ends there and the point and tenth start there.
+fn number_at_point(fb: Fb, font: &FontRenderer, value: f32, point_x: i32, y: i32, color: Rgb565) {
+    let tenths = libm::roundf(value.max(0.0) * 10.0) as u32;
+    text(fb, font, format_args!("{}", tenths / 10), point_x, y, RIGHT, color);
+    text(fb, font, format_args!(".{}", tenths % 10), point_x, y, LEFT, color);
 }
 
 fn value_line(app: &BatApp, fb: Fb) {
