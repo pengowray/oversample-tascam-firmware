@@ -278,7 +278,7 @@ From disassembly of the main application. Addresses are the running addresses.
    |---|---|---|
    | 1 (HOME and REC, per the update instructions) | 3 | Firmware update from the SD card |
    | 2 | 6 | Probably the FPGA update (see below) |
-   | 0 | 8 | Not yet identified (possibly a settings reset) |
+   | 0 (MARK and HOME) | 8 | Factory test mode, with a "Debug Key Scan" screen |
    | 3 | 5 | Not yet identified |
    | none, and the function at 0x80DA9582 returns true (probably external power) | 1 | Normal start |
    | none | 0 | Normal start |
@@ -296,7 +296,8 @@ From disassembly of the main application. Addresses are the running addresses.
    times. That path is probably what boot combination 2 (mode 6) is for, with a
    separate FPGA update file that Tascam has not published.
 
-The version check ("Old Version") has not been traced yet.
+The version check ("Old Version") is described under [Update file
+format](#update-file-format).
 
 **Changes from V2.01 to V2.03**, compared in 64 KiB blocks:
 
@@ -461,8 +462,48 @@ pairs.
   address 0x10 and LPI2C4 address 0x11); no user setting was found. Not
   confirmed against the AK5704 datasheet.
 
-**Not mapped yet:** the buttons, the wheel and the touch screen; the recording
-apps' screens; the WAV writer.
+**Buttons, wheel and touch** (checked: the key-name table in 0x810e4244 and
+the handler word at 0x80da9a20; details in `work/notes/input.md`). No input
+control is on a processor GPIO pin or interrupt; one task (task 9, 0x80daca8e)
+polls them all, every 3 RTOS ticks (tick length not confirmed).
+
+- Buttons: one active-low byte read over LPSPI4 from device 5 (chip select is a
+  3-bit address on GPIO1_IO17 to IO19), latched by a pulse on register 9 of
+  device 6 first. Bit 0 is MARK (code 0x2b), bit 1 REC (0x07), bit 5 HOME
+  (0x06), bit 6 PLAY (0x05). POWER (0x11) and HOLD (0x0d) are bits in device 6
+  register 2. A change must be seen on two scans in a row; a held button
+  repeats.
+- Wheel: a signed 8-bit count in device 6 register 0x0c, read every scan and
+  summed over 27 scans. Device 6 is probably the FPGA (not confirmed).
+- Touch: LPI2C1, address 0x55, 400 kHz, polled every second scan (no interrupt
+  pin); writes register 0x12 and reads 4 bytes, single touch, a layout like
+  Sitronix's ST1232. Each change goes to 0x80e0364a(x, y, pressed) (called only
+  from 0x80df501a), which posts to the Qt event queue at 0x8190faf0. Whether x
+  and y need rotating for the portrait screen is not known.
+- Events: 0x80d6c058(type, code) posts button and wheel events (1 press,
+  2 release, 3 repeat, 5 wheel) to mailbox 1; task 1 (0x80d6c9f0) passes them
+  to the current screen handler, the pointer at 0x8196a44c, called at
+  0x80d6ceae. A handler swallows an event by writing 0x4d at msg+8 (for the
+  wheel, by setting the kind at msg+4 to 9). Touch never goes through mailbox 1.
+- Hook with a data change only: the word at 0x80da9a20 (0x80dac0d5) is what
+  0x80da98e0 installs as the app screens' shared key handler, and nothing else
+  reads it. Pointing it at a wrapper sees every button and wheel event while any
+  app screen is open.
+- Apps are Qt screens; the app number is a property at root+0xd360 (1 MANUAL,
+  2 PODCAST, 3 VOICE, 4 MUSIC, 5 FIELD, 6 TUNER, 7 METRONOME, 8 ASMR). How the
+  launcher tells the C side which app is open was not traced.
+- Regular code: 0x80dad81c, a 10-byte idle counter called at 0x80e036c4 on
+  every pass of the Qt task's loop, outside Qt's lock and its drawing: a good
+  place to draw the bat screen or install the audio hook. 0x80e2b574 presents
+  each frame Qt draws (buffers at 0x87e00000 + i x 0x4b000) but runs only when
+  Qt redraws. Task 2 (0x80da9a24, the level meters) runs about every 50 ms.
+
+**Every one of these input paths also runs in firmware update mode**, where
+0x80dfbe94 installs the update screen's key handler in the same slot. A hook in
+any of them must check the system mode byte first (rule 2 below).
+
+**Not mapped yet:** the recording apps' screens beyond the app number; the WAV
+writer; how to start a new RTOS task (the task table is near 0x8131db00).
 
 ## Keeping the bricking risk low
 
@@ -487,7 +528,9 @@ apps' screens; the WAV writer.
    text display code that update mode uses), so it is a backstop, not a proof.
 2. Make patched code do nothing in update mode. Every hook first reads the system
    mode byte (0x81969DD9 in V2.03) and goes straight back to the original code
-   unless the mode is 0 or 1 (normal start).
+   unless the mode is 0 or 1 (normal start). This matters most for input and
+   screen hooks: the button scan, the event mailbox, the key handler slot and
+   the Qt task all run in update mode too.
 3. Turn the bat app on only when a particular file (for example `BAT.CFG`) is on the
    SD card. If the bat app crashes the unit, take the card out, delete the file on a
    computer, and the unit starts as stock.
