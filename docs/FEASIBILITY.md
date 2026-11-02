@@ -45,7 +45,7 @@ The firmware reverse-engineering notes and the patching plan are in
 | Program flash | 32 MiB FlexSPI NOR flash | boot header in the firmware |
 | RAM | On-chip RAM (ITCM, DTCM, OCRAM) plus external SDRAM. SDRAM size unknown; at least 25 MB, because the main application (25.4 MB) is built to run from SDRAM. | firmware |
 | FPGA | Lattice MachXO3 with on-chip configuration flash. The main application can reprogram it. | firmware strings `MachXO3CFMErase`, `Write PLD : 0x%08lX` |
-| ADCs | AKM AK5704: 4 channels per chip, up to 192 kHz. Inputs 1 to 6 each use two ADC channels at different gains to produce 32-bit float, so the X8 has at least 3 of these chips. | Tascam; manual |
+| ADCs | AKM AK5704: 4 channels per chip, up to 192 kHz, with built-in mic preamps. According to Tascam, these serve inputs 3 to 6. Each dual-gain input uses two ADC channels at different gains to produce 32-bit float, so inputs 3 to 6 need two of these chips. Which ADC serves inputs 1/2 and EXT IN is not confirmed. | Tascam; manual |
 | Inputs 1/2 | 3.5 mm TRS jacks with plug-in power. The included mics connect here. | manual |
 | Inputs 3/4 and 5/6 | XLR/TRS combo jacks with phantom power | manual |
 | EXT IN | Stereo 3.5 mm line input. One ADC channel per side (no dual gain). Cannot be used at the same time as inputs 5/6. | manual |
@@ -80,6 +80,10 @@ Roll-off Filter"):
 
 Tascam's own specification for 192 kHz recording is 20 Hz to 60 kHz, +0/−2.5 dB,
 which agrees with the datasheet.
+
+This applies to inputs 3 to 6, which use the AK5704. Inputs 1/2 may use a
+different ADC, so their response above 20 kHz may differ. This is one more reason
+to use inputs 3/4 for the MVP.
 
 What this means for bat calls:
 
@@ -124,6 +128,7 @@ In this table, "monitor path" means the audio the X8 sends to the headphones.
 | Frequency division (zero-crossing, the older detector method) | Yes | Under 1% CPU. |
 | Pitch shift (phase vocoder) | Yes | About 6% CPU per channel (*estimate*). |
 | Time expansion of detected calls, for listening | Yes | Under 1% CPU. Recording to the SD card continues while the expanded call plays. |
+| Playback of a recorded 192 kHz file through heterodyne, pitch shift, frequency division or time expansion | Yes, same hook as live listening | The stock VSA and KEY playback do not work with 96 or 192 kHz files. The bat app would process the playback audio in the monitor path, the same way as live input. |
 | Look-back buffer of 5 to 10 s | Partly stock | The FIELD app's EXPANDED PRE REC keeps about 8 s before REC is pressed. Not yet checked at 192 kHz. |
 | Processed audio recorded as an extra track | Probably | The X8's multi-track apps record a master file (the stereo mix) alongside the track files. If the bat audio replaces the mix, the stock recorder may save it as the master file with no extra work. Needs checking. |
 | Mono notes track from input 1 | Yes, as WAV | At 96 and 192 kHz the stock firmware does not record MP3. An MP3 notes file would need the notes channel resampled to 48 kHz first. |
