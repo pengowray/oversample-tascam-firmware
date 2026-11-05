@@ -757,8 +757,8 @@ never installed.
   file) and, from MANUAL's screen, brings the bat screen back. A short HOME
   press goes on (it stops playback) and shows MANUAL's screen, to choose
   another file. The output level setting does not change what the app hears.
-  While a file plays, the wrong-rate notice checks the converter rate, which
-  follows the file, and says to choose a 192 kHz recording. The third debug
+  While a file plays or is paused, the wrong-rate notice checks the converter
+  rate, which follows the file, and says to choose a 192 kHz recording. The third debug
   line shows the engine state (0x81cbe780: 1 playing, 2 recording, 0 idle or
   paused), the DSP play byte, the converter rate and the level the app hears. The status bar
   still shows the recorder, not the player.
@@ -769,7 +769,8 @@ then the bat screen? Does TUNER work again? In delete mode (press and hold
 the LAUNCHER), do the bat tiles keep their icon with no badge, and does a tap
 end delete mode and open them? In BAT PLAYBACK with a 192 kHz file: before
 PLAY the level on the debug line should be -99; does PLAY start playback
-(engine 1, play 1, a level other than -99)
+(engine 1, play 1, a level other than -99; a paused file shows engine 0,
+play 1)
 with bat sound in the headphones, does PLAY pause it, and does a short HOME
 press show MANUAL's screen? If playback has its own key handler (as recording
 does), the wheel and HOME may not reach the patch while a file plays. With a

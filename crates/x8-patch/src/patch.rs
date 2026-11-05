@@ -1337,8 +1337,9 @@ fn update_status(app: &mut BatApp<'static>) {
         if !PLAYBACK.load(Relaxed) {
             ptr::read_volatile(stock::RECORD_RATE)
         } else if ptr::read_volatile(stock::DSP_PLAYING) == 1 {
-            // The converters run at the file's rate while a file plays, so
-            // BAT PLAYBACK checks that rate.
+            // The converters run at the file's rate while a file plays or is
+            // paused (the DSP play byte stays 1 then), so BAT PLAYBACK checks
+            // that rate.
             ptr::read_volatile(stock::CONVERTER_RATE)
         } else {
             // No file is playing, so there is no rate to warn about.
