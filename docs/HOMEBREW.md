@@ -715,7 +715,7 @@ the waterfall show audible sound?
 
 ## Step 11 test file: BAT DETECTOR and BAT PLAYBACK tiles, TUNER back (built 2026-11-05, not yet installed)
 
-`work/patch10/#PortaX8_0228.203` (B228, SHA-256 `9d86aad1…0a177faa`). B227
+`work/patch10/#PortaX8_0228.203` (B228, SHA-256 `6e24482a…c3b6f402`). B227
 (`work/patch9`) was the first build of this step; a review found that a tap
 in delete mode could delete a preset hidden behind a bat tile, so it was
 never installed.
