@@ -8,12 +8,11 @@ The patch is linked to run from SDRAM 0x81830000 (see crates/x8-patch). The
 bootloader copies flash 0x20000 onwards into SDRAM from 0x80000000, so storing
 the patch at flash 0x1850000, straight after the stock image (which ends with
 its checksum at 0x184ffff), puts it at that address before the application
-starts. The tool then points the stock firmware's hook words, one tail call
-and one call at the patch's entry points, and the TUNER tile's launcher texts
-at the patch's strings, all read from the patch's header (see BUILDS), and
-packs the result with `x8fw.py pack --base`, which refuses changes to the bootloader and the
-known start-up and update-mode code, and refuses an image long enough to reach
-the settings sectors.
+starts. The tool then points the stock firmware's hook words, tail calls,
+calls and two function entries at the patch's entry points, all read from the
+patch's header (see BUILDS), and packs the result with `x8fw.py pack --base`,
+which refuses changes to the bootloader and the known start-up and update-mode
+code, and refuses an image long enough to reach the settings sectors.
 
 Only V2.03 build 217 is supported: the hook addresses are that build's.
 """
@@ -41,11 +40,9 @@ def flash(address):
 # words: a word holding a stock function pointer, replaced by a header field.
 # branches: a `b.w` tail call, retargeted to a header field's function.
 # calls: a `bl` call, retargeted the same way.
-# texts: one launcher text (the TUNER tile's title or a line of its
-#   description), replaced by a header field's string. Each is set in three
-#   places: the English literal word, the `mov.w r1,#length<<8` that gives the
-#   English length, and the 10 per-language pointers (whose length the
-#   firmware counts at run time). See work/notes/launcher.md section 6.
+# entries: the first 4 bytes of a stock function (whole instructions, given as
+#   two halfwords), replaced by a `b.w` to a header field's function, which
+#   does the stock function's whole job.
 BUILDS = {
     (203, 217): {
         "words": [
@@ -57,31 +54,42 @@ BUILDS = {
             ("recording screen key handler", 0x80DD3A24, 0x80DD3F9D, "rec_key_hook"),
         ],
         "branches": [
-            # The TUNER tile's handler ends `pop.w {r4,lr}; b.w 0x80d6946c`,
-            # the bridge setter, with r1 = 6 (the app property), r2 = 7 (TUNER).
-            ("TUNER tile", 0x81732C10, 0x80D6946C, "launch_hook"),
+            # The USER SETTINGS 2 and 3 tiles' handlers end
+            # `pop.w {r4,lr}; b.w 0x80d6a1c0`, the bridge call that loads a
+            # preset, with r0 = bridge and r1 = the slot (1 or 2).
+            ("USER SETTINGS 2 tile", 0x81733D2C, 0x80D6A1C0, "tile_hook"),
+            ("USER SETTINGS 3 tile", 0x81733D64, 0x80D6A1C0, "tile_hook"),
         ],
         "calls": [
             # The touch poll's only call that passes a touch to Qt,
             # `FUN_80e0364a(x, y, pressed)` (work/notes/input.md section 3).
             ("touch to Qt", 0x80DF501A, 0x80E0364A, "touch_hook"),
+            # The launcher's text bindings (out, binding, root), each called once
+            # (work/notes/launcher.md section 6).
+            ("launcher title", 0x814A765C, 0x80F2326A, "title_hook"),
+            ("launcher description line 1", 0x814A7730, 0x80F2393C, "line1_hook"),
+            ("launcher description line 2", 0x814A7804, 0x80F23DA8, "line2_hook"),
+            ("launcher description line 3", 0x814A78D8, 0x80F24224, "line3_hook"),
+            ("launcher description line 4", 0x814A79AC, 0x80F24694, "line4_hook"),
+            ("launcher description line 5", 0x814A7A80, 0x80F24AD8, "line5_hook"),
+            ("launcher description line 6", 0x814A7B54, 0x80F24E58, "line6_hook"),
         ],
-        "texts": [
-            # (name, literal, stock string, mov.w at, stock length, table)
-            ("tile title", 0x80F23D9C, 0x813614F4, 0x80F2347C, 5, 0x813B0E48, "title"),
-            ("description line 1", 0x80F24670, 0x813614DC, 0x80F23B38, 22, 0x813B32FC, "line1"),
-            ("description line 2", 0x80F24AC0, 0x81361968, 0x80F23FA6, 26, 0x813B361C, "line2"),
-            ("description line 3", 0x80F24E4C, 0x813618EC, 0x80F2441C, 24, 0x813B3284, "line3"),
-            ("description line 4", 0x80F25444, 0x813617EC, 0x80F24856, 22, 0x813B8078, "line4"),
-            ("description line 5", 0x80F25744, 0x81361460, 0x80F24C58, 23, 0x813B8168, "line5"),
+        "entries": [
+            # The bridge's USER SETTINGS slot getter (bridge, slot):
+            # `cmp r1,#3; ldr r3,[pc,#0x2fc]`. Its only callers are the
+            # launcher's slot properties.
+            ("slot getter", 0x80D6A238, (0x2903, 0x4BBF), "slot_hook"),
+            # The bridge's first free slot (1 to 3, or 0 when all are in use),
+            # read by the apps' save screens: `ldr.w ip,[pc,#0x2e4]`.
+            ("first free slot", 0x80D6A252, (0xF8DF, 0xC2E4), "free_slot_hook"),
         ],
     },
 }
-LANGUAGES = 10
 
-HEADER_FIELDS = ["magic", "version", "key_hook", "rec_key_hook", "launch_hook", "touch_hook",
-                 "title", "line1", "line2", "line3", "line4", "line5"]
-HEADER_FORMAT = "<4s11I"
+HEADER_FIELDS = ["magic", "version", "key_hook", "rec_key_hook", "touch_hook", "tile_hook", "slot_hook",
+                 "free_slot_hook", "title_hook", "line1_hook", "line2_hook", "line3_hook", "line4_hook",
+                 "line5_hook", "line6_hook"]
+HEADER_FORMAT = "<4s14I"
 
 B_W, BL = 0x9000, 0xD000   # bits 15, 14 and 12 of the second halfword
 
@@ -110,40 +118,6 @@ def encode_bw(at, target, kind=B_W):
     hw2 = kind | j1 << 13 | j2 << 11 | (offset >> 1 & 0x7FF)
     assert decode_bw(hw1, hw2, at, kind) == target
     return hw1, hw2
-
-
-def expand_imm(imm12):
-    """Arm's ThumbExpandImm: the value of a modified immediate constant."""
-    if imm12 >> 10 == 0:
-        x = imm12 & 0xFF
-        return [x, x * 0x00010001, x * 0x01000100, x * 0x01010101][imm12 >> 8 & 3]
-    value, rotate = 0x80 | imm12 & 0x7F, imm12 >> 7
-    return (value >> rotate | value << (32 - rotate)) & 0xFFFFFFFF
-
-
-def decode_mov_r1(hw1, hw2):
-    """The constant of `mov.w r1,#const` (encoding T2), or None."""
-    if hw1 & 0xFBFF != 0xF04F or hw2 & 0x8F00 != 0x0100:
-        return None
-    return expand_imm((hw1 >> 10 & 1) << 11 | (hw2 >> 12 & 7) << 8 | hw2 & 0xFF)
-
-
-def encode_mov_r1(value):
-    imm12 = next(i for i in range(4096) if expand_imm(i) == value)
-    hw1, hw2 = 0xF04F | (imm12 >> 11) << 10, (imm12 >> 8 & 7) << 12 | 0x0100 | imm12 & 0xFF
-    assert decode_mov_r1(hw1, hw2) == value
-    return hw1, hw2
-
-
-def patch_string(patch, address):
-    """The NUL-terminated ASCII string at `address` in the patch."""
-    at = address - PATCH_BASE
-    if not 0 <= at < len(patch) or b"\0" not in patch[at:]:
-        raise ValueError(f"string at 0x{address:08x} is not inside the patch")
-    text = patch[at:patch.index(b"\0", at)]
-    if not text.isascii() or len(text) > 255:
-        raise ValueError(f"string at 0x{address:08x} is not ASCII of 255 characters or fewer")
-    return text.decode()
 
 
 def apply(image, patch, fields, build):
@@ -176,23 +150,16 @@ def apply(image, patch, fields, build):
         put_half(address + 2, hw2)
         print(f"{name}: {mnemonic} 0x{stock:08x} -> 0x{target & ~1:08x}")
 
-    for name, literal, stock, mov_at, stock_len, table, field in build["texts"]:
+    for name, address, stock, field in build["entries"]:
         target = fields[field]
-        text = patch_string(patch, target)
-        if word(literal) != stock or word(table) != stock:
-            return f"{name}: literal 0x{literal:08x} or table 0x{table:08x} does not hold 0x{stock:08x}"
-        if decode_mov_r1(half(mov_at), half(mov_at + 2)) != stock_len << 8:
-            return f"{name}: no mov.w r1,#0x{stock_len << 8:x} at 0x{mov_at:08x}"
-        for k in range(LANGUAGES):
-            if not 0x81300000 <= word(table + 4 * k) < 0x81900000:
-                return f"{name}: table entry {k} at 0x{table + 4 * k:08x} is not a string pointer"
-        put_word(literal, target)
-        hw1, hw2 = encode_mov_r1(len(text) << 8)
-        put_half(mov_at, hw1)
-        put_half(mov_at + 2, hw2)
-        for k in range(LANGUAGES):
-            put_word(table + 4 * k, target)
-        print(f"{name}: {text!r}")
+        if (half(address), half(address + 2)) != stock:
+            return f"{name}: 0x{address:08x} does not start with {stock[0]:04x} {stock[1]:04x}"
+        if not (target & 1 and in_patch(target)):
+            return f"{field} = 0x{target:08x} is not a Thumb address inside the patch"
+        hw1, hw2 = encode_bw(address, target & ~1)
+        put_half(address, hw1)
+        put_half(address + 2, hw2)
+        print(f"{name}: entry 0x{address:08x} -> b.w 0x{target & ~1:08x}")
     return None
 
 

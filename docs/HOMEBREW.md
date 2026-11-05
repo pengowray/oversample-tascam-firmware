@@ -678,7 +678,14 @@ card, with marks where MARK was pressed? Do the wheel and PLAY work during the
 take? Does a pop-up (REC without a card) show and then give the bat screen back?
 Does holding HOME return to the LAUNCHER? At 48 kHz, does the notice show?
 
-## Step 10 test file: PLAY switches screens, touch, 0 Hz, 1:1 (built 2026-11-03, not yet installed)
+## Step 10 test file: PLAY switches screens, touch, 0 Hz, 1:1 (installed 2026-11-05: works)
+
+**Result.** Works: touch, PLAY swapping screens and the 1:1 mode behaved as
+expected. HET, and maybe 1:1, seem slightly stuttery during a take; not yet
+checked again. The user asked for the bat app to have its own launcher tile,
+so that TUNER keeps working, and for a second tile to play existing recordings
+through the bat app: step 11. Still to do: listen to inputs other than 3 and 4,
+ideally the ones MANUAL has selected.
 
 `work/patch8/#PortaX8_0226.203` (B226, SHA-256 `006146be…0c17955e`).
 
@@ -705,6 +712,50 @@ button at the top left), and does dragging on the waterfall in HET move the
 tuning line? Does PLAY swap screens both ways, also during a take? With mics
 and headphones: is there sound in 1:1 and HET, and does the 0 to 20 kHz part of
 the waterfall show audible sound?
+
+## Step 11 test file: BAT DETECTOR and BAT PLAYBACK tiles, TUNER back (built 2026-11-05, not yet installed)
+
+`work/patch9/#PortaX8_0227.203` (B227, SHA-256 `ff1187b5…04b23ddf`).
+
+- **Tiles.** The bat app moves from the TUNER tile to the launcher's USER
+  SETTINGS 2 and 3 tiles, now BAT DETECTOR and BAT PLAYBACK. TUNER is stock
+  again. A ninth app tile would need new compiled Qt code, but the three USER
+  SETTINGS tiles are shown only while their slot holds a saved preset. The
+  patch replaces the bridge's slot getter (0x80d6a238, the only source of the
+  launcher's slot properties) so that slots 2 and 3 always report a MANUAL
+  preset, and wraps the launcher's title and six description bindings so that
+  those two tiles show the patch's texts. Both tiles probably show MANUAL's icon
+  (not traced). USER SETTINGS 1 is unchanged.
+- **Opening.** The two tiles' handlers end with `b.w 0x80d6a1c0` (load preset
+  slot r1); the patch retargets both to `tile_hook`, which opens MANUAL as the
+  MANUAL tile does (bridge property 6 = 1), and the bat screen follows as in
+  step 9. No preset is loaded.
+- **Saving presets.** The first free slot (0x80d6a252, read by the apps' save
+  screens) now offers only slot 1, so a save cannot go to a slot hidden behind a
+  bat tile. Untested: what the save screen does when slot 1 is in use. A preset
+  already saved in slot 2 or 3 is hidden, not deleted. Since the launcher now
+  always sees a slot in use, deleting the last real preset no longer ends the
+  launcher's delete mode by itself (tap elsewhere to end it).
+- **BAT DETECTOR** is the step 10 bat screen, unchanged.
+- **BAT PLAYBACK** (experimental). The app hears the X8's own output instead of
+  inputs 3 and 4: the audio hook reads the output block after the stock callback
+  and divides by the headphone gain, then replaces it with the app's output as
+  before. PLAY goes on to MANUAL's player (play or pause the current file) and,
+  from MANUAL's screen, brings the bat screen back. A short HOME press goes on
+  (it stops playback) and shows MANUAL's screen, to choose another file. The
+  wrong-rate notice checks the converter rate, which follows the file. With the
+  headphones muted the app hears silence. The third debug line shows the engine
+  state (0x81cbe780: 1 playing, 2 paused, 0 idle), the converter rate and the
+  level the app hears. The status bar still shows the recorder, not the player.
+
+**What to check.** Are both tiles on the LAUNCHER, with the right titles and
+descriptions, and which icon do they show? Does tapping each open MANUAL and
+then the bat screen? Does TUNER work again? In BAT PLAYBACK with a 192 kHz file:
+does PLAY start playback (engine 1 on the debug line, a level other than -99)
+with bat sound in the headphones, does PLAY pause it, and does a short HOME
+press show MANUAL's screen? If playback has its own key handler (as recording
+does), the wheel and HOME may not reach the patch while a file plays. With a
+preset in USER SETTINGS 1, what does SAVE USER SETTINGS do?
 
 ## Firmware map (V2.03, in progress)
 
@@ -903,6 +954,22 @@ writes it too, so a patch should poll it. Recording only works in the
 recording apps (C 1 to 6 and 9); TUNER runs its own DSP mode and cannot
 record. The sample rate is one global setting. Holding HOME (code 0xae) sends
 the launcher's number (0); a short HOME press only stops the transport.
+
+**USER SETTINGS tiles** (cursor 11 to 13). Each is shown only while its slot
+holds a preset. The slots are three words at 0x81e9da60, each the Qt number of
+the saved app (1 MANUAL, 2 PODCAST, 9 POCKET STUDIO) or 0; the root's
+properties at +0xd3a0, +0xd3a8 and +0xd3b0 (and +0xd3b8, any slot in use) are
+computed from them through `FUN_80d6a238(bridge, slot)`, also on a change
+(`FUN_813e0a58`). The title is "USER SETTINGS " plus the slot number; the tiles'
+handlers (0x81733cd0, 0x81733d08, 0x81733d40) set bridge property 4 from the
+saved app and end with `b.w 0x80d6a1c0` (bridge, slot), which sends 0xfe1 to
+the C core to load the preset. `FUN_80d6a252()` gives the first free slot (1
+to 3, or 0), for the apps' save screens. The launcher's text bindings are each
+called once: the title from 0x814a765c, description lines 1 to 6 from
+0x814a7730, 0x814a7804, 0x814a78d8, 0x814a79ac, 0x814a7a80 and 0x814a7b54, all
+as (out, binding, root). A literal string is 7 words: the text at +0 and
+length << 8 | kind at +0x18 (kind 0 static, 2 and 6 allocated), assigned with
+`FUN_80e3ea10` and released with `FUN_80e03154`.
 
 **Recording** (details in `work/notes/recording.md`). The recorder state is
 the byte at **0x8196a3e5**: 0 stopped, 2 standby, 3 recording, 4 paused, 5

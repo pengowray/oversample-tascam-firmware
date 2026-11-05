@@ -76,7 +76,31 @@ mod stock {
     /// Qt's bridge setter `FUN_80d6946c(bridge, property, value, from_c)`;
     /// property 6 opens an app by its Qt number (Thumb address).
     pub const BRIDGE_SET: usize = 0x80d6_946d;
+    pub const APP_PROPERTY: usize = 6;
     pub const QT_MANUAL: usize = 1;
+    /// `FUN_80d6a1c0(bridge, slot)`: loads a USER SETTINGS preset, slot 0 to 2
+    /// (Thumb address).
+    pub const LOAD_USER_SETTINGS: usize = 0x80d6_a1c1;
+    /// The bridge's USER SETTINGS slots: per slot, the Qt number of the app
+    /// whose settings it holds (1 MANUAL, 2 PODCAST, 9 POCKET STUDIO), or 0.
+    pub const USER_SETTINGS_SLOTS: *const u32 = 0x81e9_da60 as *const u32;
+    /// The launcher's cursor, an int property at root + 0xd360: 1 MANUAL to
+    /// 14 POCKET STUDIO, with 11 to 13 for USER SETTINGS 1 to 3.
+    pub const CURSOR_PROPERTY: usize = 0xd360;
+    pub const CURSOR_USER_SETTINGS_1: i32 = 11;
+    /// `FUN_80e02a34(property)`: a pointer to a Qt property's value, noting
+    /// the read for the binding being evaluated (Thumb address).
+    pub const PROPERTY_VALUE: usize = 0x80e0_2a35;
+    /// `FUN_80e3ea10(to, from)` assigns a Qt for MCUs string and
+    /// `FUN_80e03154(string)` releases one (Thumb addresses).
+    pub const STRING_ASSIGN: usize = 0x80e3_ea11;
+    pub const STRING_RELEASE: usize = 0x80e0_3155;
+    /// The launcher's text bindings `(out, binding, root)`: the title, then
+    /// description lines 1 to 6 (Thumb addresses).
+    pub const LAUNCHER_TEXTS: [usize; 7] =
+        [0x80f2_326b, 0x80f2_393d, 0x80f2_3da9, 0x80f2_4225, 0x80f2_4695, 0x80f2_4ad9, 0x80f2_4e59];
+    /// The audio engine: 1 playing or recording, 2 paused, 0 idle.
+    pub const ENGINE_STATE: *const u32 = 0x81cb_e780 as *const u32;
     /// The open app in the C core's numbering: 0 the LAUNCHER, 2 MANUAL.
     pub const APP: *const u8 = 0x81e8_ca90 as *const u8;
     pub const C_MANUAL: u8 = 2;
@@ -129,35 +153,68 @@ pub struct Header {
     key_hook: Handler,
     /// Replaces the recording screen's key handler.
     rec_key_hook: Handler,
-    /// Replaces the TUNER tile's call that opens the tuner.
-    launch_hook: Handler,
     /// Replaces the touch poll's call that passes a touch to Qt.
     touch_hook: Handler,
-    /// The TUNER tile's launcher texts: its title, then the five lines of its
-    /// description (ASCII, NUL-terminated; empty for an unused line).
-    tile_texts: [*const u8; 6],
+    /// Replaces the USER SETTINGS 2 and 3 tiles' call that loads a preset.
+    tile_hook: Handler,
+    /// Replace the bridge's slot getter and first free slot (whole functions).
+    slot_hook: Handler,
+    free_slot_hook: Handler,
+    /// Wrap the launcher's title and description line bindings.
+    title_hook: Handler,
+    line_hooks: [Handler; 6],
 }
-// SAFETY: the pointers are to string literals.
-unsafe impl Sync for Header {}
 
 #[unsafe(no_mangle)]
 #[unsafe(link_section = ".header")]
 pub static X8_PATCH_HEADER: Header = Header {
     magic: *b"BATX",
-    version: 8,
+    version: 9,
     key_hook,
     rec_key_hook,
-    launch_hook,
     touch_hook,
-    tile_texts: [
-        b"BATS\0".as_ptr(),
-        b"Hear and see bat calls\0".as_ptr(),
-        b"from ultrasonic mics on\0".as_ptr(),
-        b"inputs 3 and 4. Requires\0".as_ptr(),
-        b"a sample rate of 192kHz.\0".as_ptr(),
-        b"\0".as_ptr(),
-    ],
+    tile_hook,
+    slot_hook,
+    free_slot_hook,
+    title_hook: text_hook::<0>,
+    line_hooks: [text_hook::<1>, text_hook::<2>, text_hook::<3>, text_hook::<4>, text_hook::<5>, text_hook::<6>],
 };
+
+/// The bat tiles, in USER SETTINGS slots 2 and 3 (slots 0 to 2 in the
+/// firmware's numbering). Slot 1 stays a USER SETTINGS preset.
+const RECORDER_SLOT: usize = 1;
+const PLAYBACK_SLOT: usize = 2;
+
+/// Each bat tile's launcher texts: its title, then description lines 1 to 6
+/// (ASCII; empty for an unused line).
+const TILE_TEXTS: [[&[u8]; 7]; 2] = [
+    [
+        b"BAT DETECTOR",
+        b"Hear and record bat calls",
+        b"live from ultrasonic mics",
+        b"on inputs 3 and 4, and see",
+        b"them on a spectrogram.",
+        b"Set the sample rate to",
+        b"192 kHz.",
+    ],
+    [
+        b"BAT PLAYBACK",
+        b"Hear bat calls in 192 kHz",
+        b"recordings. PLAY plays or",
+        b"pauses the current file in",
+        b"MANUAL. To choose another",
+        b"file, press HOME briefly.",
+        b"Experimental and untested.",
+    ],
+];
+
+fn bat_tile(slot: usize) -> Option<usize> {
+    match slot {
+        RECORDER_SLOT => Some(0),
+        PLAYBACK_SLOT => Some(1),
+        _ => None,
+    }
+}
 
 const SAMPLE_RATE: f32 = 192_000.0;
 /// Output samples buffered before the headphones start playing the bat app's
@@ -230,9 +287,13 @@ static ACTIONS_WRITE: AtomicU32 = AtomicU32::new(0);
 static ACTIONS_READ: AtomicU32 = AtomicU32::new(0);
 const ACTION_MARK: u32 = 1;
 const ACTION_WHEEL: u32 = 4;
-/// Set when the TUNER tile (now BATS) was tapped: the bat screen opens once
-/// the C core has switched to the app the tile asked for.
+/// Set when a bat tile was tapped: the bat screen opens once the C core has
+/// switched to the app the tile asked for.
 static LAUNCHING: AtomicBool = AtomicBool::new(false);
+/// The last bat tile tapped was BAT PLAYBACK: the app hears the X8's
+/// playback (the stock output) instead of inputs 3 and 4, and PLAY and a
+/// short HOME press go on to MANUAL's player.
+static PLAYBACK: AtomicBool = AtomicBool::new(false);
 static LAUNCH_FROM: AtomicU32 = AtomicU32::new(0);
 static LAUNCH_AT: AtomicU32 = AtomicU32::new(0);
 /// The app (C numbering) the bat screen was opened in, or NO_APP. It stays
@@ -265,6 +326,9 @@ static BACKLOG_DROPPED: AtomicU32 = AtomicU32::new(0); // DSP task
 /// Peak magnitude of each of the 12 words of an input frame since the last
 /// redraw: the interrupt raises them, the drawing context reads and clears.
 static WORD_PEAKS: [AtomicU32; 12] = [const { AtomicU32::new(0) }; 12];
+/// The same for the left channel of the stock output, unscaled, in BAT
+/// PLAYBACK.
+static SOURCE_PEAK: AtomicU32 = AtomicU32::new(0);
 /// Core cycles in the last second: in all, in the stock audio callback, and in
 /// the rest of the audio hook (interrupt; read by the drawing context).
 static CYCLES_PER_S: AtomicU32 = AtomicU32::new(0);
@@ -418,19 +482,91 @@ unsafe extern "C" fn rec_key_hook(msg: usize, b: usize, c: usize, d: usize) -> u
     unsafe { stock_handler(msg, b, c, d) }
 }
 
-/// Replaces the TUNER tile's tail call to the bridge setter (property 6, Qt
-/// app 7, on the Qt task): opens MANUAL instead, so the C core runs a
-/// recording app, and has task 1 put the bat screen over it.
-unsafe extern "C" fn launch_hook(bridge: usize, property: usize, value: usize, d: usize) -> usize {
-    // SAFETY: the stock function the tile called.
-    let set: Handler = unsafe { core::mem::transmute(stock::BRIDGE_SET) };
-    if system_mode() > 1 {
-        return unsafe { set(bridge, property, value, d) };
-    }
+/// Replaces the USER SETTINGS 2 and 3 tiles' tail call that loads a preset
+/// (on the Qt task, with r0 = bridge and r1 = the slot): opens MANUAL, as
+/// its own tile does, so the C core runs a recording app, and has task 1 put
+/// the bat screen over it.
+unsafe extern "C" fn tile_hook(bridge: usize, slot: usize, c: usize, d: usize) -> usize {
+    let Some(tile) = bat_tile(slot).filter(|_| system_mode() <= 1) else {
+        // SAFETY: the stock function the tile called, with its arguments.
+        let load: Handler = unsafe { core::mem::transmute(stock::LOAD_USER_SETTINGS) };
+        return unsafe { load(bridge, slot, c, d) };
+    };
+    PLAYBACK.store(tile == 1, Relaxed);
     LAUNCH_FROM.store(app_byte() as u32, Relaxed);
     LAUNCH_AT.store(BLOCKS.load(Relaxed), Relaxed);
     LAUNCHING.store(true, Release);
-    unsafe { set(bridge, property, stock::QT_MANUAL, d) }
+    // SAFETY: the bridge setter, called as the MANUAL tile calls it.
+    let set: Handler = unsafe { core::mem::transmute(stock::BRIDGE_SET) };
+    unsafe { set(bridge, stock::APP_PROPERTY, stock::QT_MANUAL, 0) }
+}
+
+/// What a USER SETTINGS slot holds, as the launcher sees it: the bat tiles'
+/// slots hold MANUAL settings, so the launcher shows them (with MANUAL's
+/// icon); slot 0 is the stock slot.
+fn slot_value(slot: usize) -> u32 {
+    if bat_tile(slot).is_some() && system_mode() <= 1 {
+        return stock::QT_MANUAL as u32;
+    }
+    // SAFETY: the bridge's slot words (stock callers pass slots 0 to 2).
+    unsafe { ptr::read_volatile(stock::USER_SETTINGS_SLOTS.add(slot)) }
+}
+
+/// Replaces the bridge's slot getter `FUN_80d6a238(bridge, slot)`, whose only
+/// callers are the launcher's slot properties: slot 3 asks whether any slot
+/// is in use.
+unsafe extern "C" fn slot_hook(_bridge: usize, slot: usize, _: usize, _: usize) -> usize {
+    if slot == 3 {
+        ((slot_value(0) | slot_value(1) | slot_value(2)) & 0xff) as usize
+    } else {
+        slot_value(slot) as usize
+    }
+}
+
+/// Replaces the bridge's first free slot `FUN_80d6a252()`, which the apps'
+/// save screens read: 1 to 3, or 0 when every slot is in use. Only slot 0 is
+/// offered, so a save never goes to a slot hidden behind a bat tile.
+unsafe extern "C" fn free_slot_hook(_: usize, _: usize, _: usize, _: usize) -> usize {
+    (1..=3).find(|&n| slot_value(n - 1) == 0).unwrap_or(0)
+}
+
+/// A Qt for MCUs string as the launcher's bindings build one from a literal:
+/// the text at +0, and length << 8 | kind at +0x18 (kind 0: static text,
+/// which releasing leaves alone).
+#[repr(C)]
+struct QtString {
+    text: *const u8,
+    unused: [u32; 5],
+    length_kind: u32,
+}
+
+/// Wraps one of the launcher's text bindings (`LINE` 0 is the title, 1 to 6
+/// the description lines): with the cursor on a bat tile, the text is the
+/// tile's instead of "USER SETTINGS 2" or "3" and its description.
+unsafe extern "C" fn text_hook<const LINE: usize>(out: usize, binding: usize, root: usize, d: usize) -> usize {
+    // SAFETY: the stock binding the launcher called, with its arguments.
+    let binding_fn: Handler = unsafe { core::mem::transmute(stock::LAUNCHER_TEXTS[LINE]) };
+    let result = unsafe { binding_fn(out, binding, root, d) };
+    if system_mode() > 1 {
+        return result;
+    }
+    // SAFETY: the cursor property of the root the binding was given.
+    let value: unsafe extern "C" fn(usize) -> *const i32 = unsafe { core::mem::transmute(stock::PROPERTY_VALUE) };
+    let cursor = unsafe { ptr::read_volatile(value(root + stock::CURSOR_PROPERTY)) };
+    let tile = usize::try_from(cursor - stock::CURSOR_USER_SETTINGS_1).ok().and_then(bat_tile);
+    if let Some(tile) = tile {
+        let text = TILE_TEXTS[tile][LINE];
+        let from = QtString { text: text.as_ptr(), unused: [0; 5], length_kind: (text.len() as u32) << 8 };
+        // SAFETY: as the bindings assign a literal to their result and then
+        // release the temporary.
+        unsafe {
+            let assign: unsafe extern "C" fn(usize, *const QtString) = core::mem::transmute(stock::STRING_ASSIGN);
+            let release: unsafe extern "C" fn(*const QtString) = core::mem::transmute(stock::STRING_RELEASE);
+            assign(out, &from);
+            release(&from);
+        }
+    }
+    result
 }
 
 /// Touches for the app, from task 9: pressed << 31 | x << 16 | y.
@@ -643,11 +779,24 @@ unsafe fn handle_message(msg: usize, via: Via) {
             }
         }
         (stock::KIND_BUTTON, stock::PLAY) if SCREEN_APP.load(Relaxed) == app_byte() as u32 => {
-            // In the app the bat screen was opened in (from BATS), PLAY swaps
-            // between the bat screen and the app's own screen; the app's own
-            // playback is not used there.
-            swallow_button();
-            if active { leave_bat_screen() } else { request_enter() }
+            if PLAYBACK.load(Relaxed) {
+                // BAT PLAYBACK: PLAY goes on to MANUAL's player (play or pause
+                // the current file) and brings the bat screen back if MANUAL's
+                // own screen is showing.
+                if !active {
+                    request_enter();
+                }
+            } else {
+                // BAT DETECTOR: PLAY swaps between the bat screen and the
+                // app's own screen; the app's own playback is not used there.
+                swallow_button();
+                if active { leave_bat_screen() } else { request_enter() }
+            }
+        }
+        (stock::KIND_BUTTON, stock::HOME) if active && PLAYBACK.load(Relaxed) && app_byte() != 0 => {
+            // BAT PLAYBACK: a short press goes on (it stops playback) and shows
+            // MANUAL's own screen, where another file can be chosen.
+            leave_bat_screen();
         }
         (stock::KIND_BUTTON, stock::HOME) if active && app_byte() == 0 => {
             // On the LAUNCHER, where holding HOME does nothing. In an app a
@@ -1017,6 +1166,16 @@ fn render() {
         let db = if p == 0 { 99 } else { (-20.0 * libm::log10f(p as f32 / 2_147_483_648.0)) as u32 };
         let _ = write!(peaks, " {i}:{}", db.min(99));
     }
+    if PLAYBACK.load(Relaxed) {
+        // BAT PLAYBACK: the player's state and rate, and the level the app
+        // hears, instead of the input words.
+        let p = SOURCE_PEAK.swap(0, Relaxed);
+        let db = if p == 0 { 99 } else { (-20.0 * libm::log10f(p as f32 / 2_147_483_648.0)) as u32 };
+        // SAFETY: words in the stock audio engine and recorder blocks.
+        let (engine, rate) = unsafe { (ptr::read_volatile(stock::ENGINE_STATE), ptr::read_volatile(stock::CONVERTER_RATE)) };
+        peaks = Line::new();
+        let _ = write!(peaks, "playback | engine {engine} | rate {rate} | source -{}dBFS", db.min(99));
+    }
     draw_strip(&mut fb, 2 * STRIP_ROWS as i32, &peaks, Rgb565::new(8, 4, 4));
     // One block copy, so the writes to the uncached display buffer go out in
     // bursts.
@@ -1048,8 +1207,11 @@ fn update_status(app: &mut BatApp<'static>) {
         if matches!(transport, 3..=6) && rate != 0 { (frames / rate) as u64 } else { 0 }
     };
     app.set_recorder(state, seconds);
+    // The converters run at the file's rate while a file plays, so BAT
+    // PLAYBACK checks that rate rather than the record rate.
+    let rate = if PLAYBACK.load(Relaxed) { stock::CONVERTER_RATE } else { stock::RECORD_RATE };
     // SAFETY: as above.
-    app.set_input_rate(unsafe { ptr::read_volatile(stock::RECORD_RATE) });
+    app.set_input_rate(unsafe { ptr::read_volatile(rate) });
 }
 
 /// The audio DMA callback: runs the stock one, then, with the bat screen up at
@@ -1097,14 +1259,30 @@ unsafe extern "C" fn audio_hook(a: usize, b: usize, c: usize, d: usize) -> usize
         peak.store(p, Relaxed);
     }
 
-    // Inputs 3 and 4 of the block's 4 frames into the input ring.
+    // SAFETY: the stock headphone gain, an f32 in ITCM.
+    let stock_gain = unsafe { ptr::read_volatile(stock::OUTPUT_GAIN) };
+    let playback = PLAYBACK.load(Relaxed);
+    // The block's 4 frames into the input ring: inputs 3 and 4, or for BAT
+    // PLAYBACK the stock output (left, right), which the stock callback has
+    // just written as clamp(mix) x (2^31 - 1) x the headphone gain.
     let write = IN_WRITE.load(Relaxed);
     if spare::IN_FRAMES - write.wrapping_sub(IN_READ.load(Acquire)) >= 4 {
         let ring = IN_RING.0.get().cast::<[i32; 2]>();
         for k in 0..4 {
-            // SAFETY: words of this frame in the input block, and the ring.
+            // SAFETY: words of this frame in the input and output blocks, and
+            // the ring.
             unsafe {
-                let pair = [ptr::read_volatile(input.add(12 * k)), ptr::read_volatile(input.add(12 * k + 6))];
+                let pair = if !playback {
+                    [ptr::read_volatile(input.add(12 * k)), ptr::read_volatile(input.add(12 * k + 6))]
+                } else if stock_gain != 0.0 {
+                    let unscale = |word: i32| (word as f32 / stock_gain) as i32;
+                    [unscale(ptr::read_volatile(output.add(2 * k))), unscale(ptr::read_volatile(output.add(2 * k + 1)))]
+                } else {
+                    [0, 0]
+                };
+                if playback {
+                    SOURCE_PEAK.store(SOURCE_PEAK.load(Relaxed).max(pair[0].unsigned_abs()), Relaxed);
+                }
                 ptr::write_volatile(ring.add((write.wrapping_add(k as u32) % spare::IN_FRAMES) as usize), pair);
             }
         }
@@ -1124,8 +1302,7 @@ unsafe extern "C" fn audio_hook(a: usize, b: usize, c: usize, d: usize) -> usize
         UNDERRUNS.store(UNDERRUNS.load(Relaxed).wrapping_add(1), Relaxed);
     }
     PRIMED.store(primed, Relaxed);
-    // SAFETY: the stock headphone gain, an f32 in ITCM.
-    let gain = unsafe { ptr::read_volatile(stock::OUTPUT_GAIN) } * 2_147_483_647.0;
+    let gain = stock_gain * 2_147_483_647.0;
     let ring = spare::OUT_RING as *const f32;
     for k in 0..4 {
         let y = if primed {
