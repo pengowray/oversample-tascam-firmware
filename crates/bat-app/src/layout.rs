@@ -14,7 +14,7 @@ pub const TITLE_H: i32 = 24;
 /// Status bar: recording state, recorded time and clock.
 pub const STATUS: Rectangle = Rectangle::new(Point::new(6, 28), Size::new(308, 32));
 
-/// Meters for inputs 3 and 4, from -72 to 0 dBFS. The stock meters stop at
+/// Meters for the two inputs, from -72 to 0 dBFS. The stock meters stop at
 /// -48 dBFS, but 32-bit float bat recordings often peak below that.
 pub const METER_X: i32 = 22;
 pub const METER_W: i32 = 268;

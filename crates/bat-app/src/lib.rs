@@ -1,7 +1,7 @@
 //! The bat app for the TASCAM Portacapture X8: listening modes, call
 //! detection, and its screen.
 //!
-//! [`BatApp`] takes the recorder's inputs 3/4 in blocks, makes the audio for
+//! [`BatApp`] takes two of the recorder's inputs in blocks, makes the audio for
 //! the headphones in the chosen listening mode, finds bat calls, and draws a
 //! 320 × 480 screen (the X8's panel, used in portrait like the stock apps)
 //! into an RGB565 framebuffer. It knows nothing about the hardware: the X8
@@ -82,7 +82,7 @@ const PITCH_FACTORS: [f32; 6] = [4.0, 8.0, 10.0, 16.0, 20.0, 32.0];
 /// Choices for the lowest bat call frequency, in kHz; 16 kHz is the default.
 const MIN_BAT_KHZ: [f32; 5] = [14.0, 16.0, 18.0, 20.0, 25.0];
 const MIN_BAT_DEFAULT: usize = 1;
-const SOURCES: [MonitorSource; 3] = [MonitorSource::Mix, MonitorSource::Input3, MonitorSource::Input4];
+const SOURCES: [MonitorSource; 3] = [MonitorSource::Mix, MonitorSource::First, MonitorSource::Second];
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum Mode {
@@ -183,10 +183,18 @@ const fn kind_bit(kind: CallKind) -> u8 {
 /// Which input feeds the headphones and the detector.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum MonitorSource {
-    Input3,
-    Input4,
-    /// The average of inputs 3 and 4.
+    First,
+    Second,
+    /// The average of the two inputs.
     Mix,
+}
+
+/// What an input is called: `short` beside its meter, `long` on the settings
+/// screen.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub struct InputName {
+    pub short: &'static str,
+    pub long: &'static str,
 }
 
 /// What the app hears: live input, or a recording the X8 is playing. It sets
@@ -358,6 +366,9 @@ pub struct BatApp<'a> {
     /// The input's sample rate in Hz, when it is not one the app works at.
     rate_warning: Option<u32>,
     input_kind: InputKind,
+    /// The names of the two inputs; the second is `None` when both blocks
+    /// passed to `process` carry the same input.
+    inputs: (InputName, Option<InputName>),
     /// The mode buttons, left to right.
     modes: &'static [Mode],
     clock_s: u32,
@@ -454,6 +465,10 @@ impl<'a> BatApp<'a> {
             field!((*this).external_recorder).write(None);
             field!((*this).rate_warning).write(None);
             field!((*this).input_kind).write(InputKind::Live);
+            field!((*this).inputs).write((
+                InputName { short: "3", long: "Input 3" },
+                Some(InputName { short: "4", long: "Input 4" }),
+            ));
             field!((*this).modes).write(&Mode::ALL);
             field!((*this).clock_s).write(0);
             fill(field!((*this).mono), 0.0);
@@ -552,6 +567,7 @@ impl<'a> BatApp<'a> {
                 self.min_bat_index = step(self.min_bat_index, MIN_BAT_KHZ.len());
                 self.apply_lowest_bat_call();
             }
+            Setting::ListenTo if self.inputs.1.is_none() => {}
             Setting::ListenTo => {
                 let i = SOURCES.iter().position(|&s| s == self.source).unwrap_or(0);
                 self.source = SOURCES[step(i, SOURCES.len())];
@@ -630,6 +646,17 @@ impl<'a> BatApp<'a> {
 
     pub fn input_kind(&self) -> InputKind {
         self.input_kind
+    }
+
+    /// Name the inputs passed to [`process`](Self::process). With `second`
+    /// `None`, both blocks must carry the first input: one meter shows, and
+    /// Listen to has nothing to choose.
+    pub fn set_inputs(&mut self, first: InputName, second: Option<InputName>) {
+        self.inputs = (first, second);
+    }
+
+    pub fn inputs(&self) -> (InputName, Option<InputName>) {
+        self.inputs
     }
 
     /// The latest marked detection.
@@ -782,30 +809,30 @@ impl<'a> BatApp<'a> {
         }
     }
 
-    /// Process a block of inputs 3 and 4 into the headphone output. All four
+    /// Process a block of the two inputs into the headphone output. All four
     /// slices must have the same length; any length works.
-    pub fn process(&mut self, in3: &[f32], in4: &[f32], out_l: &mut [f32], out_r: &mut [f32]) {
-        let n = in3.len().min(in4.len()).min(out_l.len()).min(out_r.len());
+    pub fn process(&mut self, first: &[f32], second: &[f32], out_l: &mut [f32], out_r: &mut [f32]) {
+        let n = first.len().min(second.len()).min(out_l.len()).min(out_r.len());
         let mut start = 0;
         while start < n {
             let end = (start + CHUNK).min(n);
-            self.process_chunk(&in3[start..end], &in4[start..end], &mut out_l[start..end], &mut out_r[start..end]);
+            self.process_chunk(&first[start..end], &second[start..end], &mut out_l[start..end], &mut out_r[start..end]);
             start = end;
         }
     }
 
-    fn process_chunk(&mut self, in3: &[f32], in4: &[f32], out_l: &mut [f32], out_r: &mut [f32]) {
-        let len = in3.len();
+    fn process_chunk(&mut self, first: &[f32], second: &[f32], out_l: &mut [f32], out_r: &mut [f32]) {
+        let len = first.len();
         let chunk_s = len as f32 / self.sample_rate;
         let peak = |x: &[f32]| x.iter().fold(0.0f32, |m, v| m.max(v.abs()));
-        self.meters[0].update(peak(in3), chunk_s);
-        self.meters[1].update(peak(in4), chunk_s);
+        self.meters[0].update(peak(first), chunk_s);
+        self.meters[1].update(peak(second), chunk_s);
 
         let mono = &mut self.mono[..len];
-        for ((m, &a), &b) in mono.iter_mut().zip(in3).zip(in4) {
+        for ((m, &a), &b) in mono.iter_mut().zip(first).zip(second) {
             *m = match self.source {
-                MonitorSource::Input3 => a,
-                MonitorSource::Input4 => b,
+                MonitorSource::First => a,
+                MonitorSource::Second => b,
                 MonitorSource::Mix => 0.5 * (a + b),
             };
         }

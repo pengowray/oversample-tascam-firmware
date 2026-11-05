@@ -170,6 +170,24 @@ fn an_external_recorder_replaces_rec() {
 }
 
 #[test]
+fn listen_to_has_nothing_to_choose_with_one_input() {
+    let mut storage = vec![0.0f32; 1024];
+    let mut app = BatApp::new(FS, &mut storage, buffers());
+    let name = InputName { short: "5", long: "Input 5" };
+    app.set_inputs(name, None);
+    assert_eq!(app.inputs(), (name, None));
+    let before = app.source();
+    app.change_setting(Setting::ListenTo, 1);
+    assert_eq!(app.source(), before);
+    assert!(draw(&app).iter().any(|&p| p != 0));
+    app.open_settings();
+    assert!(draw(&app).iter().any(|&p| p != 0));
+    app.set_inputs(name, Some(InputName { short: "6", long: "Input 6" }));
+    app.change_setting(Setting::ListenTo, 1);
+    assert_ne!(app.source(), before);
+}
+
+#[test]
 fn the_rate_warning_follows_the_input_rate() {
     let mut storage = vec![0.0f32; 1024];
     let mut app = BatApp::new(FS, &mut storage, buffers());
@@ -220,9 +238,9 @@ fn settings_screen_opens_changes_and_closes() {
     let plus = layout::setting_plus(1).center();
     app.touch(plus.x, plus.y);
     assert_eq!(app.selected_setting(), Setting::ListenTo);
-    assert_eq!(app.source(), MonitorSource::Input3);
+    assert_eq!(app.source(), MonitorSource::First);
     app.wheel(5);
-    assert_eq!(app.source(), MonitorSource::Input4);
+    assert_eq!(app.source(), MonitorSource::Second);
     assert!(draw(&app).iter().any(|&p| p != 0));
     let done = layout::DONE.center();
     app.touch(done.x, done.y);

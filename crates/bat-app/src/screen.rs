@@ -199,8 +199,10 @@ fn meter_x(db: f32) -> i32 {
 fn meters(app: &BatApp, fb: Fb) {
     const SEGMENT: i32 = 4;
     const GAP: i32 = 1;
-    for (ch, (meter, &y)) in app.meters.iter().zip(&METER_Y).enumerate() {
-        text(fb, &SMALL, if ch == 0 { "3" } else { "4" }, 8, y + 6, LEFT, TEXT_MUTED);
+    let (first, second) = app.inputs();
+    for ((meter, &y), name) in app.meters.iter().zip(&METER_Y).zip([Some(first), second]) {
+        let Some(name) = name else { continue };
+        text(fb, &SMALL, name.short, 8, y + 6, LEFT, TEXT_MUTED);
         let Meter { level_db, hold_db, .. } = *meter;
         let mut x = METER_X;
         while x + SEGMENT <= METER_X + METER_W {
@@ -550,14 +552,22 @@ fn settings(app: &BatApp, fb: Fb) {
         if *setting == Setting::LowestBatCall {
             text(fb, &VALUE, format_args!("{:.0} kHz", app.lowest_bat_call_hz() / 1000.0), x, y + 44, LEFT, TEXT);
         } else {
-            let value = match app.source {
-                MonitorSource::Mix => "Inputs 3 and 4",
-                MonitorSource::Input3 => "Input 3",
-                MonitorSource::Input4 => "Input 4",
+            let (first, second) = app.inputs();
+            let value = match (second, app.source) {
+                (None, _) | (_, MonitorSource::First) => first.long,
+                (Some(second), MonitorSource::Second) => second.long,
+                (Some(_), MonitorSource::Mix) => match app.input_kind() {
+                    InputKind::Live => "Both inputs",
+                    InputKind::Playback => "Left and right",
+                },
             };
             text(fb, &VALUE, value, x, y + 44, LEFT, TEXT);
         }
         text(fb, &SMALL, help, x, y + 66, LEFT, TEXT_MUTED);
+        // With one input, Listen to has nothing to choose.
+        if *setting == Setting::ListenTo && app.inputs().1.is_none() {
+            continue;
+        }
         for (b, plus) in [(setting_minus(i), false), (setting_plus(i), true)] {
             rounded(fb, b, 4, BUTTON);
             let c = b.center();

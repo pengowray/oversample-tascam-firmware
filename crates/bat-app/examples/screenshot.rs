@@ -14,8 +14,9 @@
 //! buttons, and the X8's recorder in that state at 1 min 15 s.
 //! `RATE=48000` shows the warning for an input at that rate.
 //! `PLAYBACK=1` shows the screen as BAT PLAYBACK shows it on the X8.
+//! `INPUTS=5,6` or `INPUTS=5` names the inputs for the meters and settings.
 
-use bat_app::{BatApp, Buffers, CallKind, HEIGHT, InputKind, Mode, Recorder, Rgb565Buffer, WIDTH};
+use bat_app::{BatApp, Buffers, CallKind, HEIGHT, InputKind, InputName, Mode, Recorder, Rgb565Buffer, WIDTH};
 
 fn main() {
     let args: Vec<String> = std::env::args().collect();
@@ -81,6 +82,16 @@ fn main() {
     }
     if std::env::var("PLAYBACK").is_ok_and(|v| v == "1") {
         app.set_input_kind(InputKind::Playback);
+        app.set_inputs(InputName { short: "L", long: "Left" }, Some(InputName { short: "R", long: "Right" }));
+    }
+    if let Ok(inputs) = std::env::var("INPUTS") {
+        let name = |n: &str| {
+            let short: &'static str = String::leak(n.to_string());
+            let long: &'static str = String::leak(format!("Input {n}"));
+            InputName { short, long }
+        };
+        let mut parts = inputs.split(',');
+        app.set_inputs(name(parts.next().unwrap()), parts.next().map(name));
     }
     let ch = |c: usize| -> Vec<f32> { (0..n).map(|i| samples[i * channels + c.min(channels - 1)]).collect() };
     let (a, b) = (ch(0), ch(1));

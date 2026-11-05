@@ -6,7 +6,7 @@ use core::ptr;
 use core::sync::atomic::{AtomicBool, AtomicU32, Ordering::Acquire, Ordering::Relaxed, Ordering::Release};
 
 use bat_app::fb::Rgb565Buffer;
-use bat_app::{BatApp, Buffers, Button, InputKind, Mode, Recorder};
+use bat_app::{BatApp, Buffers, Button, InputKind, InputName, Mode, Recorder};
 use embedded_graphics::pixelcolor::Rgb565;
 use embedded_graphics::prelude::*;
 use embedded_graphics::primitives::Rectangle;
@@ -43,9 +43,23 @@ mod stock {
     pub const AUDIO_CALLBACK: usize = 0x0002_adfd;
     /// Ring index of the input block the callback is about to process.
     pub const AUDIO_INDEX: *const u32 = 0x2001_0268 as *const u32;
-    /// Three input blocks of 0x180 bytes: per frame 12 signed 32-bit words;
-    /// input 3 is word 0 and input 4 word 6.
+    /// Three input blocks of 0x180 bytes: per frame 12 signed 32-bit words.
     pub const INPUT_BLOCKS: usize = 0x2000_e340;
+    /// The word in an input frame that carries each of inputs 1 to 6 (the
+    /// high gain path of its dual-gain pair). EXT IN uses the words of inputs
+    /// 5 and 6.
+    pub const INPUT_WORDS: [u32; 6] = [2, 5, 0, 6, 8, 11];
+    /// DSP state + 0x622: 1 when tracks hear inputs 1 and 2 swapped.
+    pub const SWAP_INPUTS_1_2: *const u8 = 0x0002_a2ce as *const u8;
+    /// Settings + 0x30, one byte every 0x20 bytes for tracks 1 to 6: the pair
+    /// of inputs the track hears (INPUT SELECT), 1 INPUT 1-2, 2 INPUT 3-4,
+    /// 3 INPUT 5-6, 4 EXT IN. An odd track hears the left of the pair.
+    pub const TRACK_SOURCES: *const u8 = 0x81e8_c8ac as *const u8;
+    pub const TRACK_SOURCE_STEP: usize = 0x20;
+    pub const TRACKS: usize = 6;
+    /// Settings + 0x200 and + 0x204: bit 0 to 5 set in either word when track
+    /// 1 to 6 is turned on (red on MANUAL's INPUT screen).
+    pub const TRACKS_ON: [*const u32; 2] = [0x81e8_ca7c as *const u32, 0x81e8_ca80 as *const u32];
     /// Three output blocks of 0x40 bytes: per frame left, right.
     pub const OUTPUT_BLOCKS: usize = 0x2001_04c0;
     /// Rate class: 0 for 44.1/48 kHz, 1 for 88.2/96, 2 for 176.4/192.
@@ -202,7 +216,7 @@ pub struct Header {
 #[unsafe(link_section = ".header")]
 pub static X8_PATCH_HEADER: Header = Header {
     magic: *b"BATX",
-    version: 11,
+    version: 12,
     key_hook,
     rec_key_hook,
     touch_hook,
@@ -230,11 +244,11 @@ const TILE_TEXTS: [[&[u8]; 7]; 2] = [
     [
         b"BAT DETECTOR",
         b"Hear and record bat calls",
-        b"live from ultrasonic mics",
-        b"on inputs 3 and 4, and see",
-        b"them on a spectrogram.",
-        b"Set the sample rate to",
-        b"192 kHz.",
+        b"live, and see them on a",
+        b"spectrogram. Turn on the",
+        b"inputs for your ultrasonic",
+        b"mics in MANUAL. Set the",
+        b"sample rate to 192 kHz.",
     ],
     [
         b"BAT PLAYBACK",
@@ -368,6 +382,9 @@ static WORD_PEAKS: [AtomicU32; 12] = [const { AtomicU32::new(0) }; 12];
 /// The same for the left channel of the stock output, unscaled, in BAT
 /// PLAYBACK.
 static SOURCE_PEAK: AtomicU32 = AtomicU32::new(0);
+/// The words of an input frame the interrupt passes to the app, first | second
+/// << 8: inputs 3 and 4 until `update_status` first runs.
+static HEARD_WORDS: AtomicU32 = AtomicU32::new(stock::INPUT_WORDS[2] | stock::INPUT_WORDS[3] << 8);
 /// Core cycles in the last second: in all, in the stock audio callback, and in
 /// the rest of the audio hook (interrupt; read by the drawing context).
 static CYCLES_PER_S: AtomicU32 = AtomicU32::new(0);
@@ -445,7 +462,7 @@ fn load_itcm() {
 /// display buffer in one pass.
 #[unsafe(link_section = ".noinit")]
 static FRAME: Slot<[u16; stock::WIDTH * stock::HEIGHT]> = Slot(UnsafeCell::new(MaybeUninit::uninit()));
-/// The input ring: (input 3, input 4) frames from the interrupt.
+/// The input ring: frames of the two inputs the app hears, from the interrupt.
 #[unsafe(link_section = ".dtcm")]
 static IN_RING: Slot<[[i32; 2]; spare::IN_FRAMES as usize]> = Slot(UnsafeCell::new(MaybeUninit::uninit()));
 const DSP_STACK_BYTES: usize = 32 * 1024;
@@ -1195,8 +1212,8 @@ extern "C" fn tick_work() {
 /// frames processed.
 fn process_input(app: &mut BatApp<'static>, budget: u32, time_blocks: u32) -> u32 {
     let start = BLOCKS.load(Relaxed);
-    let mut in3 = [0.0f32; CHUNK];
-    let mut in4 = [0.0f32; CHUNK];
+    let mut first = [0.0f32; CHUNK];
+    let mut second = [0.0f32; CHUNK];
     let mut left = [0.0f32; CHUNK];
     let mut right = [0.0f32; CHUNK];
     let ring = IN_RING.0.get().cast::<[i32; 2]>();
@@ -1213,11 +1230,11 @@ fn process_input(app: &mut BatApp<'static>, budget: u32, time_blocks: u32) -> u3
             let at = read.wrapping_add(i as u32) % spare::IN_FRAMES;
             // SAFETY: inside the input ring.
             let [a, b] = unsafe { ptr::read_volatile(ring.add(at as usize)) };
-            in3[i] = a as f32 * SCALE;
-            in4[i] = b as f32 * SCALE;
+            first[i] = a as f32 * SCALE;
+            second[i] = b as f32 * SCALE;
         }
         IN_READ.store(read.wrapping_add(n as u32), Release);
-        app.process(&in3[..n], &in4[..n], &mut left[..n], &mut right[..n]);
+        app.process(&first[..n], &second[..n], &mut left[..n], &mut right[..n]);
         let write = OUT_WRITE.load(Relaxed);
         let space = spare::OUT_SAMPLES - write.wrapping_sub(OUT_READ.load(Acquire));
         for (i, &y) in left[..n.min(space as usize)].iter().enumerate() {
@@ -1279,7 +1296,8 @@ fn render() {
     // Peak level of each input word since the last redraw, in dB below full
     // scale, to check which word carries which input.
     let mut peaks = Line::new();
-    let _ = write!(peaks, "word -dBFS");
+    let words = HEARD_WORDS.load(Relaxed);
+    let _ = write!(peaks, "on {:02x} w{},{} dB", tracks_on(), words & 0xff, words >> 8 & 0xff);
     for (i, peak) in WORD_PEAKS.iter().enumerate() {
         let p = peak.swap(0, Relaxed);
         let db = if p == 0 { 99 } else { (-20.0 * libm::log10f(p as f32 / 2_147_483_648.0)) as u32 };
@@ -1306,6 +1324,81 @@ fn render() {
     // bursts.
     // SAFETY: both buffers hold 320 x 480 pixels and do not overlap.
     unsafe { ptr::copy_nonoverlapping(pixels.as_ptr(), spare::DISPLAY as *mut u16, stock::WIDTH * stock::HEIGHT) };
+}
+
+/// An input the app can hear: its word in an input frame and its name.
+#[derive(Clone, Copy, PartialEq)]
+struct Input {
+    word: u32,
+    name: InputName,
+}
+
+/// Names for inputs 1 to 6, EXT IN and the X8's playback.
+const INPUT_NAMES: [InputName; 6] = [
+    InputName { short: "1", long: "Input 1" },
+    InputName { short: "2", long: "Input 2" },
+    InputName { short: "3", long: "Input 3" },
+    InputName { short: "4", long: "Input 4" },
+    InputName { short: "5", long: "Input 5" },
+    InputName { short: "6", long: "Input 6" },
+];
+const EXT_IN_NAMES: [InputName; 2] =
+    [InputName { short: "EL", long: "EXT IN left" }, InputName { short: "ER", long: "EXT IN right" }];
+const PLAYBACK_LEFT: InputName = InputName { short: "L", long: "Left" };
+const PLAYBACK_RIGHT: InputName = InputName { short: "R", long: "Right" };
+
+/// The input a track hears, from the pair chosen for it in INPUT SELECT, or
+/// `None` for a source this firmware does not name.
+fn track_input(track: usize) -> Option<Input> {
+    let side = track % 2;
+    // SAFETY: a byte in the settings record, inside the track's record.
+    let source = read_byte(unsafe { stock::TRACK_SOURCES.add(track * stock::TRACK_SOURCE_STEP) });
+    let (input, name) = match source {
+        1 | 2 | 3 => {
+            let input = (source as usize - 1) * 2 + side;
+            (input, INPUT_NAMES[input])
+        }
+        4 => (4 + side, EXT_IN_NAMES[side]),
+        _ => return None,
+    };
+    let swapped = input < 2 && read_byte(stock::SWAP_INPUTS_1_2) == 1;
+    Some(Input { word: stock::INPUT_WORDS[if swapped { 1 - input } else { input }], name })
+}
+
+/// Tracks turned on in the app, as a bit for each of tracks 1 to 6.
+fn tracks_on() -> u32 {
+    // SAFETY: words in the settings record.
+    let [a, b] = stock::TRACKS_ON.map(|at| unsafe { ptr::read_volatile(at) });
+    (a | b) & ((1 << stock::TRACKS) - 1)
+}
+
+/// The inputs the app hears: the first two different inputs among the tracks
+/// turned on in MANUAL, taking inputs 3 to 6 and EXT IN before inputs 1 and 2
+/// (the included mics' jacks, which are on by default). With no track on, inputs
+/// 3 and 4.
+fn selected_inputs() -> (Input, Option<Input>) {
+    let on = tracks_on();
+    let mut picked: [Option<Input>; 2] = [None; 2];
+    for wanted_jacks_1_2 in [false, true] {
+        for track in 0..stock::TRACKS {
+            let Some(input) = track_input(track).filter(|_| on >> track & 1 != 0) else { continue };
+            let jacks_1_2 = input.word == stock::INPUT_WORDS[0] || input.word == stock::INPUT_WORDS[1];
+            if jacks_1_2 != wanted_jacks_1_2 || picked.contains(&Some(input)) {
+                continue;
+            }
+            if let Some(free) = picked.iter_mut().find(|slot| slot.is_none()) {
+                *free = Some(input);
+            }
+        }
+    }
+    let [first, second] = picked;
+    first.map_or(
+        (
+            Input { word: stock::INPUT_WORDS[2], name: INPUT_NAMES[2] },
+            Some(Input { word: stock::INPUT_WORDS[3], name: INPUT_NAMES[3] }),
+        ),
+        |first| (first, second),
+    )
 }
 
 /// The X8 recorder's state and take length, and the record rate, for the
@@ -1346,8 +1439,17 @@ fn update_status(app: &mut BatApp<'static>) {
             SAMPLE_RATE as u32
         }
     };
-    app.set_input_kind(if PLAYBACK.load(Relaxed) { InputKind::Playback } else { InputKind::Live });
     app.set_input_rate(rate);
+    if PLAYBACK.load(Relaxed) {
+        app.set_input_kind(InputKind::Playback);
+        app.set_inputs(PLAYBACK_LEFT, Some(PLAYBACK_RIGHT));
+    } else {
+        app.set_input_kind(InputKind::Live);
+        let (first, second) = selected_inputs();
+        let word = |input: Input| input.word;
+        HEARD_WORDS.store(word(first) | word(second.unwrap_or(first)) << 8, Relaxed);
+        app.set_inputs(first.name, second.map(|input| input.name));
+    }
 }
 
 /// The audio DMA callback: runs the stock one, then, with the bat screen up at
@@ -1402,13 +1504,15 @@ unsafe extern "C" fn audio_hook(a: usize, b: usize, c: usize, d: usize) -> usize
     // SAFETY: the stock output gain, an f32 in ITCM.
     let stock_gain = unsafe { ptr::read_volatile(stock::OUTPUT_GAIN) };
     let playback = PLAYBACK.load(Relaxed);
-    // The block's 4 frames into the input ring: inputs 3 and 4, or for BAT
-    // PLAYBACK the stock output (left, right), which the stock callback has
-    // just written as clamp(mix) x (2^31 - 1) x the output gain. Until a file
-    // plays, MANUAL's output is the live input mix, so BAT PLAYBACK hears
-    // silence then.
+    // The block's 4 frames into the input ring: the two inputs chosen by
+    // `selected_inputs`, or for BAT PLAYBACK the stock output (left, right),
+    // which the stock callback has just written as clamp(mix) x (2^31 - 1) x
+    // the output gain. Until a file plays, MANUAL's output is the live input
+    // mix, so BAT PLAYBACK hears silence then.
     // SAFETY: a byte in the stock DSP state.
     let file_playing = playback && unsafe { ptr::read_volatile(stock::DSP_PLAYING) } == 1;
+    let words = HEARD_WORDS.load(Relaxed);
+    let (first_word, second_word) = ((words & 0xff) as usize, (words >> 8 & 0xff) as usize);
     let write = IN_WRITE.load(Relaxed);
     if spare::IN_FRAMES - write.wrapping_sub(IN_READ.load(Acquire)) >= 4 {
         let ring = IN_RING.0.get().cast::<[i32; 2]>();
@@ -1418,7 +1522,7 @@ unsafe extern "C" fn audio_hook(a: usize, b: usize, c: usize, d: usize) -> usize
             // the ring.
             unsafe {
                 let pair = if !playback {
-                    [ptr::read_volatile(input.add(12 * k)), ptr::read_volatile(input.add(12 * k + 6))]
+                    [ptr::read_volatile(input.add(12 * k + first_word)), ptr::read_volatile(input.add(12 * k + second_word))]
                 } else if file_playing && gain != 0.0 {
                     let unscale = |word: i32| (word as f32 / gain) as i32;
                     [unscale(ptr::read_volatile(output.add(2 * k))), unscale(ptr::read_volatile(output.add(2 * k + 1)))]
