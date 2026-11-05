@@ -715,7 +715,10 @@ the waterfall show audible sound?
 
 ## Step 11 test file: BAT DETECTOR and BAT PLAYBACK tiles, TUNER back (built 2026-11-05, not yet installed)
 
-`work/patch9/#PortaX8_0227.203` (B227, SHA-256 `ff1187b5…04b23ddf`).
+`work/patch10/#PortaX8_0228.203` (B228, SHA-256 `ef6ef53f…a5f333ce`). B227
+(`work/patch9`) was the first build of this step; a review found that a tap
+in delete mode could delete a preset hidden behind a bat tile, so it was
+never installed.
 
 - **Tiles.** The bat app moves from the TUNER tile to the launcher's USER
   SETTINGS 2 and 3 tiles, now BAT DETECTOR and BAT PLAYBACK. TUNER is stock
@@ -723,39 +726,53 @@ the waterfall show audible sound?
   SETTINGS tiles are shown only while their slot holds a saved preset. The
   patch replaces the bridge's slot getter (0x80d6a238, the only source of the
   launcher's slot properties) so that slots 2 and 3 always report a MANUAL
-  preset, and wraps the launcher's title and six description bindings so that
-  those two tiles show the patch's texts. Both tiles probably show MANUAL's icon
-  (not traced). USER SETTINGS 1 is unchanged.
+  preset, and wraps the launcher's title, six description lines and title
+  position so that those two tiles look like app tiles with the patch's texts.
+  Both tiles show MANUAL's icon (the icon binding's default). USER SETTINGS 1
+  is unchanged.
 - **Opening.** The two tiles' handlers end with `b.w 0x80d6a1c0` (load preset
   slot r1); the patch retargets both to `tile_hook`, which opens MANUAL as the
   MANUAL tile does (bridge property 6 = 1), and the bat screen follows as in
-  step 9. No preset is loaded.
-- **Saving presets.** The first free slot (0x80d6a252, read by the apps' save
-  screens) now offers only slot 1, so a save cannot go to a slot hidden behind a
-  bat tile. Untested: what the save screen does when slot 1 is in use. A preset
-  already saved in slot 2 or 3 is hidden, not deleted. Since the launcher now
-  always sees a slot in use, deleting the last real preset no longer ends the
-  launcher's delete mode by itself (tap elsewhere to end it).
-- **BAT DETECTOR** is the step 10 bat screen, unchanged.
-- **BAT PLAYBACK** (experimental). The app hears the X8's own output instead of
-  inputs 3 and 4: the audio hook reads the output block after the stock callback
-  and divides by the headphone gain, then replaces it with the app's output as
-  before. PLAY goes on to MANUAL's player (play or pause the current file) and,
-  from MANUAL's screen, brings the bat screen back. A short HOME press goes on
-  (it stops playback) and shows MANUAL's screen, to choose another file. The
-  wrong-rate notice checks the converter rate, which follows the file. With the
-  headphones muted the app hears silence. The third debug line shows the engine
-  state (0x81cbe780: 1 playing, 2 paused, 0 idle), the converter rate and the
-  level the app hears. The status bar still shows the recorder, not the player.
+  step 9. No preset is loaded. The tap also sets bridge property 4 to 0 (from
+  the slot's MANUAL value), as the MANUAL tile does.
+- **Presets.** The first free slot (0x80d6a252, read by the apps' save
+  screens) now offers only slot 1, so a save cannot go to a slot hidden behind
+  a bat tile; with slot 1 in use the save screens see no free slot, as with
+  all three in use on a stock unit. A preset already saved in slot 2 or 3 is
+  hidden. The bat tiles are never deleted: in delete mode they show no delete
+  badge, a tap opens them as usual, the label over the title shows the tile's
+  name, and the delete listener ignores slots 2 and 3. Since the launcher now
+  always sees a slot in use, delete mode can be entered with no real preset,
+  and deleting the last real preset no longer ends it by itself.
+- **BAT DETECTOR** is the step 10 bat screen, now titled BAT DETECTOR, with
+  the tile's name in the wrong-rate notice.
+- **BAT PLAYBACK** (experimental). The bat screen is titled BAT PLAYBACK. The
+  app hears the X8's own output instead of inputs 3 and 4: the audio hook reads
+  the output block after the stock callback and divides by the output gain
+  (frame 0 by the gain before the stock routine's once-per-block update), then
+  replaces it with the app's output as before. Until a file plays (DSP byte
+  0x2a2d9 is 1), MANUAL's output is the live input mix, so the app hears
+  silence then. PLAY goes on to MANUAL's player (play or pause the current
+  file) and, from MANUAL's screen, brings the bat screen back. A short HOME
+  press goes on (it stops playback) and shows MANUAL's screen, to choose
+  another file. The output level setting does not change what the app hears.
+  While a file plays or is paused, the wrong-rate notice checks the converter
+  rate, which follows the file, and says to choose a 192 kHz recording. The
+  third debug line shows the engine state (0x81cbe780: 1 playing, 2 paused,
+  0 idle), the converter rate and the level the app hears. The status bar
+  still shows the recorder, not the player.
 
 **What to check.** Are both tiles on the LAUNCHER, with the right titles and
-descriptions, and which icon do they show? Does tapping each open MANUAL and
-then the bat screen? Does TUNER work again? In BAT PLAYBACK with a 192 kHz file:
-does PLAY start playback (engine 1 on the debug line, a level other than -99)
+descriptions placed like an app tile's? Does tapping each open MANUAL and
+then the bat screen? Does TUNER work again? In delete mode (press and hold
+the LAUNCHER), do the bat tiles have no badge, and does a tap open them? In
+BAT PLAYBACK with a 192 kHz file: before PLAY the level on the debug line
+should be -99; does PLAY start playback (engine 1, a level other than -99)
 with bat sound in the headphones, does PLAY pause it, and does a short HOME
 press show MANUAL's screen? If playback has its own key handler (as recording
 does), the wheel and HOME may not reach the patch while a file plays. With a
-preset in USER SETTINGS 1, what does SAVE USER SETTINGS do?
+48 kHz file, does the notice ask for a 192 kHz recording? With a preset in
+USER SETTINGS 1, what does SAVE USER SETTINGS do?
 
 ## Firmware map (V2.03, in progress)
 
@@ -960,10 +977,18 @@ holds a preset. The slots are three words at 0x81e9da60, each the Qt number of
 the saved app (1 MANUAL, 2 PODCAST, 9 POCKET STUDIO) or 0; the root's
 properties at +0xd3a0, +0xd3a8 and +0xd3b0 (and +0xd3b8, any slot in use) are
 computed from them through `FUN_80d6a238(bridge, slot)`, also on a change
-(`FUN_813e0a58`). The title is "USER SETTINGS " plus the slot number; the tiles'
-handlers (0x81733cd0, 0x81733d08, 0x81733d40) set bridge property 4 from the
-saved app and end with `b.w 0x80d6a1c0` (bridge, slot), which sends 0xfe1 to
-the C core to load the preset. `FUN_80d6a252()` gives the first free slot (1
+(`FUN_813e0a58`). The title is "USER SETTINGS " plus the slot number, placed
+75 px lower than an app tile's title (`FUN_80f23220`), since these tiles have
+no description. The tiles' handlers (0x81733cd0, 0x81733d08, 0x81733d40) end
+with `b.w 0x80d6a1c0` (bridge, slot), which sends 0xfe1 to the C core to load
+the preset; separate handlers in the same tap (0x80f22d78.., 0x80f22ed0..,
+0x80f23028..) set bridge property 4 to 0, 1 or 2 when the slot holds 1, 2 or
+9. In delete mode (root+0xd370, entered by holding a finger on the LAUNCHER),
+the tap handlers (0x8161d9dc and 0x8161d880 for slots 2 and 3) open a delete
+pop-up instead, and after YES the listener at 0x81728120 calls
+`FUN_80d6a0f8(bridge, slot, 0, 0)` to delete the preset; a badge binding per
+tile (0x80f2a7e4, 0x80f2b2b8 for slots 2 and 3) and a label over the title
+(0x80f29138, "USER SETTINGS " plus the number) show in delete mode. `FUN_80d6a252()` gives the first free slot (1
 to 3, or 0), for the apps' save screens. The launcher's text bindings are each
 called once: the title from 0x814a765c, description lines 1 to 6 from
 0x814a7730, 0x814a7804, 0x814a78d8, 0x814a79ac, 0x814a7a80 and 0x814a7b54, all

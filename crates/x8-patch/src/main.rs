@@ -4,17 +4,15 @@
 //! application (see `x8patch.ld`). `tools/x8patch.py` stores it in the update
 //! file after the stock image and points the stock firmware at the functions
 //! named in the patch's header. Nothing here runs unless the stock code calls
-//! it, and every entry point does nothing but call the stock code when the
-//! recorder is not in a normal start (for example in firmware update mode).
+//! it. When the recorder is not in a normal start (for example in firmware
+//! update mode), every entry point calls the stock code it replaced, except
+//! `slot_hook` and `free_slot_hook`, which replace whole stock functions and
+//! give the stock result themselves.
 //!
-//! Test 2: live heterodyne. The stock key handler, which task 1 calls for every
-//! message while the launcher or an app is on screen, is replaced by
-//! `key_hook`. On its first call it installs `audio_hook` as the audio DMA
-//! callback. Pressing MARK three times within 1.5 s turns the heterodyne on or
-//! off; while it is on, the wheel tunes it in 1 kHz steps (the app does not see
-//! those turns), and at 192 kHz the headphones hear inputs 3 and 4 mixed and
-//! heterodyned, at the stock headphone volume. A status line across the top of
-//! the screen shows what the patch sees.
+//! The bat app: the BAT DETECTOR and BAT PLAYBACK tiles on the LAUNCHER
+//! (USER SETTINGS 2 and 3) open MANUAL with the bat screen over it, fed from
+//! inputs 3 and 4 or from the X8's playback. See docs/HOMEBREW.md, steps 9 to
+//! 11.
 
 #![cfg_attr(target_os = "none", no_std)]
 #![cfg_attr(target_os = "none", no_main)]

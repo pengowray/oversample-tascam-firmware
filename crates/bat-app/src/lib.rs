@@ -189,6 +189,14 @@ pub enum MonitorSource {
     Mix,
 }
 
+/// What the app hears: live input, or a recording the X8 is playing. It sets
+/// the screen's title and the advice in the wrong-rate notice.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum InputKind {
+    Live,
+    Playback,
+}
+
 /// Time expansion state, for the screen.
 #[derive(Clone, Copy, PartialEq, Debug)]
 pub enum TeStatus {
@@ -349,6 +357,7 @@ pub struct BatApp<'a> {
     external_recorder: Option<(Recorder, u64)>,
     /// The input's sample rate in Hz, when it is not one the app works at.
     rate_warning: Option<u32>,
+    input_kind: InputKind,
     /// The mode buttons, left to right.
     modes: &'static [Mode],
     clock_s: u32,
@@ -444,6 +453,7 @@ impl<'a> BatApp<'a> {
             field!((*this).recorded_samples).write(0);
             field!((*this).external_recorder).write(None);
             field!((*this).rate_warning).write(None);
+            field!((*this).input_kind).write(InputKind::Live);
             field!((*this).modes).write(&Mode::ALL);
             field!((*this).clock_s).write(0);
             fill(field!((*this).mono), 0.0);
@@ -612,6 +622,14 @@ impl<'a> BatApp<'a> {
 
     pub fn rate_warning(&self) -> Option<u32> {
         self.rate_warning
+    }
+
+    pub fn set_input_kind(&mut self, kind: InputKind) {
+        self.input_kind = kind;
+    }
+
+    pub fn input_kind(&self) -> InputKind {
+        self.input_kind
     }
 
     /// The latest marked detection.

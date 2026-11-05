@@ -6,7 +6,7 @@ use core::ptr;
 use core::sync::atomic::{AtomicBool, AtomicU32, Ordering::Acquire, Ordering::Relaxed, Ordering::Release};
 
 use bat_app::fb::Rgb565Buffer;
-use bat_app::{BatApp, Buffers, Button, Mode, Recorder};
+use bat_app::{BatApp, Buffers, Button, InputKind, Mode, Recorder};
 use embedded_graphics::pixelcolor::Rgb565;
 use embedded_graphics::prelude::*;
 use embedded_graphics::primitives::Rectangle;
@@ -50,8 +50,12 @@ mod stock {
     pub const OUTPUT_BLOCKS: usize = 0x2001_04c0;
     /// Rate class: 0 for 44.1/48 kHz, 1 for 88.2/96, 2 for 176.4/192.
     pub const RATE_CLASS: *const u8 = 0x0002_a2cb as *const u8;
-    /// Current headphone gain (f32): -10^(-volume/20), or 0 when muted.
+    /// The output gain (f32), smoothed once per block towards -10^(-v/20)
+    /// for the 0 to 10 dB output level setting (settings + 0x253). It falls
+    /// towards 0 only while a sample rate change mutes the output.
     pub const OUTPUT_GAIN: *const f32 = 0x0002_9ed8 as *const f32;
+    /// DSP state + 0x62d: 1 while the transport plays a file into the mix.
+    pub const DSP_PLAYING: *const u8 = 0x0002_a2d9 as *const u8;
 
     /// Message fields (a copy on task 1's stack): +0 category (0 = input),
     /// +4 kind (0 button, 2 wheel, 9 swallowed), +8 button code or count.
@@ -81,6 +85,9 @@ mod stock {
     /// `FUN_80d6a1c0(bridge, slot)`: loads a USER SETTINGS preset, slot 0 to 2
     /// (Thumb address).
     pub const LOAD_USER_SETTINGS: usize = 0x80d6_a1c1;
+    /// `FUN_80d6a0f8(bridge, slot, app, from_c)`: with from_c = 0 and app 0,
+    /// asks the C core to delete a preset (Thumb address).
+    pub const DELETE_USER_SETTINGS: usize = 0x80d6_a0f9;
     /// The bridge's USER SETTINGS slots: per slot, the Qt number of the app
     /// whose settings it holds (1 MANUAL, 2 PODCAST, 9 POCKET STUDIO), or 0.
     pub const USER_SETTINGS_SLOTS: *const u32 = 0x81e9_da60 as *const u32;
@@ -95,10 +102,18 @@ mod stock {
     /// `FUN_80e03154(string)` releases one (Thumb addresses).
     pub const STRING_ASSIGN: usize = 0x80e3_ea11;
     pub const STRING_RELEASE: usize = 0x80e0_3155;
-    /// The launcher's text bindings `(out, binding, root)`: the title, then
-    /// description lines 1 to 6 (Thumb addresses).
-    pub const LAUNCHER_TEXTS: [usize; 7] =
-        [0x80f2_326b, 0x80f2_393d, 0x80f2_3da9, 0x80f2_4225, 0x80f2_4695, 0x80f2_4ad9, 0x80f2_4e59];
+    /// The launcher's text bindings `(out, binding, root)`: the title,
+    /// description lines 1 to 6, and the label shown over the title in delete
+    /// mode (Thumb addresses).
+    pub const LAUNCHER_TEXTS: [usize; 8] =
+        [0x80f2_326b, 0x80f2_393d, 0x80f2_3da9, 0x80f2_4225, 0x80f2_4695, 0x80f2_4ad9, 0x80f2_4e59, 0x80f2_9139];
+    /// `FUN_80f23220(binding, root)`: the title's y, (H + 1) / 2 - 100, or
+    /// - 25 for the USER SETTINGS tiles, which have no description (Thumb).
+    pub const TITLE_Y: usize = 0x80f2_3221;
+    pub const USER_SETTINGS_TITLE_DROP: usize = 75;
+    /// The USER SETTINGS 2 and 3 tiles' delete badges `(binding, root)`:
+    /// slot in use and delete mode on (Thumb addresses).
+    pub const DELETE_BADGES: [usize; 2] = [0x80f2_a7e5, 0x80f2_b2b9];
     /// The audio engine: 1 playing or recording, 2 paused, 0 idle.
     pub const ENGINE_STATE: *const u32 = 0x81cb_e780 as *const u32;
     /// The open app in the C core's numbering: 0 the LAUNCHER, 2 MANUAL.
@@ -143,7 +158,7 @@ mod spare {
 
 type Handler = unsafe extern "C" fn(usize, usize, usize, usize) -> usize;
 
-/// What `tools/x8patch.py` reads to find the entry points and strings: it
+/// What `tools/x8patch.py` reads to find the entry points: it
 /// must stay at the start of the patch.
 #[repr(C)]
 pub struct Header {
@@ -163,13 +178,24 @@ pub struct Header {
     /// Wrap the launcher's title and description line bindings.
     title_hook: Handler,
     line_hooks: [Handler; 6],
+    /// Wraps the delete mode label binding.
+    label_hook: Handler,
+    /// Wraps the title's y binding.
+    title_y_hook: Handler,
+    /// Replaces the USER SETTINGS 2 and 3 tiles' tap handlers' read of the
+    /// delete mode property.
+    delete_mode_hook: Handler,
+    /// Replaces the delete listener's tail call that deletes a preset.
+    delete_hook: Handler,
+    /// Wrap the USER SETTINGS 2 and 3 tiles' delete badge bindings.
+    badge_hooks: [Handler; 2],
 }
 
 #[unsafe(no_mangle)]
 #[unsafe(link_section = ".header")]
 pub static X8_PATCH_HEADER: Header = Header {
     magic: *b"BATX",
-    version: 9,
+    version: 10,
     key_hook,
     rec_key_hook,
     touch_hook,
@@ -178,6 +204,11 @@ pub static X8_PATCH_HEADER: Header = Header {
     free_slot_hook,
     title_hook: text_hook::<0>,
     line_hooks: [text_hook::<1>, text_hook::<2>, text_hook::<3>, text_hook::<4>, text_hook::<5>, text_hook::<6>],
+    label_hook: text_hook::<7>,
+    title_y_hook,
+    delete_mode_hook,
+    delete_hook,
+    badge_hooks: [badge_hook::<0>, badge_hook::<1>],
 };
 
 /// The bat tiles, in USER SETTINGS slots 2 and 3 (slots 0 to 2 in the
@@ -540,9 +571,19 @@ struct QtString {
     length_kind: u32,
 }
 
+/// The bat tile the launcher's cursor is on, read as the launcher's
+/// bindings read it (from a binding, this notes the read).
+fn tile_at_cursor(root: usize) -> Option<usize> {
+    // SAFETY: the cursor property of the launcher's root.
+    let value: unsafe extern "C" fn(usize) -> *const i32 = unsafe { core::mem::transmute(stock::PROPERTY_VALUE) };
+    let cursor = unsafe { ptr::read_volatile(value(root + stock::CURSOR_PROPERTY)) };
+    usize::try_from(cursor - stock::CURSOR_USER_SETTINGS_1).ok().and_then(bat_tile)
+}
+
 /// Wraps one of the launcher's text bindings (`LINE` 0 is the title, 1 to 6
-/// the description lines): with the cursor on a bat tile, the text is the
-/// tile's instead of "USER SETTINGS 2" or "3" and its description.
+/// the description lines, 7 the delete mode label, which is drawn over the
+/// title): with the cursor on a bat tile, the text is the tile's instead of
+/// "USER SETTINGS 2" or "3" and its description.
 unsafe extern "C" fn text_hook<const LINE: usize>(out: usize, binding: usize, root: usize, d: usize) -> usize {
     // SAFETY: the stock binding the launcher called, with its arguments.
     let binding_fn: Handler = unsafe { core::mem::transmute(stock::LAUNCHER_TEXTS[LINE]) };
@@ -550,12 +591,8 @@ unsafe extern "C" fn text_hook<const LINE: usize>(out: usize, binding: usize, ro
     if system_mode() > 1 {
         return result;
     }
-    // SAFETY: the cursor property of the root the binding was given.
-    let value: unsafe extern "C" fn(usize) -> *const i32 = unsafe { core::mem::transmute(stock::PROPERTY_VALUE) };
-    let cursor = unsafe { ptr::read_volatile(value(root + stock::CURSOR_PROPERTY)) };
-    let tile = usize::try_from(cursor - stock::CURSOR_USER_SETTINGS_1).ok().and_then(bat_tile);
-    if let Some(tile) = tile {
-        let text = TILE_TEXTS[tile][LINE];
+    if let Some(tile) = tile_at_cursor(root) {
+        let text = TILE_TEXTS[tile][if LINE == 7 { 0 } else { LINE }];
         let from = QtString { text: text.as_ptr(), unused: [0; 5], length_kind: (text.len() as u32) << 8 };
         // SAFETY: as the bindings assign a literal to their result and then
         // release the temporary.
@@ -567,6 +604,58 @@ unsafe extern "C" fn text_hook<const LINE: usize>(out: usize, binding: usize, ro
         }
     }
     result
+}
+
+/// Wraps the title's y binding: on a bat tile, which has a description, the
+/// title (and the description lines placed under it) sits where it does on
+/// the app tiles.
+unsafe extern "C" fn title_y_hook(binding: usize, root: usize, c: usize, d: usize) -> usize {
+    // SAFETY: the stock binding the launcher called, with its arguments.
+    let binding_fn: Handler = unsafe { core::mem::transmute(stock::TITLE_Y) };
+    let y = unsafe { binding_fn(binding, root, c, d) };
+    if system_mode() <= 1 && tile_at_cursor(root).is_some() {
+        y.wrapping_sub(stock::USER_SETTINGS_TITLE_DROP)
+    } else {
+        y
+    }
+}
+
+/// An int property value of 0, for `delete_mode_hook`.
+static NOT_DELETE_MODE: i32 = 0;
+
+/// Replaces the read of the delete mode property (root + 0xd370) in the
+/// USER SETTINGS 2 and 3 tiles' tap handlers: a bat tile is never deleted,
+/// so a tap opens it in delete mode too.
+unsafe extern "C" fn delete_mode_hook(property: usize, b: usize, c: usize, d: usize) -> usize {
+    if system_mode() <= 1 {
+        return &raw const NOT_DELETE_MODE as usize;
+    }
+    // SAFETY: the stock function the handler called, with its arguments.
+    let value: Handler = unsafe { core::mem::transmute(stock::PROPERTY_VALUE) };
+    unsafe { value(property, b, c, d) }
+}
+
+/// Replaces the delete listener's tail call `FUN_80d6a0f8(bridge, slot, 0, 0)`
+/// (after YES in the delete pop-up): a bat tile's slot is never deleted, as
+/// that would delete a preset hidden behind the tile.
+unsafe extern "C" fn delete_hook(bridge: usize, slot: usize, c: usize, d: usize) -> usize {
+    if system_mode() <= 1 && bat_tile(slot).is_some() {
+        return 0;
+    }
+    // SAFETY: the stock function the listener called, with its arguments.
+    let delete: Handler = unsafe { core::mem::transmute(stock::DELETE_USER_SETTINGS) };
+    unsafe { delete(bridge, slot, c, d) }
+}
+
+/// Wraps the delete badge binding of USER SETTINGS 2 (`TILE` 0) or 3 (1):
+/// the bat tiles never show it.
+unsafe extern "C" fn badge_hook<const TILE: usize>(binding: usize, root: usize, c: usize, d: usize) -> usize {
+    if system_mode() <= 1 {
+        return 0;
+    }
+    // SAFETY: the stock binding the launcher called, with its arguments.
+    let binding_fn: Handler = unsafe { core::mem::transmute(stock::DELETE_BADGES[TILE]) };
+    unsafe { binding_fn(binding, root, c, d) }
 }
 
 /// Touches for the app, from task 9: pressed << 31 | x << 16 | y.
@@ -670,7 +759,7 @@ fn request_enter() {
     PENDING.store(WORK_ENTER, Relaxed);
 }
 
-/// Open the bat screen once a tap on BATS has taken effect, close it when
+/// Open the bat screen once a tap on a bat tile has taken effect, close it when
 /// the app it was opened in closes, and take it back after a pop-up.
 fn follow_app() {
     let app = app_byte() as u32;
@@ -1207,11 +1296,21 @@ fn update_status(app: &mut BatApp<'static>) {
         if matches!(transport, 3..=6) && rate != 0 { (frames / rate) as u64 } else { 0 }
     };
     app.set_recorder(state, seconds);
-    // The converters run at the file's rate while a file plays, so BAT
-    // PLAYBACK checks that rate rather than the record rate.
-    let rate = if PLAYBACK.load(Relaxed) { stock::CONVERTER_RATE } else { stock::RECORD_RATE };
     // SAFETY: as above.
-    app.set_input_rate(unsafe { ptr::read_volatile(rate) });
+    let rate = unsafe {
+        if !PLAYBACK.load(Relaxed) {
+            ptr::read_volatile(stock::RECORD_RATE)
+        } else if ptr::read_volatile(stock::ENGINE_STATE) != 0 {
+            // The converters run at the file's rate while a file plays or is
+            // paused, so BAT PLAYBACK checks that rate.
+            ptr::read_volatile(stock::CONVERTER_RATE)
+        } else {
+            // No file is playing, so there is no rate to warn about.
+            SAMPLE_RATE as u32
+        }
+    };
+    app.set_input_kind(if PLAYBACK.load(Relaxed) { InputKind::Playback } else { InputKind::Live });
+    app.set_input_rate(rate);
 }
 
 /// The audio DMA callback: runs the stock one, then, with the bat screen up at
@@ -1230,6 +1329,10 @@ unsafe extern "C" fn audio_hook(a: usize, b: usize, c: usize, d: usize) -> usize
     let t0 = cycles();
     // SAFETY: read before the stock callback moves the ring on.
     let index = unsafe { ptr::read_volatile(stock::AUDIO_INDEX) } as usize % 3;
+    // The stock routine scales frame 0's output by the gain before it
+    // updates the gain (once per block), and frames 1 to 3 by the new gain.
+    // SAFETY: the stock output gain, an f32 in ITCM.
+    let frame0_gain = unsafe { ptr::read_volatile(stock::OUTPUT_GAIN) };
     // SAFETY: the stock callback, with its own arguments.
     let stock_callback: Handler = unsafe { core::mem::transmute(stock::AUDIO_CALLBACK) };
     let result = unsafe { stock_callback(a, b, c, d) };
@@ -1259,23 +1362,28 @@ unsafe extern "C" fn audio_hook(a: usize, b: usize, c: usize, d: usize) -> usize
         peak.store(p, Relaxed);
     }
 
-    // SAFETY: the stock headphone gain, an f32 in ITCM.
+    // SAFETY: the stock output gain, an f32 in ITCM.
     let stock_gain = unsafe { ptr::read_volatile(stock::OUTPUT_GAIN) };
     let playback = PLAYBACK.load(Relaxed);
     // The block's 4 frames into the input ring: inputs 3 and 4, or for BAT
     // PLAYBACK the stock output (left, right), which the stock callback has
-    // just written as clamp(mix) x (2^31 - 1) x the headphone gain.
+    // just written as clamp(mix) x (2^31 - 1) x the output gain. Until a file
+    // plays, MANUAL's output is the live input mix, so BAT PLAYBACK hears
+    // silence then.
+    // SAFETY: a byte in the stock DSP state.
+    let file_playing = playback && unsafe { ptr::read_volatile(stock::DSP_PLAYING) } == 1;
     let write = IN_WRITE.load(Relaxed);
     if spare::IN_FRAMES - write.wrapping_sub(IN_READ.load(Acquire)) >= 4 {
         let ring = IN_RING.0.get().cast::<[i32; 2]>();
         for k in 0..4 {
+            let gain = if k == 0 { frame0_gain } else { stock_gain };
             // SAFETY: words of this frame in the input and output blocks, and
             // the ring.
             unsafe {
                 let pair = if !playback {
                     [ptr::read_volatile(input.add(12 * k)), ptr::read_volatile(input.add(12 * k + 6))]
-                } else if stock_gain != 0.0 {
-                    let unscale = |word: i32| (word as f32 / stock_gain) as i32;
+                } else if file_playing && gain != 0.0 {
+                    let unscale = |word: i32| (word as f32 / gain) as i32;
                     [unscale(ptr::read_volatile(output.add(2 * k))), unscale(ptr::read_volatile(output.add(2 * k + 1)))]
                 } else {
                     [0, 0]

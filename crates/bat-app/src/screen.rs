@@ -13,7 +13,7 @@ use crate::fb::Rgb565Buffer;
 use crate::layout::*;
 use crate::palette::*;
 use crate::{
-    BatApp, CallKind, DEFAULT_CUTOFF_HZ, Meter, Mode, MonitorSource, Recorder, Screen, Setting, TeStatus,
+    BatApp, CallKind, DEFAULT_CUTOFF_HZ, InputKind, Meter, Mode, MonitorSource, Recorder, Screen, Setting, TeStatus,
     VIEW_HI_HZ, VIEW_LO_HZ, WF_COLUMN_MS,
 };
 use bat_dsp::heterodyne::DEFAULT_COMB_SPACING_HZ;
@@ -73,12 +73,16 @@ pub fn draw(app: &BatApp, fb: Fb) {
         settings(app, fb);
         return;
     }
-    title_bar(fb, "BATS", true);
+    let title = match app.input_kind() {
+        InputKind::Live => "BAT DETECTOR",
+        InputKind::Playback => "BAT PLAYBACK",
+    };
+    title_bar(fb, title, true);
     status_bar(app, fb);
     meters(app, fb);
     waterfall(app, fb);
     if let Some(rate) = app.rate_warning() {
-        rate_warning(fb, rate);
+        rate_warning(fb, rate, app.input_kind());
     }
     snapshot(app, fb);
     value_line(app, fb);
@@ -148,8 +152,9 @@ fn status_bar(app: &BatApp, fb: Fb) {
 }
 
 /// Over the waterfall while the input's sample rate is not 192 kHz: the app
-/// gets no sound then, so the waterfall would stay empty.
-fn rate_warning(fb: Fb, rate_hz: u32) {
+/// gets no sound then, so the waterfall would stay empty. For live input the
+/// fix is the record rate setting; for playback, a recording made at 192 kHz.
+fn rate_warning(fb: Fb, rate_hz: u32, kind: InputKind) {
     let panel = Rectangle::new(Point::new(6, WF_Y + 8), Size::new(308, WF_H as u32 - 16));
     rounded(fb, panel, 6, PANEL);
     let x = panel.top_left.x + 10;
@@ -160,18 +165,31 @@ fn rate_warning(fb: Fb, rate_hz: u32) {
     } else {
         text(fb, &BODY_BOLD, format_args!("Wrong sample rate: {}.{}kHz", tenths / 10, tenths % 10), x, y, LEFT, TEXT);
     }
-    for line in [
-        "BATS needs a sample rate of 192kHz.",
-        "1. Hold HOME to return to the LAUNCHER.",
-        "2. Tap GENERAL SETTINGS (bottom right).",
-        "3. Open the REC SETTINGS page.",
-        "4. In FILE FORMAT, set SAMPLE to 192kHz.",
-        "5. Return to the LAUNCHER and tap BATS.",
-    ] {
+    let lines: &[&str] = match kind {
+        InputKind::Live => &RATE_FIX_LIVE,
+        InputKind::Playback => &RATE_FIX_PLAYBACK,
+    };
+    for line in lines {
         y += 24;
-        text(fb, &BODY, line, x, y, LEFT, TEXT);
+        text(fb, &BODY, *line, x, y, LEFT, TEXT);
     }
 }
+
+const RATE_FIX_LIVE: [&str; 6] = [
+    "BAT DETECTOR needs a 192kHz sample rate.",
+    "1. Hold HOME to return to the LAUNCHER.",
+    "2. Tap GENERAL SETTINGS (bottom right).",
+    "3. Open the REC SETTINGS page.",
+    "4. In FILE FORMAT, set SAMPLE to 192kHz.",
+    "5. Press HOME, then tap BAT DETECTOR.",
+];
+
+const RATE_FIX_PLAYBACK: [&str; 4] = [
+    "BAT PLAYBACK needs a 192kHz recording.",
+    "1. Press HOME briefly to stop playback.",
+    "2. In MANUAL, choose a 192kHz recording.",
+    "3. Press PLAY to return to BAT PLAYBACK.",
+];
 
 fn meter_x(db: f32) -> i32 {
     let t = ((db - METER_MIN_DB) / -METER_MIN_DB).clamp(0.0, 1.0);

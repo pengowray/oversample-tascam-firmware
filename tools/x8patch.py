@@ -59,13 +59,16 @@ BUILDS = {
             # preset, with r0 = bridge and r1 = the slot (1 or 2).
             ("USER SETTINGS 2 tile", 0x81733D2C, 0x80D6A1C0, "tile_hook"),
             ("USER SETTINGS 3 tile", 0x81733D64, 0x80D6A1C0, "tile_hook"),
+            # The delete listener (after YES in the delete pop-up) ends
+            # `pop.w {r4,r5,lr}; b.w 0x80d6a0f8` with r1 = the slot to delete.
+            ("delete preset", 0x81728160, 0x80D6A0F8, "delete_hook"),
         ],
         "calls": [
             # The touch poll's only call that passes a touch to Qt,
             # `FUN_80e0364a(x, y, pressed)` (work/notes/input.md section 3).
             ("touch to Qt", 0x80DF501A, 0x80E0364A, "touch_hook"),
             # The launcher's text bindings (out, binding, root), each called once
-            # (work/notes/launcher.md section 6).
+            # (work/notes/launcher.md sections 6 and 7).
             ("launcher title", 0x814A765C, 0x80F2326A, "title_hook"),
             ("launcher description line 1", 0x814A7730, 0x80F2393C, "line1_hook"),
             ("launcher description line 2", 0x814A7804, 0x80F23DA8, "line2_hook"),
@@ -73,6 +76,16 @@ BUILDS = {
             ("launcher description line 4", 0x814A79AC, 0x80F24694, "line4_hook"),
             ("launcher description line 5", 0x814A7A80, 0x80F24AD8, "line5_hook"),
             ("launcher description line 6", 0x814A7B54, 0x80F24E58, "line6_hook"),
+            # The label drawn over the title in delete mode, the title's y, and
+            # the USER SETTINGS 2 and 3 delete badges, each called once.
+            ("launcher delete mode label", 0x814A7F78, 0x80F29138, "label_hook"),
+            ("launcher title y", 0x8155C71C, 0x80F23220, "title_y_hook"),
+            ("USER SETTINGS 2 delete badge", 0x815CD486, 0x80F2A7E4, "badge2_hook"),
+            ("USER SETTINGS 3 delete badge", 0x815CE106, 0x80F2B2B8, "badge3_hook"),
+            # The USER SETTINGS 2 and 3 tap handlers' read of the delete mode
+            # property, `FUN_80e02a34(root + 0xd370)`.
+            ("USER SETTINGS 2 tap, delete mode", 0x8161DA06, 0x80E02A34, "delete_mode_hook"),
+            ("USER SETTINGS 3 tap, delete mode", 0x8161D8AA, 0x80E02A34, "delete_mode_hook"),
         ],
         "entries": [
             # The bridge's USER SETTINGS slot getter (bridge, slot):
@@ -88,8 +101,9 @@ BUILDS = {
 
 HEADER_FIELDS = ["magic", "version", "key_hook", "rec_key_hook", "touch_hook", "tile_hook", "slot_hook",
                  "free_slot_hook", "title_hook", "line1_hook", "line2_hook", "line3_hook", "line4_hook",
-                 "line5_hook", "line6_hook"]
-HEADER_FORMAT = "<4s14I"
+                 "line5_hook", "line6_hook", "label_hook", "title_y_hook", "delete_mode_hook", "delete_hook",
+                 "badge2_hook", "badge3_hook"]
+HEADER_FORMAT = "<4s20I"
 
 B_W, BL = 0x9000, 0xD000   # bits 15, 14 and 12 of the second halfword
 
