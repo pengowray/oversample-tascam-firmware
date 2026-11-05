@@ -114,7 +114,12 @@ mod stock {
     /// The USER SETTINGS 2 and 3 tiles' delete badges `(binding, root)`:
     /// slot in use and delete mode on (Thumb addresses).
     pub const DELETE_BADGES: [usize; 2] = [0x80f2_a7e5, 0x80f2_b2b9];
-    /// The audio engine: 1 playing or recording, 2 paused, 0 idle.
+    /// The USER SETTINGS 2 and 3 tiles' icon visibility `(binding, root)`:
+    /// slot in use and delete mode off (Thumb addresses).
+    pub const ICONS_SHOWN: [usize; 2] = [0x80f2_aa41, 0x80f2_b511];
+    /// `FUN_80e05870(property, &value)`: sets a Qt property (Thumb address).
+    pub const SET_PROPERTY: usize = 0x80e0_5871;
+    /// The audio engine: 1 playing, 2 recording, 0 idle or paused.
     pub const ENGINE_STATE: *const u32 = 0x81cb_e780 as *const u32;
     /// The open app in the C core's numbering: 0 the LAUNCHER, 2 MANUAL.
     pub const APP: *const u8 = 0x81e8_ca90 as *const u8;
@@ -189,13 +194,15 @@ pub struct Header {
     delete_hook: Handler,
     /// Wrap the USER SETTINGS 2 and 3 tiles' delete badge bindings.
     badge_hooks: [Handler; 2],
+    /// Wrap the USER SETTINGS 2 and 3 tiles' icon visibility bindings.
+    icon_hooks: [Handler; 2],
 }
 
 #[unsafe(no_mangle)]
 #[unsafe(link_section = ".header")]
 pub static X8_PATCH_HEADER: Header = Header {
     magic: *b"BATX",
-    version: 10,
+    version: 11,
     key_hook,
     rec_key_hook,
     touch_hook,
@@ -209,6 +216,7 @@ pub static X8_PATCH_HEADER: Header = Header {
     delete_mode_hook,
     delete_hook,
     badge_hooks: [badge_hook::<0>, badge_hook::<1>],
+    icon_hooks: [icon_hook::<0>, icon_hook::<1>],
 };
 
 /// The bat tiles, in USER SETTINGS slots 2 and 3 (slots 0 to 2 in the
@@ -580,10 +588,14 @@ fn tile_at_cursor(root: usize) -> Option<usize> {
     usize::try_from(cursor - stock::CURSOR_USER_SETTINGS_1).ok().and_then(bat_tile)
 }
 
+/// A zero byte, the text of an empty string.
+static EMPTY_TEXT: [u8; 1] = [0];
+
 /// Wraps one of the launcher's text bindings (`LINE` 0 is the title, 1 to 6
-/// the description lines, 7 the delete mode label, which is drawn over the
-/// title): with the cursor on a bat tile, the text is the tile's instead of
-/// "USER SETTINGS 2" or "3" and its description.
+/// the description lines, 7 the delete mode label): with the cursor on a bat
+/// tile, the text is the tile's instead of "USER SETTINGS 2" or "3" and its
+/// description. The delete mode label is drawn where a USER SETTINGS tile's
+/// title is, so a bat tile leaves it empty, as the app tiles do.
 unsafe extern "C" fn text_hook<const LINE: usize>(out: usize, binding: usize, root: usize, d: usize) -> usize {
     // SAFETY: the stock binding the launcher called, with its arguments.
     let binding_fn: Handler = unsafe { core::mem::transmute(stock::LAUNCHER_TEXTS[LINE]) };
@@ -592,8 +604,9 @@ unsafe extern "C" fn text_hook<const LINE: usize>(out: usize, binding: usize, ro
         return result;
     }
     if let Some(tile) = tile_at_cursor(root) {
-        let text = TILE_TEXTS[tile][if LINE == 7 { 0 } else { LINE }];
-        let from = QtString { text: text.as_ptr(), unused: [0; 5], length_kind: (text.len() as u32) << 8 };
+        let text = if LINE == 7 { &[][..] } else { TILE_TEXTS[tile][LINE] };
+        let pointer = if text.is_empty() { EMPTY_TEXT.as_ptr() } else { text.as_ptr() };
+        let from = QtString { text: pointer, unused: [0; 5], length_kind: (text.len() as u32) << 8 };
         // SAFETY: as the bindings assign a literal to their result and then
         // release the temporary.
         unsafe {
@@ -625,9 +638,14 @@ static NOT_DELETE_MODE: i32 = 0;
 
 /// Replaces the read of the delete mode property (root + 0xd370) in the
 /// USER SETTINGS 2 and 3 tiles' tap handlers: a bat tile is never deleted,
-/// so a tap opens it in delete mode too.
+/// so a tap in delete mode ends delete mode, as a tap on an app tile does,
+/// and opens the tile.
 unsafe extern "C" fn delete_mode_hook(property: usize, b: usize, c: usize, d: usize) -> usize {
     if system_mode() <= 1 {
+        // SAFETY: the stock property setter, called as the app tiles' tap
+        // handlers call it on this property.
+        let set: unsafe extern "C" fn(usize, *const i32) = unsafe { core::mem::transmute(stock::SET_PROPERTY) };
+        unsafe { set(property, &NOT_DELETE_MODE) };
         return &raw const NOT_DELETE_MODE as usize;
     }
     // SAFETY: the stock function the handler called, with its arguments.
@@ -655,6 +673,18 @@ unsafe extern "C" fn badge_hook<const TILE: usize>(binding: usize, root: usize, 
     }
     // SAFETY: the stock binding the launcher called, with its arguments.
     let binding_fn: Handler = unsafe { core::mem::transmute(stock::DELETE_BADGES[TILE]) };
+    unsafe { binding_fn(binding, root, c, d) }
+}
+
+/// Wraps the icon visibility binding of USER SETTINGS 2 (`TILE` 0) or 3 (1),
+/// which hides the icon in delete mode for the badge: the bat tiles always
+/// show their icon.
+unsafe extern "C" fn icon_hook<const TILE: usize>(binding: usize, root: usize, c: usize, d: usize) -> usize {
+    if system_mode() <= 1 {
+        return 1;
+    }
+    // SAFETY: the stock binding the launcher called, with its arguments.
+    let binding_fn: Handler = unsafe { core::mem::transmute(stock::ICONS_SHOWN[TILE]) };
     unsafe { binding_fn(binding, root, c, d) }
 }
 
@@ -1260,10 +1290,16 @@ fn render() {
         // hears, instead of the input words.
         let p = SOURCE_PEAK.swap(0, Relaxed);
         let db = if p == 0 { 99 } else { (-20.0 * libm::log10f(p as f32 / 2_147_483_648.0)) as u32 };
-        // SAFETY: words in the stock audio engine and recorder blocks.
-        let (engine, rate) = unsafe { (ptr::read_volatile(stock::ENGINE_STATE), ptr::read_volatile(stock::CONVERTER_RATE)) };
+        // SAFETY: words in the stock audio engine, recorder and DSP blocks.
+        let (engine, playing, rate) = unsafe {
+            (
+                ptr::read_volatile(stock::ENGINE_STATE),
+                ptr::read_volatile(stock::DSP_PLAYING),
+                ptr::read_volatile(stock::CONVERTER_RATE),
+            )
+        };
         peaks = Line::new();
-        let _ = write!(peaks, "playback | engine {engine} | rate {rate} | source -{}dBFS", db.min(99));
+        let _ = write!(peaks, "playback | engine {engine} play {playing} | rate {rate} | source -{}dBFS", db.min(99));
     }
     draw_strip(&mut fb, 2 * STRIP_ROWS as i32, &peaks, Rgb565::new(8, 4, 4));
     // One block copy, so the writes to the uncached display buffer go out in
@@ -1300,9 +1336,9 @@ fn update_status(app: &mut BatApp<'static>) {
     let rate = unsafe {
         if !PLAYBACK.load(Relaxed) {
             ptr::read_volatile(stock::RECORD_RATE)
-        } else if ptr::read_volatile(stock::ENGINE_STATE) != 0 {
-            // The converters run at the file's rate while a file plays or is
-            // paused, so BAT PLAYBACK checks that rate.
+        } else if ptr::read_volatile(stock::DSP_PLAYING) == 1 {
+            // The converters run at the file's rate while a file plays, so
+            // BAT PLAYBACK checks that rate.
             ptr::read_volatile(stock::CONVERTER_RATE)
         } else {
             // No file is playing, so there is no rate to warn about.

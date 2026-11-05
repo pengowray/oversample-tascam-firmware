@@ -715,7 +715,7 @@ the waterfall show audible sound?
 
 ## Step 11 test file: BAT DETECTOR and BAT PLAYBACK tiles, TUNER back (built 2026-11-05, not yet installed)
 
-`work/patch10/#PortaX8_0228.203` (B228, SHA-256 `ef6ef53f…a5f333ce`). B227
+`work/patch10/#PortaX8_0228.203` (B228, SHA-256 `9d86aad1…0a177faa`). B227
 (`work/patch9`) was the first build of this step; a review found that a tap
 in delete mode could delete a preset hidden behind a bat tile, so it was
 never installed.
@@ -739,11 +739,12 @@ never installed.
   screens) now offers only slot 1, so a save cannot go to a slot hidden behind
   a bat tile; with slot 1 in use the save screens see no free slot, as with
   all three in use on a stock unit. A preset already saved in slot 2 or 3 is
-  hidden. The bat tiles are never deleted: in delete mode they show no delete
-  badge, a tap opens them as usual, the label over the title shows the tile's
-  name, and the delete listener ignores slots 2 and 3. Since the launcher now
-  always sees a slot in use, delete mode can be entered with no real preset,
-  and deleting the last real preset no longer ends it by itself.
+  hidden. The bat tiles are never deleted: in delete mode they keep their
+  icon and show no delete badge or delete label, a tap ends delete mode (as a
+  tap on an app tile does) and opens the tile, and the delete listener ignores
+  slots 2 and 3. Since the launcher now always sees a slot in use, delete mode
+  can be entered with no real preset, and deleting the last real preset no
+  longer ends it by itself.
 - **BAT DETECTOR** is the step 10 bat screen, now titled BAT DETECTOR, with
   the tile's name in the wrong-rate notice.
 - **BAT PLAYBACK** (experimental). The bat screen is titled BAT PLAYBACK. The
@@ -756,18 +757,19 @@ never installed.
   file) and, from MANUAL's screen, brings the bat screen back. A short HOME
   press goes on (it stops playback) and shows MANUAL's screen, to choose
   another file. The output level setting does not change what the app hears.
-  While a file plays or is paused, the wrong-rate notice checks the converter
-  rate, which follows the file, and says to choose a 192 kHz recording. The
-  third debug line shows the engine state (0x81cbe780: 1 playing, 2 paused,
-  0 idle), the converter rate and the level the app hears. The status bar
+  While a file plays, the wrong-rate notice checks the converter rate, which
+  follows the file, and says to choose a 192 kHz recording. The third debug
+  line shows the engine state (0x81cbe780: 1 playing, 2 recording, 0 idle or
+  paused), the DSP play byte, the converter rate and the level the app hears. The status bar
   still shows the recorder, not the player.
 
 **What to check.** Are both tiles on the LAUNCHER, with the right titles and
 descriptions placed like an app tile's? Does tapping each open MANUAL and
 then the bat screen? Does TUNER work again? In delete mode (press and hold
-the LAUNCHER), do the bat tiles have no badge, and does a tap open them? In
-BAT PLAYBACK with a 192 kHz file: before PLAY the level on the debug line
-should be -99; does PLAY start playback (engine 1, a level other than -99)
+the LAUNCHER), do the bat tiles keep their icon with no badge, and does a tap
+end delete mode and open them? In BAT PLAYBACK with a 192 kHz file: before
+PLAY the level on the debug line should be -99; does PLAY start playback
+(engine 1, play 1, a level other than -99)
 with bat sound in the headphones, does PLAY pause it, and does a short HOME
 press show MANUAL's screen? If playback has its own key handler (as recording
 does), the wheel and HOME may not reach the patch while a file plays. With a

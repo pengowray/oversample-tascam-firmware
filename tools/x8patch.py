@@ -82,6 +82,10 @@ BUILDS = {
             ("launcher title y", 0x8155C71C, 0x80F23220, "title_y_hook"),
             ("USER SETTINGS 2 delete badge", 0x815CD486, 0x80F2A7E4, "badge2_hook"),
             ("USER SETTINGS 3 delete badge", 0x815CE106, 0x80F2B2B8, "badge3_hook"),
+            # The USER SETTINGS 2 and 3 icons' visibility (hidden in delete
+            # mode, where the badge takes their place), each called once.
+            ("USER SETTINGS 2 icon shown", 0x815CD6DE, 0x80F2AA40, "icon2_hook"),
+            ("USER SETTINGS 3 icon shown", 0x815CE35E, 0x80F2B510, "icon3_hook"),
             # The USER SETTINGS 2 and 3 tap handlers' read of the delete mode
             # property, `FUN_80e02a34(root + 0xd370)`.
             ("USER SETTINGS 2 tap, delete mode", 0x8161DA06, 0x80E02A34, "delete_mode_hook"),
@@ -102,8 +106,8 @@ BUILDS = {
 HEADER_FIELDS = ["magic", "version", "key_hook", "rec_key_hook", "touch_hook", "tile_hook", "slot_hook",
                  "free_slot_hook", "title_hook", "line1_hook", "line2_hook", "line3_hook", "line4_hook",
                  "line5_hook", "line6_hook", "label_hook", "title_y_hook", "delete_mode_hook", "delete_hook",
-                 "badge2_hook", "badge3_hook"]
-HEADER_FORMAT = "<4s20I"
+                 "badge2_hook", "badge3_hook", "icon2_hook", "icon3_hook"]
+HEADER_FORMAT = "<4s22I"
 
 B_W, BL = 0x9000, 0xD000   # bits 15, 14 and 12 of the second halfword
 
