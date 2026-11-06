@@ -3,7 +3,7 @@ use core::mem::MaybeUninit;
 use core::panic::PanicInfo;
 use core::ptr;
 
-/// The launcher glyph for the bat tiles.
+/// BAT DETECTOR's launcher glyph.
 mod bat_glyph;
 /// The audio hook, the cycle counter and `process_input`, which feeds the app from the input ring.
 mod audio;
@@ -15,6 +15,8 @@ mod itcm;
 mod keys;
 /// The bat tiles on the LAUNCHER: slots, texts, title position, delete mode, badges and icons.
 mod launcher;
+/// BAT PLAYBACK's launcher glyph.
+mod play_glyph;
 /// Opening and closing the bat screen, and drawing it with the debug strips.
 mod screen;
 /// SDRAM after Qt's framebuffers, 0x87ea6004 to 0x87ffffff: zeroed by no init

@@ -337,23 +337,21 @@ fn ears_are_separate(app: &mut BatApp) -> bool {
 }
 
 #[test]
-fn the_mix_and_playback_are_stereo_with_both_sides_chosen() {
+fn the_mix_with_two_inputs_on_and_playback_are_stereo_with_both_sides_chosen() {
     let name = |short, long| Some(InputName { short, long });
     for mode in MODES {
-        // MANUAL's mix, whatever inputs are on.
-        for inputs in [[name("3", "Input 3"), name("4", "Input 4")], [name("3", "Input 3"), None], [None, None]] {
-            let mut storage = vec![0.0f32; 1024];
-            let mut app = BatApp::new(FS, &mut storage, buffers());
-            app.set_mode(mode);
-            app.set_mix_available(true);
-            app.set_feed(Feed::Mix);
-            app.set_inputs(inputs);
-            assert!(ears_are_separate(&mut app), "the mix, {mode:?} {inputs:?}");
-            assert!(app.is_stereo());
-            app.set_source(MonitorSource::First);
-            run_both(&mut app, &[0.0; 16], &[0.0; 16], 16);
-            assert!(!app.is_stereo(), "the mix's left side");
-        }
+        // MANUAL's mix.
+        let mut storage = vec![0.0f32; 1024];
+        let mut app = BatApp::new(FS, &mut storage, buffers());
+        app.set_mode(mode);
+        app.set_mix_available(true);
+        app.set_feed(Feed::Mix);
+        app.set_inputs([name("3", "Input 3"), name("4", "Input 4")]);
+        assert!(ears_are_separate(&mut app), "the mix, {mode:?}");
+        assert!(app.is_stereo());
+        app.set_source(MonitorSource::First);
+        run_both(&mut app, &[0.0; 16], &[0.0; 16], 16);
+        assert!(!app.is_stereo(), "the mix's left side");
         // BAT PLAYBACK's left and right.
         let mut storage = vec![0.0f32; 1024];
         let mut app = BatApp::new(FS, &mut storage, buffers());
@@ -364,6 +362,148 @@ fn the_mix_and_playback_are_stereo_with_both_sides_chosen() {
         app.set_source(MonitorSource::First);
         run_both(&mut app, &[0.0; 16], &[0.0; 16], 16);
         assert!(!app.is_stereo(), "playback's left");
+    }
+}
+
+/// An app on MANUAL's mix with these inputs turned on.
+fn on_the_mix<'a>(storage: &'a mut [f32], mode: Mode, inputs: [Option<InputName>; 2]) -> BatApp<'a> {
+    let mut app = BatApp::new(FS, storage, buffers());
+    app.set_mode(mode);
+    app.set_mix_available(true);
+    app.set_feed(Feed::Mix);
+    app.set_inputs(inputs);
+    app
+}
+
+/// With one input on, or none, the mix's two sides are averaged into one chain, the path
+/// B232 used for every mix.
+#[test]
+fn the_mix_with_one_input_on_plays_the_average_of_its_sides_in_both_ears() {
+    let input3 = Some(InputName { short: "3", long: "Input 3" });
+    let (first, second) = two_signals();
+    let mean = average(&first, &second);
+    for mode in MODES {
+        for volume in AutoVolume::ALL {
+            for inputs in [[input3, None], [None, None]] {
+                let mut storage = vec![0.0f32; 1024];
+                let mut app = on_the_mix(&mut storage, mode, inputs);
+                app.set_auto_volume(volume);
+                let (left, right) = run_both(&mut app, &first, &second, 1024);
+                assert!(!app.is_stereo(), "{mode:?} {inputs:?}");
+                assert_eq!(bits(&left), bits(&right), "{mode:?} {volume:?} {inputs:?}");
+
+                let mut storage = vec![0.0f32; 1024];
+                let mut same = BatApp::new(FS, &mut storage, buffers());
+                same.set_mode(mode);
+                same.set_auto_volume(volume);
+                same.set_source(MonitorSource::First);
+                let (expected, _) = run_both(&mut same, &mean, &mean, 1024);
+                assert_eq!(bits(&left), bits(&expected), "{mode:?} {volume:?} {inputs:?}");
+            }
+        }
+    }
+}
+
+/// One mic at the default pans is on one side of the mix only. It is heard in both ears,
+/// 6 dB below the same mic with that side of the mix chosen.
+#[test]
+fn one_mic_on_one_side_of_the_mix_is_heard_in_both_ears() {
+    let input3 = Some(InputName { short: "3", long: "Input 3" });
+    let mic = tone(47_000.0, 0.1, FS as usize / 4);
+    let silence = vec![0.0; mic.len()];
+    let tail = mic.len() / 2;
+    for mode in MODES {
+        for (a, b, side) in [(&mic, &silence, MonitorSource::First), (&silence, &mic, MonitorSource::Second)] {
+            let mut storage = vec![0.0f32; 1024];
+            let mut app = on_the_mix(&mut storage, mode, [input3, None]);
+            let (left, right) = run_both(&mut app, a, b, 1024);
+            assert_eq!(bits(&left), bits(&right), "{mode:?} {side:?}");
+            assert!(rms(&left[tail..]) > 0.01, "{mode:?} {side:?}: {}", rms(&left[tail..]));
+
+            let mut storage = vec![0.0f32; 1024];
+            let mut app = on_the_mix(&mut storage, mode, [input3, None]);
+            app.set_source(side);
+            let (one_side, _) = run_both(&mut app, a, b, 1024);
+            let difference = db(rms(&one_side[tail..]) / rms(&left[tail..]));
+            assert!((difference - 6.02).abs() < 0.01, "{mode:?} {side:?}: {difference} dB");
+        }
+    }
+}
+
+#[test]
+fn an_ext_in_pair_is_stereo() {
+    let name = |short, long| Some(InputName { short, long });
+    for mode in MODES {
+        let mut storage = vec![0.0f32; 1024];
+        let mut app = BatApp::new(FS, &mut storage, buffers());
+        app.set_mode(mode);
+        app.set_inputs([name("EL", "EXT IN left"), name("ER", "EXT IN right")]);
+        assert!(ears_are_separate(&mut app), "{mode:?}");
+    }
+}
+
+/// The mix's three choices are three different sounds, however many inputs are on.
+#[test]
+fn with_one_input_on_the_mix_listen_to_reaches_every_choice() {
+    use MonitorSource::{Both, First, Second};
+    let input3 = Some(InputName { short: "3", long: "Input 3" });
+    let mut storage = vec![0.0f32; 1024];
+    let mut app = on_the_mix(&mut storage, Mode::Het, [input3, None]);
+    let up = [(Feed::Mix, First), (Feed::Mix, Second), (Feed::Inputs, First), (Feed::Inputs, First)];
+    for expected in up {
+        app.change_setting(Setting::ListenTo, 1);
+        assert_eq!((app.feed(), app.source()), expected);
+    }
+    let down = [(Feed::Mix, Second), (Feed::Mix, First), (Feed::Mix, Both), (Feed::Mix, Both)];
+    for expected in down {
+        app.change_setting(Setting::ListenTo, -1);
+        assert_eq!((app.feed(), app.source()), expected);
+    }
+}
+
+/// A return to the bat screen with a different number of inputs on: the headphones start
+/// again from silence, so the fade between the chains has to start from there too.
+#[test]
+fn a_change_of_chains_after_a_pause_starts_from_silence() {
+    let name = |short, long| Some(InputName { short, long });
+    let (one, two) = ([name("3", "Input 3"), None], [name("3", "Input 3"), name("4", "Input 4")]);
+    let loud = vec![0.5f32; 1024];
+    let silence = vec![0.0f32; 1024];
+    for (before, after) in [(two, one), (one, two)] {
+        let mut storage = vec![0.0f32; 1024];
+        let mut app = on_the_mix(&mut storage, Mode::Thru, before);
+        run_both(&mut app, &loud, &loud, 1024);
+        app.input_lost(0);
+        app.set_inputs(after);
+        let (left, right) = run_both(&mut app, &silence, &silence, 1024);
+        assert!(left.iter().chain(&right).all(|&v| v == 0.0), "{before:?} to {after:?}: {}", peak(&left).max(peak(&right)));
+    }
+}
+
+#[test]
+fn a_track_turned_on_or_off_on_the_mix_changes_the_chains_with_no_click() {
+    let name = |short, long| Some(InputName { short, long });
+    let (one, two) = ([name("3", "Input 3"), None], [name("3", "Input 3"), name("4", "Input 4")]);
+    // The same signals as for a change of Listen to.
+    for (mode, first_hz, second_hz) in [(Mode::Het, 47_000.0, 52_000.0), (Mode::Comb, 58_000.0, 52_000.0), (Mode::Thru, 3_000.0, 5_000.0)] {
+        let first: Vec<f32> = tone(first_hz, 0.4, FS as usize).iter().zip(noise(0.001, FS as usize)).map(|(a, b)| a + b).collect();
+        let second: Vec<f32> = tone(second_hz, 0.05, FS as usize).iter().zip(noise(0.001, FS as usize).iter().rev()).map(|(a, b)| a + b).collect();
+        let limit = MOST_STEP_AT_A_SWITCH * peak(&first);
+
+        let mut storage = vec![0.0f32; 1024];
+        let mut app = on_the_mix(&mut storage, mode, two);
+        let (mut left, mut right) = (Vec::new(), Vec::new());
+        for (i, (a, b)) in first.chunks(1_000).zip(second.chunks(1_000)).enumerate() {
+            let inputs = if i % 2 == 0 { two } else { one };
+            app.set_inputs(inputs);
+            let (l, r) = run_both(&mut app, a, b, 256);
+            assert_eq!(app.is_stereo(), i % 2 == 0, "{mode:?}");
+            left.extend(l);
+            right.extend(r);
+        }
+        assert!(left.iter().chain(&right).all(|v| v.is_finite()), "{mode:?}");
+        assert!(biggest_step(&left) < limit, "{mode:?}: left {} against {limit}", biggest_step(&left));
+        assert!(biggest_step(&right) < limit, "{mode:?}: right {} against {limit}", biggest_step(&right));
     }
 }
 
@@ -543,23 +683,27 @@ fn a_stale_second_filter_does_not_come_back_when_stereo_starts_again() {
 fn changing_the_inputs_turned_on_changes_the_chains() {
     let input3 = Some(InputName { short: "3", long: "Input 3" });
     let input4 = Some(InputName { short: "4", long: "Input 4" });
-    let mut storage = vec![0.0f32; 1024];
-    let mut app = BatApp::new(FS, &mut storage, buffers());
-    let x = [0.01f32; 256];
-    run_both(&mut app, &x, &x, 256);
-    assert!(app.is_stereo());
-    app.set_inputs([input3, None]);
-    run_both(&mut app, &x, &x, 256);
-    assert!(!app.is_stereo());
-    app.set_inputs([input3, input4]);
-    run_both(&mut app, &x, &x, 256);
-    assert!(app.is_stereo());
-    app.set_mode(Mode::Fd);
-    run_both(&mut app, &x, &x, 256);
-    assert!(!app.is_stereo());
-    app.set_mode(Mode::Thru);
-    run_both(&mut app, &x, &x, 256);
-    assert!(app.is_stereo());
+    for feed in [Feed::Inputs, Feed::Mix] {
+        let mut storage = vec![0.0f32; 1024];
+        let mut app = BatApp::new(FS, &mut storage, buffers());
+        app.set_mix_available(feed == Feed::Mix);
+        app.set_feed(feed);
+        let x = [0.01f32; 256];
+        run_both(&mut app, &x, &x, 256);
+        assert!(app.is_stereo(), "{feed:?}");
+        app.set_inputs([input3, None]);
+        run_both(&mut app, &x, &x, 256);
+        assert!(!app.is_stereo(), "{feed:?}");
+        app.set_inputs([input3, input4]);
+        run_both(&mut app, &x, &x, 256);
+        assert!(app.is_stereo(), "{feed:?}");
+        app.set_mode(Mode::Fd);
+        run_both(&mut app, &x, &x, 256);
+        assert!(!app.is_stereo(), "{feed:?}");
+        app.set_mode(Mode::Thru);
+        run_both(&mut app, &x, &x, 256);
+        assert!(app.is_stereo(), "{feed:?}");
+    }
 }
 
 /// The width of a line of the small help text.
@@ -600,9 +744,9 @@ fn the_line_under_listen_to_says_what_each_ear_hears() {
     app.set_source(MonitorSource::Both);
     app.set_inputs([name("3", "Input 3"), None]);
     assert_eq!(help(&app), one_signal);
-    // No input on: nothing to say about the ears.
+    // No input on.
     app.set_inputs([None, None]);
-    assert_eq!(help(&app), "");
+    assert_eq!(help(&app), "No inputs turned on in MANUAL");
 
     // MANUAL's mix, and its sides.
     app.set_inputs([name("3", "Input 3"), name("4", "Input 4")]);
@@ -613,10 +757,19 @@ fn the_line_under_listen_to_says_what_each_ear_hears() {
     assert_eq!(help(&app), one_signal);
     app.set_source(MonitorSource::Second);
     assert_eq!(help(&app), one_signal);
-    // The mix is two sides whatever inputs are on.
+    // One input on the mix: the average of the two sides, in both ears.
     app.set_source(MonitorSource::Both);
     app.set_inputs([name("3", "Input 3"), None]);
-    assert_eq!(help(&app), stereo);
+    assert_eq!(help(&app), one_signal);
+    app.set_source(MonitorSource::First);
+    assert_eq!(help(&app), one_signal);
+    // No input on the mix: the same line as with No input.
+    for source in [MonitorSource::Both, MonitorSource::First, MonitorSource::Second] {
+        app.set_source(source);
+        app.set_inputs([None, None]);
+        assert_eq!(help(&app), "No inputs turned on in MANUAL", "{source:?}");
+    }
+    app.set_source(MonitorSource::Both);
 
     // BAT PLAYBACK.
     app.set_mix_available(false);

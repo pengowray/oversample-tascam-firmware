@@ -2,7 +2,7 @@ use core::ptr;
 use core::sync::atomic::{Ordering::Relaxed, Ordering::Release};
 
 use super::state::{BLOCKS, LAUNCH_AT, LAUNCH_FROM, LAUNCHING, PLAYBACK};
-use super::{Handler, app_byte, bat_glyph, stock, system_mode};
+use super::{Handler, app_byte, bat_glyph, play_glyph, stock, system_mode};
 
 /// The bat tiles, in USER SETTINGS slots 2 and 3 (slots 0 to 2 in the
 /// firmware's numbering). Slot 1 stays a USER SETTINGS preset.
@@ -60,8 +60,8 @@ pub(super) unsafe extern "C" fn tile_hook(bridge: usize, slot: usize, c: usize, 
 }
 
 /// What a USER SETTINGS slot holds, as the launcher sees it: the bat tiles'
-/// slots hold MANUAL settings, so the launcher shows them (with MANUAL's
-/// icon); slot 0 is the stock slot.
+/// slots hold MANUAL settings, so the launcher shows them, and the icon hooks
+/// give their images; slot 0 is the stock slot.
 fn slot_value(slot: usize) -> u32 {
     if bat_tile(slot).is_some() && system_mode() <= 1 {
         return stock::QT_MANUAL as u32;
@@ -243,31 +243,38 @@ struct QtTile {
 unsafe impl Sync for QtImage {}
 unsafe impl Sync for QtTile {}
 
-static BAT_TILE: QtTile = QtTile {
-    pixels: bat_glyph::PIXELS.as_ptr(),
-    layout: stock::ALPHA8_LAYOUT,
-    flags: 0,
-    offset: 0,
-    size: bat_glyph::HEIGHT << 16 | bat_glyph::WIDTH,
-    stride: bat_glyph::WIDTH,
-    trim: 0,
-    cache_size: 0,
-    cache_entry: 0,
-};
-static BAT_IMAGE: QtImage = QtImage {
-    colour: stock::ICON_COLOUR,
-    width: bat_glyph::WIDTH,
-    height: bat_glyph::HEIGHT,
-    tile_count: 1,
-    tiles: &raw const BAT_TILE,
-};
+// The icon height and width hooks give one size for both tiles.
+const _: () = assert!(bat_glyph::WIDTH == play_glyph::WIDTH && bat_glyph::HEIGHT == play_glyph::HEIGHT);
 
-/// Replaces the icon binding of USER SETTINGS 2 (`TILE` 0) or 3 (1): the bat
-/// tiles show the bat glyph.
+const fn glyph_tile(pixels: *const u8) -> QtTile {
+    QtTile {
+        pixels,
+        layout: stock::ALPHA8_LAYOUT,
+        flags: 0,
+        offset: 0,
+        size: bat_glyph::HEIGHT << 16 | bat_glyph::WIDTH,
+        stride: bat_glyph::WIDTH,
+        trim: 0,
+        cache_size: 0,
+        cache_entry: 0,
+    }
+}
+
+const fn glyph_image(tile: *const QtTile) -> QtImage {
+    QtImage { colour: stock::ICON_COLOUR, width: bat_glyph::WIDTH, height: bat_glyph::HEIGHT, tile_count: 1, tiles: tile }
+}
+
+static BAT_TILE: QtTile = glyph_tile(bat_glyph::PIXELS.as_ptr());
+static PLAY_TILE: QtTile = glyph_tile(play_glyph::PIXELS.as_ptr());
+/// The tiles' icons: BAT DETECTOR, then BAT PLAYBACK.
+static TILE_IMAGES: [QtImage; 2] = [glyph_image(&raw const BAT_TILE), glyph_image(&raw const PLAY_TILE)];
+
+/// Replaces the icon binding of USER SETTINGS 2 (`TILE` 0) or 3 (1): BAT DETECTOR
+/// shows the bat, and BAT PLAYBACK shows a play button in the same colour.
 pub(super) unsafe extern "C" fn icon_image_hook<const TILE: usize>(out: usize, binding: usize, root: usize, d: usize) -> usize {
     if system_mode() <= 1 {
         // SAFETY: `out` is where the stock binding writes the image pointer.
-        unsafe { ptr::write(out as *mut *const QtImage, &raw const BAT_IMAGE) };
+        unsafe { ptr::write(out as *mut *const QtImage, &raw const TILE_IMAGES[TILE]) };
         return 0;
     }
     // SAFETY: the stock binding the launcher called, with its arguments.

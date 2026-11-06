@@ -560,7 +560,7 @@ pub(crate) enum ListenHelp {
     Stereo,
     /// One signal, the same in both ears.
     OneSignal,
-    /// No input is on: nothing is heard, and a notice on the main screen says why.
+    /// No input is on, so nothing is heard.
     Nothing,
 }
 
@@ -570,7 +570,7 @@ impl core::fmt::Display for ListenHelp {
             ListenHelp::Ears(left, right) => write!(f, "Left ear: input {left}. Right ear: input {right}. Mono in FD and TE."),
             ListenHelp::Stereo => f.write_str("Stereo in HET, COMB and 1:1. Mono in FD and TE."),
             ListenHelp::OneSignal => f.write_str("Heard in both ears and shown on the waterfall."),
-            ListenHelp::Nothing => Ok(()),
+            ListenHelp::Nothing => f.write_str(NO_INPUT_HEADING),
         }
     }
 }
@@ -582,9 +582,9 @@ fn is_number(short: &str) -> bool {
 
 pub(crate) fn listen_help(app: &BatApp) -> ListenHelp {
     match (app.feed(), app.inputs(), app.source()) {
-        (Feed::Mix, _, MonitorSource::Both) => ListenHelp::Stereo,
+        (_, [None, _], _) => ListenHelp::Nothing,
+        (Feed::Mix, [_, Some(_)], MonitorSource::Both) => ListenHelp::Stereo,
         (Feed::Mix, ..) => ListenHelp::OneSignal,
-        (Feed::Inputs, [None, _], _) => ListenHelp::Nothing,
         (Feed::Inputs, [Some(first), Some(second)], MonitorSource::Both) => match app.input_kind() {
             InputKind::Live if is_number(first.short) && is_number(second.short) => ListenHelp::Ears(first.short, second.short),
             _ => ListenHelp::Stereo,

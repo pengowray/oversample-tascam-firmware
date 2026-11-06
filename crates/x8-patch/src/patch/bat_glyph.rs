@@ -1,4 +1,4 @@
-//! The bat tiles' launcher glyph, an alpha mask from the Oversample logo.
+//! BAT DETECTOR's launcher glyph, an alpha mask from the Oversample logo.
 //! Written by tools/make_glyph.py.
 
 pub(super) const WIDTH: u32 = 38;

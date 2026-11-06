@@ -209,9 +209,9 @@ const fn kind_bit(kind: CallKind) -> u8 {
 pub enum MonitorSource {
     First,
     Second,
-    /// In HET, COMB and 1:1, the first block in the left ear and the second in the
-    /// right. Everything else hears the average of the two: the waterfall, the
-    /// detector, the time expansion recording, and FD, TE and PITCH.
+    /// In HET, COMB and 1:1 with two inputs on, the first block in the left ear and the
+    /// second in the right. Everything else hears the average of the two: the waterfall,
+    /// the detector, the time expansion recording, and FD, TE and PITCH.
     Both,
 }
 
@@ -454,7 +454,8 @@ pub struct BatApp<'a> {
     input_kind: InputKind,
     /// The names of the inputs passed to `process`. The second is `None` when
     /// both blocks carry the same input, and both are `None` when no input is
-    /// on and the blocks are silent.
+    /// on and the blocks are silent. On the host's mix these name the inputs turned
+    /// on, and the blocks carry the mix's two sides: see [`set_inputs`](Self::set_inputs).
     inputs: [Option<InputName>; 2],
     /// Whether the host offers its stereo mix, and whether Listen to has it
     /// chosen.
@@ -815,7 +816,8 @@ impl<'a> BatApp<'a> {
     /// Listen to has nothing to choose. With both `None`, no input is on: a
     /// notice covers the waterfall. On the host's mix (see [`set_feed`](Self::set_feed))
     /// these name the inputs turned on, but the blocks carry the mix's left and right
-    /// whatever they are, so both meters show and Listen to keeps its choices.
+    /// whatever they are, so both meters show and Listen to keeps its choices. A second
+    /// name also gives each ear its own chain on the mix: see `wants_stereo`.
     pub fn set_inputs(&mut self, inputs: [Option<InputName>; 2]) {
         self.inputs = inputs;
     }
@@ -1073,13 +1075,15 @@ impl<'a> BatApp<'a> {
     }
 
     /// Whether each ear gets its own block: HET, COMB or 1:1, with Both chosen and two
-    /// different signals to hear. With one input on, both blocks carry that input, so
-    /// one chain is enough, whatever is stored for Listen to. The mix's two blocks are
-    /// its two sides, however many inputs are on, so the mix with Both is always stereo.
+    /// inputs on. With one input on, one chain runs, whatever is stored for Listen to.
+    /// On the inputs both blocks carry that input. On the mix with Both chosen, the chain
+    /// plays the average of the mix's two sides, so one mic panned to one side is heard in
+    /// both ears. The app does not read the pans, so two inputs panned to one side stay in
+    /// that ear.
     fn wants_stereo(&self) -> bool {
         matches!(self.mode, Mode::Het | Mode::Comb | Mode::Thru)
             && self.source() == MonitorSource::Both
-            && (self.feed() == Feed::Mix || self.inputs[1].is_some())
+            && self.inputs[1].is_some()
     }
 
     /// Whether the last chunk gave each ear its own chain.
@@ -1126,7 +1130,8 @@ impl<'a> BatApp<'a> {
     /// from the last for some other reason, such as a pause. Times carry on as if
     /// the frames had been heard, and the analysis restarts, so the jump does not
     /// show as a click on the waterfall or a false call. After lost frames the
-    /// sound passed to the listening modes also has no step at the join.
+    /// sound passed to the listening modes also has no step at the join. With 0, the
+    /// host's output is taken to start again from silence.
     pub fn input_lost(&mut self, frames: u32) {
         self.input_gap = true;
         self.lost_frames = self.lost_frames.saturating_add(frames);
@@ -1136,6 +1141,10 @@ impl<'a> BatApp<'a> {
         }
         if frames > 0 {
             self.join_left = JOIN_FADE_SAMPLES;
+        } else {
+            // If the number of chains changes next, its fade has to start from what is
+            // heard, which is silence and not the last sample from before the pause.
+            self.last_out = [0.0; 2];
         }
     }
 

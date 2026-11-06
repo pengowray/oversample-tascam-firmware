@@ -1142,6 +1142,9 @@ test) and `auto_volume` (the tables above). `calls.rs` takes `HOP=`, and `screen
 
 ## Step 15 test file: stereo headphones in HET, COMB and 1:1 (built 2026-11-07, not yet installed)
 
+Install B234 (Step 16) in place of this file. B234 changes MANUAL's mix with one input on or none, and
+Step 16 lists those changes. The sizes below are B233's. The rest of this step applies to B234 as well.
+
 `work/patch15/#PortaX8_0233.203` (B233, SHA-256 `659bdb02…eb9a410b`). Includes steps 11
 to 14. The last build installed on a unit is B231, so the "What to check" lists of steps 11 to
 14 apply to this build as well as the list below. No hook address, table word or header field
@@ -1153,7 +1156,8 @@ firmware listing, and estimates are marked.
 buffer passed to `BatApp::process` in the left ear and the second input buffer in the right ear.
 This covers a pair of inputs, MANUAL's mix, and BAT PLAYBACK's left and right. There is no new setting, and
 these three modes no longer have a way to play the average of two inputs. So the Step 13 line
-"The default Listen to averages the two sides" now holds only for the analysis and for FD and TE.
+"The default Listen to averages the two sides" now holds only for the analysis and for FD and TE. In
+B234, these three modes also play the average on MANUAL's mix with one input on or none (Step 16).
 
 | What | Heard or analysed as | Why |
 |---|---|---|
@@ -1431,13 +1435,9 @@ so its figures stay comparable with Step 14. `web/README.md` says how to hear st
 
 **Questions for the owner.**
 
-- One mic on MANUAL's mix, which is the default feed, is heard in one ear only, at the default pans.
-  B232 played it in both ears at -6 dB. The help line says `Stereo in HET, COMB and 1:1`, which is
-  true. Choosing `Mix, left side` plays it in both ears at the raw level. Tracks 1 and 3 on together
-  also give one ear, and the app cannot tell, because it does not read the pans. Keep this, or use
-  one chain on the average when only one input is on? The second is a one-line change in
-  `wants_stereo` plus its tests, and the help line would then read `Heard in both ears and shown on
-  the waterfall.`
+- Answered in Step 16. In this build, one mic panned hard left or right on MANUAL's mix, which is the
+  default feed, is heard in one ear only. B232 played it in both ears at -6 dB. The owner chose both
+  ears. Step 16 also says why the default pans are not settled.
 - Inputs 3 to 6 are inverted in the raw words and inputs 1, 2 and EXT IN are not (Step 12). A stereo
   pair with one input from each group, such as inputs 3 and 1 or inputs 3 and EXT IN, has opposite
   polarity in the two ears. It is heard out of phase, most of all at low frequencies and in 1:1. B232
@@ -1481,6 +1481,131 @@ of those builds has been installed. Then:
   Then read `dsp`, `draw`, `skip` and `dry` in FD. FD should fit in stereo if FD's dsp + draw + 3.4 x C
   stays below about 85 and `skip` stays near 0. On the estimates here, C is 8 (COMB's predicted 50 here
   against 42 in Step 14), so that is 57 + 10 + 3.4 x 8 = 94, which is why FD stays mono for now.
+
+## Step 16 test file: one input turned on with MANUAL's mix plays in both ears, play button on BAT PLAYBACK (built 2026-11-07, not yet installed)
+
+`work/patch16/#PortaX8_0234.203` (B234, SHA-256 `a2f2ecfc…c08b89e4`). Includes steps 11 to 15. Install
+this file in place of B233. No stock hook site or header field changed, so `BUILDS` in `tools/x8patch.py`
+needs no change, and all the checks in that tool pass on this file. None of this step's changes has run
+on a real recorder.
+
+**What changed.** The app now runs one chain per ear only with two or more inputs turned on in MANUAL
+(`wants_stereo`). This now also applies with Listen to on `MANUAL's mix`. With one input turned on and
+Listen to on `MANUAL's mix`, HET, COMB and 1:1 average the mix's left and right sides, run that average
+through one chain, and send the chain's output to both ears, as B232 did. The owner asked for this in
+answer to the first question in Step 15.
+
+**An input turned on is a track turned on in MANUAL, not a mic plugged in.** The patch has no plug
+detection. All six tracks are on by default, so with one mic plugged in and the default tracks, the app
+takes inputs 3 and 4, and the mix stays stereo. A stereo-linked pair counts as two inputs. For one chain,
+turn off every track except the one with the mic.
+
+| Inputs turned on in MANUAL | Listen to on `MANUAL's mix`, in HET, COMB and 1:1, B233 | The same, B234 |
+|---|---|---|
+| Two or more | Left side in the left ear, right side in the right ear | No change |
+| One | Left side in the left ear, right side in the right ear | The average of the two sides in both ears |
+| None | Left side in the left ear, right side in the right ear | The average of the two sides in both ears |
+
+In both builds, the notice `No inputs turned on in MANUAL` covers the waterfall when no input is on. Apart
+from the line under Listen to (see "On screen"), `Mix, left side`, `Mix, right side`, the numbered inputs,
+BAT PLAYBACK, FD, TE, the waterfall, the detector and the TE recording work as in Step 15.
+
+- **Level.** Take one mic on input 3, with only that track on, panned hard left. The right side of the mix
+  is silent. With Listen to on `MANUAL's mix`, the mic plays in both ears, 6 dB below its level on the left
+  side of the mix. With Listen to on `Mix, left side`, it plays in both ears at its level on that side.
+- **Two tracks panned to one side.** The app does not read the pans. With only tracks 1 and 3 on, both
+  panned hard left, and Listen to on `MANUAL's mix`, both mics play in the left ear and the right ear is
+  silent. With Listen to on `Mix, left side`, both mics play in the left ear and in the right ear.
+- **Turning a track on or off.** A track can only change with the bat screen closed, so the number of chains
+  changes when PLAY brings the bat screen back. The output fade from that opening already starts from
+  silence. `input_lost(0)` now also sets the last output sample to 0, because the fade between one chain
+  and two otherwise started from the last sample of the previous opening, which adds a bump of about a
+  quarter of that sample for 0.33 ms.
+- **CPU cost.** With Listen to on `MANUAL's mix` and one input on or none, one chain runs, so no second
+  filter uses CPU time. Step 15's cost column `B233, Both` now applies to the mix only when two or more
+  inputs are on. The audio hook's code and the size of the output ring are the same as in B233.
+
+**The default pans are not settled.** Step 13 says that tracks 1, 3 and 5 are hard left and tracks 2, 4
+and 6 are hard right by default, whether or not they are stereo-linked. That comes from reading the
+firmware, it assumes that MANUAL is DSP app 2, and it has not been checked on a unit. The owner
+remembers tracks with STEREO LINK off as panned to the centre, and linked pairs as L20 and R20. If
+tracks with STEREO LINK off are at the centre, the two sides of the mix are equal, and:
+
+- One mic sounds the same in B233 and B234, whichever tracks are on. `MANUAL's mix` and `Mix, left side`
+  play it at the same level. With one track on, B234 runs one chain where B233 runs two.
+- Two mics with STEREO LINK off, with Listen to on `MANUAL's mix`, are both heard in both ears, so there
+  is no stereo, although the line under Listen to says `Stereo in HET, COMB and 1:1`. This is the same in
+  B233 and B234. Turning on STEREO LINK, or choosing `Inputs 3 and 4`, puts each mic in its own ear.
+
+**Tile icon.** BAT PLAYBACK now shows a play button, and BAT DETECTOR keeps the bat. Both are alpha masks
+drawn in the same white (`ICON_COLOUR`), on a canvas of 38 x 34 px. The height and width hooks did not
+change, and a compile-time assertion requires the two sizes to match. The triangle is 26 x 30 px before its corners are
+rounded to a 1.5 px radius, and about 25 x 28 px as drawn. `tools/make_glyph.py play` writes `play_glyph.rs`. `tools/make_glyph.py` now takes
+`bat` as its first argument to write the bat, and writes the same bat pixels as before.
+
+Read back from the built ELF: `TILE_IMAGES` has one 20-byte descriptor per tile, each with colour
+0xffffffff, 38 x 34 px, one tile, stride 38, layout 0x1e498, and flags, offset, trim and cache fields of 0.
+Each descriptor's pixels match the generator's output. In `rustc`'s assembly, the USER SETTINGS 2 hook writes
+the address of `TILE_IMAGES`, and the USER SETTINGS 3 hook writes that address + 20. The descriptor layout and
+draw path are the same as for the bat glyph, which B231 showed working on a unit, but this image has not
+been drawn on a unit.
+
+**On screen.** One changed string: the line under Listen to with no input on now uses the heading of the
+main screen's notice. The other lines already existed, and they now appear in different situations.
+
+| The line under Listen to, for this choice | B233 | B234 |
+|---|---|---|
+| `MANUAL's mix`, two or more inputs on | `Stereo in HET, COMB and 1:1. Mono in FD and TE.` | No change |
+| `MANUAL's mix`, one input on | `Stereo in HET, COMB and 1:1. Mono in FD and TE.` | `Heard in both ears and shown on the waterfall.` |
+| `MANUAL's mix`, no input on | `Stereo in HET, COMB and 1:1. Mono in FD and TE.` | `No inputs turned on in MANUAL` |
+| `Mix, left side` or `Mix, right side`, no input on | `Heard in both ears and shown on the waterfall.` | `No inputs turned on in MANUAL` |
+| `No input` | (empty) | `No inputs turned on in MANUAL` |
+
+**B234 compared with a build of B232 (8e7b23b).** Both builds ran with `MANUAL's mix` offered and chosen in
+Listen to, on up to 8 s of each of four recordings: 0066, roost-54khz, roost-echolocation and x8-3-4. The
+two sides of the recording went to the two sides of the mix. Each recording ran in each of the 6 modes, with
+Listen to on `MANUAL's mix`, `Mix, left side` and `Mix, right side`, and with Auto volume Off, On and Bats
+only. On 0066, roost-54khz and roost-echolocation, each run also had an analysis skip of 20 blocks, two
+jumps of 517 samples in the input, and 3 detents of the wheel. x8-3-4 lasts 1.25 s, so its 162 runs ended
+before any of those events. The main screen was compared every 200 blocks. The line under Listen to is on the
+settings screen, so this comparison does not cover it.
+
+| Inputs turned on, and Listen to | Runs | Result |
+|---|---|---|
+| One, any choice | 216 | Output, main screen, detections and TE recording bit-identical in all 216 |
+| None, any choice | 216 | Output, main screen, detections and TE recording bit-identical in all 216 |
+| Two, a side of the mix in any mode, or `MANUAL's mix` in FD, TE or PITCH | 180 | Output, main screen, detections and TE recording bit-identical in all 180 |
+| Two, `MANUAL's mix` in HET, COMB or 1:1 | 36 | Output differs in all 36, because B234 plays these runs in stereo and B232 in mono. So the comparison can detect a change in the output. Main screen, detections and TE recording bit-identical in all 36 |
+
+**Tests.** New tests in `crates/bat-app/src/tests/stereo.rs` check the following:
+
+- With Listen to on `MANUAL's mix` and one input on or none, each ear's output is bit-identical to one chain
+  fed the average of the two sides, in HET, COMB and 1:1, with Auto volume Off, On and Bats only.
+- With Listen to on `MANUAL's mix`, one input on and Auto volume off, a tone on one side of the mix is heard in
+  both ears, 6.02 dB (within 0.01 dB) below the same tone with that side chosen.
+- With the number of tracks on changing between one and two every 1,000 samples, the largest change between
+  neighbouring samples in either ear stays under 0.35 of the peak of the louder input. This is the limit
+  Step 15 uses for a change of Listen to.
+- After `input_lost(0)` and a change between one chain and two, silent input gives exactly zero output.
+- An EXT IN pair is stereo, and with one input on the mix, Listen to reaches all three mix choices.
+
+The emulator page has no MANUAL's mix, so none of this has been played there.
+
+**What to check.** Everything in the "What to check" lists of steps 11 to 15 first. Then:
+
+- **The LAUNCHER.** Does BAT PLAYBACK show the play button, centred on its tile and the same colour as
+  BAT DETECTOR's bat? If the launcher hangs when a bat tile comes into view, recover as in "If it goes
+  wrong" in step 3.
+- **The pans.** What pan does MIXER show for tracks 3 and 4 with STEREO LINK off, and with it on? With two
+  mics, STEREO LINK off and Listen to on `MANUAL's mix`, is each mic in its own ear?
+- **One mic on input 3, with every other track turned off in MANUAL**, Listen to on `MANUAL's mix`, in HET,
+  COMB and 1:1. Does it sound the same in both ears? Then choose `Mix, left side`. With the track panned hard
+  left, the mic should be about 6 dB louder than with `MANUAL's mix`, in both ears. With the track at the
+  centre, it should be at the same level.
+- **Input 4's track.** With input 3's track on and Listen to on `MANUAL's mix`, press PLAY, turn input 4's
+  track on or off in MANUAL, close the INPUT screen, and press PLAY. With both tracks on and panned apart,
+  the left ear and the right ear should play different sound. With one track on, both ears should play the
+  same sound. Is the return to the bat screen free of clicks?
 
 ## Firmware map (V2.03, in progress)
 
