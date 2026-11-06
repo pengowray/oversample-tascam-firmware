@@ -191,10 +191,20 @@ fn listen_to_has_nothing_to_choose_with_one_input() {
 fn no_input_draws_a_notice_and_no_meters() {
     let mut storage = vec![0.0f32; 1024];
     let mut app = BatApp::new(FS, &mut storage, buffers());
+    let meter_is_blank = |pixels: &[u16], y: i32| {
+        let row = &pixels[y as usize * WIDTH..][..WIDTH];
+        let x = layout::METER_X as usize;
+        row[x..x + layout::METER_W as usize].iter().all(|&p| p == row[1])
+    };
     let with_inputs = draw(&app);
+    assert!(layout::METER_Y.iter().all(|&y| !meter_is_blank(&with_inputs, y + 1)));
     app.set_inputs([None, None]);
-    assert_ne!(draw(&app), with_inputs);
+    let without_inputs = draw(&app);
+    assert_ne!(without_inputs, with_inputs);
+    assert!(layout::METER_Y.iter().all(|&y| meter_is_blank(&without_inputs, y + 1)));
+    let before = app.source();
     app.change_setting(Setting::ListenTo, 1);
+    assert_eq!(app.source(), before);
     app.open_settings();
     assert!(draw(&app).iter().any(|&p| p != 0));
 }
