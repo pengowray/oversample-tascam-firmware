@@ -49,6 +49,12 @@ pub const MAX_PAYLOAD_BYTES: usize = 21;
 /// Size in bytes of the longest message: the longest payload and its CRC.
 pub const MAX_MESSAGE_BYTES: usize = MAX_PAYLOAD_BYTES + CRC_BYTES;
 
+/// Lowest time zone offset the encoder sends, in minutes: UTC-12:00.
+pub const MIN_TIMEZONE_MINUTES: i16 = -720;
+
+/// Highest time zone offset the encoder sends, in minutes: UTC+14:00.
+pub const MAX_TIMEZONE_MINUTES: i16 = 840;
+
 /// Amplitude of the carrier in the waveform the encoder produces.
 pub const CARRIER_AMPLITUDE: f32 = 0.25;
 
@@ -75,6 +81,15 @@ pub fn crc16(bytes: &[u8]) -> u16 {
         crc = crc_shift(crc, false);
     }
     crc
+}
+
+/// True for a payload length that the encoder can send: the time alone, or with
+/// location, deployment ID or both.
+pub const fn is_payload_len(len: usize) -> bool {
+    len == TIME_BYTES
+        || len == TIME_BYTES + LOCATION_BYTES
+        || len == TIME_BYTES + DEPLOYMENT_ID_BYTES
+        || len == MAX_PAYLOAD_BYTES
 }
 
 fn crc_shift(crc: u16, input_bit: bool) -> u16 {
@@ -118,16 +133,21 @@ pub struct TimeMessage {
 impl TimeMessage {
     /// Parses a payload without its CRC. The valid lengths are 6, 13 (with
     /// location), 14 (with deployment ID) and 21 bytes (with both, location
-    /// first). Returns `None` for any other length.
+    /// first). Returns `None` for any other length, and for a time zone outside
+    /// [`MIN_TIMEZONE_MINUTES`] to [`MAX_TIMEZONE_MINUTES`], which the encoder
+    /// never sends.
     pub fn parse(payload: &[u8]) -> Option<TimeMessage> {
-        let has_location = matches!(payload.len(), 13 | 21);
-        let has_deployment_id = matches!(payload.len(), 14 | 21);
-        if !has_location && !has_deployment_id && payload.len() != TIME_BYTES {
+        if !is_payload_len(payload.len()) {
             return None;
         }
+        let has_location = matches!(payload.len(), 13 | 21);
+        let has_deployment_id = matches!(payload.len(), 14 | 21);
 
         let unix_time = u32::from_le_bytes([payload[0], payload[1], payload[2], payload[3]]);
         let timezone_minutes = i16::from_le_bytes([payload[4], payload[5]]);
+        if !(MIN_TIMEZONE_MINUTES..=MAX_TIMEZONE_MINUTES).contains(&timezone_minutes) {
+            return None;
+        }
 
         let mut offset = TIME_BYTES;
         let mut location = None;
@@ -344,6 +364,9 @@ mod tests {
         for (i, byte) in payload.iter_mut().enumerate() {
             *byte = i as u8 + 100;
         }
+        // A time zone of 0, because 104 and 105 are out of range.
+        payload[4] = 0;
+        payload[5] = 0;
 
         let with_location = TimeMessage::parse(&payload[..13]).unwrap();
         assert_eq!(with_location.location, Some([106, 107, 108, 109, 110, 111, 112]));
@@ -364,6 +387,25 @@ mod tests {
         for length in 0..=40 {
             let expected_valid = matches!(length, 6 | 13 | 14 | 21);
             assert_eq!(TimeMessage::parse(&payload[..length]).is_some(), expected_valid, "{length}");
+        }
+    }
+
+    #[test]
+    fn parse_rejects_time_zones_the_encoder_never_sends() {
+        let cases: [(i16, bool); 8] = [
+            (-30000, false),
+            (-721, false),
+            (-720, true),
+            (0, true),
+            (840, true),
+            (841, false),
+            (30000, false),
+            (i16::MIN, false),
+        ];
+        for (minutes, expected_valid) in cases {
+            let bytes = minutes.to_le_bytes();
+            let payload = [1, 2, 3, 4, bytes[0], bytes[1]];
+            assert_eq!(TimeMessage::parse(&payload).is_some(), expected_valid, "{minutes}");
         }
     }
 

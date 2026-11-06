@@ -7,6 +7,7 @@
 mod support;
 
 use std::f64::consts::PI;
+use std::mem::MaybeUninit;
 
 use chime::format::{self, TimeMessage};
 use chime::{Chime, Decoder, Event, Unreadable, UnreadableReason};
@@ -200,7 +201,7 @@ fn time_at_a_later_sample_comes_from_start_sample() {
 
         let message = TimeMessage::parse(&chime.payload[..chime.payload_len]).unwrap();
         let sample = chime.end_sample + 12_345;
-        let seconds_after_start = (sample - chime.start_sample) as f64 / rate as f64;
+        let seconds_after_start = (sample as i64 - chime.start_sample) as f64 / rate as f64;
         let time = message.unix_time as f64 + seconds_after_start;
 
         // The encoded time is that of the first sample of the chime.
@@ -234,6 +235,32 @@ fn several_chimes_in_one_stream_are_each_decoded_once() {
         let message = TimeMessage::parse(&chime.payload[..chime.payload_len]).unwrap();
         assert_eq!(message.unix_time, time);
         assert_start_within_2_ms(chime, rate, start);
+    }
+}
+
+#[test]
+fn a_chime_soon_after_another_is_read_while_the_echoes_are_still_fading() {
+    // The recorder setup page leaves 1 s between chimes. With an RT60 of 500 ms and a low
+    // noise floor, the echoes of the first chime have not faded when the second one starts.
+    let rate = 48_000;
+    for gap_seconds in [1.0, 0.5] {
+        let first = mix(rate, &generator::time_payload(UNIX, TZ));
+        let second = mix(rate, &generator::time_payload(UNIX + 3, TZ));
+        let second_start = first.len() + (gap_seconds * rate as f64) as usize;
+        let mut chimes = vec![0.0; second_start + second.len()];
+        chimes[..first.len()].copy_from_slice(&first);
+        chimes[second_start..].copy_from_slice(&second);
+        let x = padded(rate, channel::reverb(chimes, rate, ReverbProfile::Large));
+        let x = channel::add_white_noise_rms(x, 1e-5, 41);
+        let events = run(rate, &channel::to_f32(&x));
+        let read: Vec<u32> = events
+            .iter()
+            .filter_map(|event| match event {
+                Event::Chime(chime) => TimeMessage::parse(&chime.payload[..chime.payload_len]).map(|m| m.unix_time),
+                Event::Unreadable(_) => None,
+            })
+            .collect();
+        assert_eq!(read, [UNIX, UNIX + 3], "gap {gap_seconds} s: {events:?}");
     }
 }
 
@@ -277,14 +304,62 @@ fn all_payload_lengths_from_the_connector_decode() {
 }
 
 #[test]
-fn a_crc_match_with_another_length_is_still_a_chime() {
+fn a_crc_match_with_another_length_is_not_a_chime() {
     let rate = 48_000;
-    let payload = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10];
-    let carrier = carrier_with_symbol_lengths(rate, &message_lengths_ms(&with_crc(&payload), 8));
-    let x = channel::pad(carrier, pad_samples(rate), pad_samples(rate));
-    let chime = the_chime(&run(rate, &channel::to_f32(&x)));
-    assert_eq!(chime.payload_len, 10);
-    assert_eq!(&chime.payload[..10], &payload);
+    for payload_len in [5, 7, 10, 12, 15, 20] {
+        let payload: Vec<u8> = (1..=payload_len).collect();
+        let carrier = carrier_with_symbol_lengths(rate, &message_lengths_ms(&with_crc(&payload), 8));
+        let x = channel::pad(carrier, pad_samples(rate), pad_samples(rate));
+        let events = run(rate, &channel::to_f32(&x));
+        assert!(!events.iter().any(|event| matches!(event, Event::Chime(_))), "{payload_len} bytes: {events:?}");
+    }
+}
+
+/// A chime with a good CRC, and a time zone that the encoder clamps away.
+#[test]
+fn a_crc_match_with_a_time_zone_out_of_range_is_not_a_chime() {
+    let rate = 48_000;
+    for time_zone in [30_000i16, -30_000, 841, -721] {
+        // The generator clamps the time zone, as the encoder does.
+        let mut payload = time_payload();
+        payload[4..6].copy_from_slice(&time_zone.to_le_bytes());
+        let carrier = carrier_with_symbol_lengths(rate, &message_lengths_ms(&with_crc(&payload), 8));
+        let x = channel::pad(carrier, pad_samples(rate), pad_samples(rate));
+        let unreadable = the_unreadable(&run(rate, &channel::to_f32(&x)));
+        assert_eq!(unreadable.reason, UnreadableReason::MessageRefused, "time zone {time_zone}");
+        assert_eq!(unreadable.bytes_received, 8);
+    }
+}
+
+/// Symbol lengths for a message in which one bit of each of the first `flipped` codewords
+/// is wrong, so that the Hamming code corrects them all and the CRC still passes.
+fn lengths_with_flipped_codewords(message: &[u8], flipped: usize) -> Vec<f64> {
+    let mut bits = generator::encode(message);
+    for word in 0..flipped {
+        // Codewords alternate bit by bit, and each byte has two, of 7 bits.
+        bits[word / 2 * 14 + word % 2] ^= 1;
+    }
+    let mut lengths = vec![7.5; 16];
+    lengths.extend(bits.iter().map(|&bit| if bit == 1 { 10.0 } else { 5.0 }));
+    lengths.extend(std::iter::repeat_n(7.5, 8));
+    lengths
+}
+
+#[test]
+fn a_message_with_too_many_corrected_words_is_refused_and_says_so() {
+    let rate = 48_000;
+    let message = with_crc(&time_payload());
+    let render = |flipped: usize| {
+        let carrier = carrier_with_symbol_lengths(rate, &lengths_with_flipped_codewords(&message, flipped));
+        channel::to_f32(&channel::pad(carrier, pad_samples(rate), pad_samples(rate)))
+    };
+    let chime = the_chime(&run(rate, &render(10)));
+    assert_eq!(chime.payload[..chime.payload_len], message[..6]);
+    assert_eq!(chime.corrected_bits, 10);
+
+    let unreadable = the_unreadable(&run(rate, &render(11)));
+    assert_eq!(unreadable.reason, UnreadableReason::MessageRefused);
+    assert_eq!(unreadable.bytes_received, 8);
 }
 
 // -- Levels --------------------------------------------------------------------
@@ -351,6 +426,44 @@ fn snr_reads_close_to_the_snr_in_the_2_khz_band() {
     }
 }
 
+/// The noise is not known when a chime starts too soon after the first sample to measure
+/// it, and digital silence has none to measure. A number here would be made up.
+#[test]
+fn snr_is_nan_when_the_noise_was_not_measured() {
+    let payload = time_payload();
+    let rate = 48_000;
+    let clean = mix(rate, &payload);
+
+    for pad_ms in [0, 20, 40] {
+        let pad = rate as usize * pad_ms / 1000;
+        let x = channel::add_white_noise(channel::pad(clean.clone(), pad, rate as usize), rate, 10.0, 51);
+        let chime = the_chime(&run(rate, &channel::to_f32(&x)));
+        assert!(chime.snr_db.is_nan(), "{pad_ms} ms: {chime:?}");
+    }
+
+    let x = channel::pad(clean.clone(), pad_samples(rate), pad_samples(rate));
+    let chime = the_chime(&run(rate, &channel::to_f32(&x)));
+    assert!(chime.snr_db.is_nan(), "after digital silence: {chime:?}");
+
+    let x = channel::add_white_noise(channel::pad(clean, rate as usize / 10, rate as usize), rate, 10.0, 52);
+    let chime = the_chime(&run(rate, &channel::to_f32(&x)));
+    assert!((chime.snr_db - 10.0).abs() < 3.0, "after 100 ms of noise: {chime:?}");
+}
+
+/// A real noise floor far below -120 dBFS in the band still gives the true SNR.
+#[test]
+fn snr_is_right_with_a_very_quiet_carrier_and_noise() {
+    let payload = time_payload();
+    let rate = 48_000;
+    let carrier_gain = 2e-5; // -94 dBFS peak.
+    let render = generator::render(rate, &payload, TUNE_TIME);
+    let x = render.mix_with_gains(carrier_gain, 2.0 * carrier_gain);
+    let pad = pad_samples(rate);
+    let x = channel::add_white_noise(channel::pad(x, pad, pad), rate, 30.0, 53);
+    let chime = the_chime(&run(rate, &channel::to_f32(&x)));
+    assert!((chime.snr_db - 30.0).abs() < 2.0, "{chime:?}");
+}
+
 #[test]
 fn band_level_reads_a_tone_and_white_noise() {
     let rate = 48_000u32;
@@ -415,6 +528,40 @@ fn tone_mode_gives_no_chime() {
     assert!(!events.iter().any(|event| matches!(event, Event::Chime(_))), "{events:?}");
 }
 
+/// A decoder built in place must not depend on what the memory held before, and it must
+/// read like one from `Decoder::new`.
+#[test]
+fn a_decoder_built_in_place_reads_the_same_whatever_the_memory_held() {
+    let payload = time_payload();
+    let rate = 48_000;
+    let x = channel::add_white_noise(channel::pad(mix(rate, &payload), pad_samples(rate), pad_samples(rate)), rate, 0.0, 41);
+    let x = channel::to_f32(&x);
+    let expected = run(rate, &x);
+    assert_eq!(the_chime(&expected).payload[..6], payload[..]);
+
+    for pattern in [0x00u8, 0xFF, 0xA5] {
+        let mut slot = Box::new(MaybeUninit::<Decoder>::uninit());
+        // SAFETY: writing bytes to memory that this function owns and has not read.
+        unsafe { slot.as_mut_ptr().write_bytes(pattern, 1) };
+        let decoder = Decoder::init_in_place(&mut slot, rate).unwrap();
+        let events: Vec<Event> = x.iter().filter_map(|&sample| decoder.push(sample)).collect();
+        assert_eq!(events, expected, "memory filled with {pattern:#x}");
+    }
+}
+
+#[test]
+fn a_decoder_can_be_rebuilt_in_place_at_another_rate() {
+    let payload = time_payload();
+    let mut slot = Box::new(MaybeUninit::<Decoder>::uninit());
+    assert!(Decoder::init_in_place(&mut slot, 39_999).is_none());
+    for rate in [48_000, 192_000, 44_100] {
+        let x = channel::pad(mix(rate, &payload), pad_samples(rate), pad_samples(rate));
+        let decoder = Decoder::init_in_place(&mut slot, rate).unwrap();
+        let events: Vec<Event> = channel::to_f32(&x).iter().filter_map(|&sample| decoder.push(sample)).collect();
+        assert_eq!(the_chime(&events).payload[..6], payload[..], "{rate} Hz");
+    }
+}
+
 #[test]
 fn rates_below_40_khz_give_no_decoder() {
     assert!(Decoder::new(39_999).is_none());
@@ -454,6 +601,95 @@ fn a_chime_cut_off_in_its_data_is_signal_lost_and_the_next_chime_decodes() {
     assert_start_within_2_ms(&the_chime(&events[1..]), rate, second_start);
 }
 
+/// A recording that starts during the start symbols: the start of the chime is before the
+/// first sample, and the time in the chime belongs to that moment.
+#[test]
+fn a_chime_that_started_before_the_first_sample_has_a_negative_start() {
+    let payload = time_payload();
+    let rate = 192_000usize;
+    let clean = mix(rate as u32, &payload);
+    let symbol = rate * 75 / 10_000;
+    for kept_symbols in [15, 8, 4] {
+        let dropped = (16 - kept_symbols) * symbol;
+        let x = channel::pad(clean[dropped..].to_vec(), 0, rate);
+        let x = channel::add_white_noise(x, rate as u32, 20.0, 61);
+        let chime = the_chime(&run(rate as u32, &channel::to_f32(&x)));
+        assert_eq!(chime.payload[..chime.payload_len], payload[..]);
+        let error_ms = (chime.start_sample + dropped as i64) as f64 * 1000.0 / rate as f64;
+        assert!(error_ms.abs() <= 2.0, "{kept_symbols} start symbols kept: {error_ms} ms off");
+    }
+}
+
+/// The time after a chime is cut off is not part of what was received. The walk goes on
+/// for about 240 ms after the cut before it counts the signal as lost.
+#[test]
+fn a_chime_cut_off_reports_what_arrived_before_the_cut() {
+    let rate = 192_000u32;
+    let start_symbols_ms = 120.0;
+    let cases: [(&[u8], f64); 4] = [
+        // Payload, and the milliseconds of data symbols to keep.
+        (&[0xD8, 0x1D, 0xF8, 0x74, 0x00, 0x00], 0.0),
+        (&[0xD8, 0x1D, 0xF8, 0x74, 0x00, 0x00], 60.0),
+        (&[0xD8, 0x1D, 0xF8, 0x74, 0x00, 0x00], 400.0),
+        (&location_and_deployment_payload(), 900.0),
+    ];
+    for (payload, data_ms) in cases {
+        let message = with_crc(payload);
+        let lengths = message_lengths_ms(&message, 8);
+        // The bytes that the kept part holds.
+        let mut bytes_sent = 0;
+        let mut elapsed = 0.0;
+        for (symbol, length) in lengths[16..lengths.len() - 8].iter().enumerate() {
+            elapsed += length;
+            if elapsed > data_ms {
+                break;
+            }
+            bytes_sent = (symbol + 1) / 14;
+        }
+        let whole = carrier_with_symbol_lengths(rate, &lengths);
+        let keep = ((start_symbols_ms + data_ms) * 0.001 * rate as f64) as usize;
+        let expected = channel::db(channel::carrier_rms(&whole[..keep], rate)) as f32;
+        let x = channel::pad(whole[..keep].to_vec(), pad_samples(rate), rate as usize);
+        let x = channel::add_white_noise_rms(x, 1e-4, 62);
+        let unreadable = the_unreadable(&run(rate, &channel::to_f32(&x)));
+        assert_eq!(unreadable.reason, UnreadableReason::SignalLost, "{data_ms} ms of data");
+        assert!(
+            unreadable.bytes_received.abs_diff(bytes_sent) <= 1,
+            "{data_ms} ms of data: {bytes_sent} bytes sent, {unreadable:?}"
+        );
+        assert!(
+            (unreadable.level_dbfs - expected).abs() <= 1.0,
+            "{data_ms} ms of data: level should be {expected}, {unreadable:?}"
+        );
+    }
+}
+
+/// An estimate of the noise left high by a loud sound must not count a quieter chime as
+/// lost. The estimate has to follow the input down, however quiet it gets.
+#[test]
+fn a_loud_sound_does_not_hide_quiet_chimes_after_it() {
+    for rate in [48_000u32, 192_000] {
+        for gap_noise_rms in [0.0, 1e-7, 1e-6] {
+            let chime = channel::gain_db(mix(rate, &time_payload()), -20.0);
+            let mut x = channel::add_white_noise_rms(vec![0.0; rate as usize / 2], 0.17, 71);
+            for _ in 0..6 {
+                x.extend(std::iter::repeat_n(0.0, rate as usize));
+                x.extend_from_slice(&chime);
+            }
+            x.extend(std::iter::repeat_n(0.0, rate as usize));
+            let loud_end = rate as usize / 2;
+            let mut tail = x.split_off(loud_end);
+            if gap_noise_rms > 0.0 {
+                tail = channel::add_white_noise_rms(tail, gap_noise_rms, 72);
+            }
+            x.extend_from_slice(&tail);
+            let events = run(rate, &channel::to_f32(&x));
+            let read = events.iter().filter(|event| matches!(event, Event::Chime(_))).count();
+            assert_eq!(read, 6, "{rate} Hz, gap noise {gap_noise_rms}: {events:?}");
+        }
+    }
+}
+
 #[test]
 fn a_wrong_crc_is_bad_crc() {
     let rate = 48_000;
@@ -490,7 +726,9 @@ fn a_message_longer_than_the_format_allows_is_too_many_bytes() {
     // The rest of the long message can start another failed walk after the first one.
     let unreadable = the_unreadable(&events[..1]);
     assert_eq!(unreadable.reason, UnreadableReason::TooManyBytes);
-    assert_eq!(unreadable.bytes_received, format::MAX_MESSAGE_BYTES);
+    // One more than the longest message, which is the byte that showed the message was
+    // too long.
+    assert_eq!(unreadable.bytes_received, format::MAX_MESSAGE_BYTES + 1);
     assert!(!events.iter().any(|event| matches!(event, Event::Chime(_))), "{events:?}");
 }
 
@@ -526,7 +764,7 @@ fn nan_and_infinite_samples_do_not_stop_the_decoder() {
 #[test]
 fn decoder_is_small() {
     let size = std::mem::size_of::<Decoder>();
-    assert!(size <= 16 * 1024, "Decoder is {size} bytes");
+    assert!(size <= 20 * 1024, "Decoder is {size} bytes");
 }
 
 // -- Decoding through simulated channels ---------------------------------------

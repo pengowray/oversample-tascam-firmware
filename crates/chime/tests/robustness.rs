@@ -7,8 +7,9 @@
 //! cargo test --release -p chime --test robustness -- --ignored --nocapture
 //! ```
 //!
-//! `shipped_decoder_holds_its_expected_performance` is not ignored. It checks a few
-//! cells of the matrix so that a regression in `chime::Decoder` fails.
+//! The tests that are not ignored check a few cells of the matrix, so that a regression
+//! in `chime::Decoder` fails. They cover a moving phone, an overloaded input, loud bursts
+//! in the band, echoes after a good read, sounds that are not chimes, and failed chimes.
 //!
 //! # How a trial is built
 //!
@@ -40,7 +41,8 @@
 //!
 //! The table of conditions the decoder was not tuned on includes a phone that moves, and
 //! its "UTC" rows use a time zone of 0. The two zero bytes of that time zone are 28 data
-//! 0 symbols in a row.
+//! 0 symbols in a row. Its rows for a phone that moves in a room apply the motion first,
+//! so that each echo carries the motion from when it left the phone.
 //!
 //! # What counts as a pass
 //!
@@ -179,6 +181,9 @@ const FIELD_C: Condition = Condition {
     ..CLEAN
 };
 
+/// The carrier is 20 dB weaker than usual, and the melody clips the input hard.
+const OVERLOADED: Condition = Condition { melody_db: 20.0, overdrive_db: Some(40.0), ..CLEAN };
+
 /// A condition with a label, a sample rate and a number of trials.
 #[derive(Clone)]
 struct Row {
@@ -271,6 +276,8 @@ fn untuned_rows() -> Vec<Row> {
         row("phone moves 1 cm at 2 Hz, UTC, SNR +10", Condition { acoustic: Some(hand_wobble::<10>), ..utc_snr_10 }),
         row("phone moves 5 mm at 2 Hz, UTC, SNR +10", Condition { acoustic: Some(hand_wobble::<5>), ..utc_snr_10 }),
         row("phone still, UTC, SNR +10", utc_snr_10),
+        row("reverb small, moves 2 cm, UTC, SNR +10", Condition { acoustic: Some(moves_in_small_room), ..utc_snr_10 }),
+        row("reverb medium, moves 5 mm, SNR +10", Condition { acoustic: Some(moves_in_medium_room), ..snr_10 }),
         row("steady 18.3 kHz tone, carrier -6 dB", Condition { added: Some(steady_tone), ..CLEAN }),
         row("insect pulses 17.8 kHz", Condition { added: Some(insect_pulses), ..CLEAN }),
         row("carrier -40, clicks 0 dBFS", Condition { clicks: true, ..carrier_40 }),
@@ -280,6 +287,9 @@ fn untuned_rows() -> Vec<Row> {
         row("carrier -40, hum -20 dBFS", Condition { hum: true, ..carrier_40 }),
         row("melody +30 dB, 20 dB overdrive", Condition { melody_db: 30.0, overdrive_db: Some(20.0), ..CLEAN }),
         row("melody +30 dB, 20 dB overdrive, SNR +20", Condition { melody_db: 30.0, overdrive_db: Some(20.0), snr_db: Some(20.0), ..CLEAN }),
+        row("melody +20 dB, 40 dB overdrive", OVERLOADED),
+        row("melody +30 dB, 30 dB overdrive", Condition { melody_db: 30.0, overdrive_db: Some(30.0), ..CLEAN }),
+        row("melody +30 dB, 40 dB overdrive", Condition { melody_db: 30.0, overdrive_db: Some(40.0), ..CLEAN }),
         row("21-byte payload, clean", Condition { long_payload: true, ..CLEAN }),
         row("21-byte payload, SNR 0", Condition { long_payload: true, snr_db: Some(0.0), ..CLEAN }),
         row("21-byte payload, FIELD-A", Condition { long_payload: true, ..FIELD_A }),
@@ -387,6 +397,16 @@ fn hand_wobble<const MILLIMETRES: u32>(x: Vec<f64>, rate: u32, seed: u64) -> Vec
         .collect()
 }
 
+/// A phone that moves 2 cm either way at 2 Hz in a room with the small profile.
+fn moves_in_small_room(x: Vec<f64>, rate: u32, seed: u64) -> Vec<f64> {
+    channel::reverb(hand_wobble::<20>(x, rate, seed), rate, ReverbProfile::Small)
+}
+
+/// A phone that moves 5 mm either way at 2 Hz in a room with the medium profile.
+fn moves_in_medium_room(x: Vec<f64>, rate: u32, seed: u64) -> Vec<f64> {
+    channel::reverb(hand_wobble::<5>(x, rate, seed), rate, ReverbProfile::Medium)
+}
+
 /// A tone inside the decoders' band for the whole stream, 6 dB below the carrier.
 fn steady_tone(mut x: Vec<f64>, rate: u32, seed: u64) -> Vec<f64> {
     let phase = 2.0 * PI * Xorshift::new(seed ^ 0x544F_4E45).uniform();
@@ -426,6 +446,28 @@ fn damped_rings<const ATTENUATION_DB: u32>(mut x: Vec<f64>, rate: u32, seed: u64
             let Some(sample) = x.get_mut(position as usize + k) else { break };
             let t = k as f64 / rate;
             *sample += amplitude * (-t / 0.0003).exp() * (2.0 * PI * frequency * t).sin();
+        }
+        position += -(1.0 - random.uniform()).ln() * mean_gap;
+    }
+    x
+}
+
+/// Tone bursts near the carrier at random times, on average 20 per second, each with a
+/// random frequency from 17.5 to 18.5 kHz and a random length from 3 to 33 ms. Real
+/// recordings with no chime in them have sounds like these, which start walks.
+fn tone_bursts(mut x: Vec<f64>, rate: u32, amplitude: f64, seed: u64) -> Vec<f64> {
+    let mut random = Xorshift::new(seed);
+    let rate = rate as f64;
+    let mean_gap = rate / 20.0;
+    let mut position = -(1.0 - random.uniform()).ln() * mean_gap;
+    while (position as usize) < x.len() {
+        let length = (0.003 + random.uniform() * 0.030) * rate;
+        let frequency = 17_500.0 + random.uniform() * 1_000.0;
+        let phase = 2.0 * PI * random.uniform();
+        for k in 0..length as usize {
+            let Some(sample) = x.get_mut(position as usize + k) else { break };
+            let envelope = (PI * k as f64 / length).sin();
+            *sample += amplitude * envelope * (2.0 * PI * frequency * k as f64 / rate + phase).sin();
         }
         position += -(1.0 - random.uniform()).ln() * mean_gap;
     }
@@ -959,6 +1001,8 @@ fn decoder_cost() {
 /// or the simulator changes. Each noisy cell allows one miss below what the matrix shows.
 #[test]
 fn shipped_decoder_holds_its_expected_performance() {
+    let utc_snr_10 = Condition { time_zone: Some(0), snr_db: Some(10.0), ..CLEAN };
+    let carrier_40 = Condition { carrier_peak_dbfs: Some(-40.0), ..CLEAN };
     let cells = [
         ("clean", CLEAN, 6),
         ("rate -500 ppm", Condition { rate_ppm: -500.0, ..CLEAN }, 6),
@@ -967,6 +1011,18 @@ fn shipped_decoder_holds_its_expected_performance() {
         ("reverb medium", Condition { reverb: Some(ReverbProfile::Medium), ..CLEAN }, 6),
         ("SNR -4 dB", Condition { snr_db: Some(-4.0), ..CLEAN }, 5),
         ("FIELD-A", FIELD_A, 5),
+        // A moving phone. The first three read 7, 15 and 19 of 20 in table 3 with one
+        // trellis and with echo taps that learned during runs of equal symbols.
+        ("phone moves 2 cm at 2 Hz, UTC, SNR +10", Condition { acoustic: Some(hand_wobble::<20>), ..utc_snr_10 }, 5),
+        ("phone moves 1 cm at 2 Hz, UTC, SNR +10", Condition { acoustic: Some(hand_wobble::<10>), ..utc_snr_10 }, 6),
+        ("phone moves 5 mm at 2 Hz, UTC, SNR +10", Condition { acoustic: Some(hand_wobble::<5>), ..utc_snr_10 }, 6),
+        ("reverb small, moves 2 cm, UTC, SNR +10", Condition { acoustic: Some(moves_in_small_room), ..utc_snr_10 }, 5),
+        // An overloaded input. These read 15 of 20 and 0 of 40 without the limit on loud
+        // samples and the second trellis.
+        ("melody +30 dB, 20 dB overdrive", Condition { melody_db: 30.0, overdrive_db: Some(20.0), ..CLEAN }, 6),
+        ("melody +20 dB, 40 dB overdrive", OVERLOADED, 5),
+        // Loud bursts in the band. This read 7 of 20 without the limit on loud samples.
+        ("carrier -40, damped rings 0 dBFS", Condition { added: Some(damped_rings::<0>), ..carrier_40 }, 5),
     ];
     let rows: Vec<Row> =
         cells.iter().map(|&(label, condition, _)| Row { trials: 6, ..row(label, condition) }).collect();
@@ -978,5 +1034,93 @@ fn shipped_decoder_holds_its_expected_performance() {
         if let Some(stats) = error_stats(&tally.start_errors_ms) {
             assert!(stats.largest_size <= 2.0, "{label}: start_sample is {} ms off", stats.largest_size);
         }
+    }
+}
+
+/// The echoes of a chime that was read must not count as a second chime. A hard room with
+/// no noise is the worst case, because the echoes stay above the noise for longest. This
+/// gave one `Unreadable` event for each chime read when the wait after a chime was a
+/// fixed 300 ms.
+#[test]
+fn echoes_after_a_read_give_no_event() {
+    let cells = [
+        ("reverb large", Condition { reverb: Some(ReverbProfile::Large), ..CLEAN }),
+        ("reverb large, UTC", Condition { reverb: Some(ReverbProfile::Large), time_zone: Some(0), ..CLEAN }),
+    ];
+    let rows: Vec<Row> = cells.iter().map(|&(label, condition)| Row { trials: 8, ..row(label, condition) }).collect();
+    let results = run_rows(&rows, Decoders::ShippedOnly);
+    for ((label, _), result) in cells.iter().zip(&results) {
+        let tally = &result.shipped;
+        assert!(tally.passes >= 6, "{label}: {} of 8 passed", tally.passes);
+        // Only a trial that failed may give an `Unreadable` event.
+        assert!(
+            tally.unreadable_events <= 8 - tally.passes,
+            "{label}: {} passed and {} unreadable",
+            tally.passes,
+            tally.unreadable_events
+        );
+    }
+}
+
+/// Runs a stream through the shipped decoder and counts the events of each kind.
+fn event_counts(rate: u32, stream: &[f64]) -> (usize, usize) {
+    let events = decoder_events(rate, &channel::to_f32(stream));
+    let chimes = events.iter().filter(|event| matches!(event, Event::Chime(_))).count();
+    (chimes, events.len() - chimes)
+}
+
+/// A sound with no chime in it must not be reported as a chime that failed. Tone bursts
+/// near 18 kHz start many walks. These three streams of 60 s gave 12, 12 and 2 `Unreadable`
+/// events before such an event needed evidence of a chime, which is the rate of the worst
+/// real recording. A long tone at the right frequency can look like start symbols, so
+/// this test sets a low limit on the count and does not demand none.
+#[test]
+fn sounds_with_no_chime_give_few_unreadable_events() {
+    let rate = 48_000;
+    let seconds = 60;
+    let mut total = 0;
+    for (trial, amplitude) in [0.01, 0.1, 0.003].into_iter().enumerate() {
+        let quiet = vec![0.0; seconds * rate as usize];
+        let noise = channel::add_white_noise_rms(quiet, 0.003, 900 + trial as u64);
+        let stream = tone_bursts(noise, rate, amplitude, 910 + trial as u64);
+        let (chimes, unreadable) = event_counts(rate, &stream);
+        assert_eq!(chimes, 0, "amplitude {amplitude}");
+        total += unreadable;
+    }
+    assert!(total <= 2, "{total} unreadable events in {} s", 3 * seconds);
+}
+
+/// A chime that fails must still be reported, because that tells a person to move the
+/// phone closer. Each cell gives the share of the trials that did not pass that must
+/// have given an `Unreadable` event, in percent. The noisy cells are below 100 because
+/// a chime far below the noise can show too little to be told from noise.
+#[test]
+fn failed_chimes_are_still_reported() {
+    let cells = [
+        ("reverb large, SNR +3", Condition { reverb: Some(ReverbProfile::Large), snr_db: Some(3.0), ..CLEAN }, 90),
+        ("FIELD-B", FIELD_B, 80),
+        ("SNR -8 dB", Condition { snr_db: Some(-8.0), ..CLEAN }, 25),
+    ];
+    let rows: Vec<Row> = cells.iter().map(|&(label, condition, _)| Row { trials: 20, ..row(label, condition) }).collect();
+    let results = run_rows(&rows, Decoders::ShippedOnly);
+    for ((label, _, percent), result) in cells.iter().zip(&results) {
+        let tally = &result.shipped;
+        let failed = 20 - tally.passes;
+        assert!(failed >= 4, "{label}: {} of 20 passed, which leaves too few failures to judge", tally.passes);
+        assert!(
+            tally.unreadable_events * 100 >= failed * percent,
+            "{label}: {} unreadable events for {failed} failures",
+            tally.unreadable_events
+        );
+    }
+
+    // A clean chime cut off at any point after its start symbols.
+    let rate = 48_000u32;
+    let whole = generator::render(rate, &generator::time_payload(1_793_000_000, 0), tune_for_payload(6)).mix();
+    for tenths in 2..=9 {
+        let cut = whole[..whole.len() * tenths / 10].to_vec();
+        let stream = channel::add_white_noise_rms(channel::pad(cut, rate as usize / 2, rate as usize), 1e-3, tenths as u64);
+        let (chimes, unreadable) = event_counts(rate, &stream);
+        assert_eq!((chimes, unreadable), (0, 1), "cut off at {tenths} tenths");
     }
 }

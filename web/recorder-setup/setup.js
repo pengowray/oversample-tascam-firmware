@@ -14,6 +14,7 @@
         stoppedEarly: 'Stopped before the first chime.',
         noAudio: 'This browser cannot play audio from a web page. Open this page in a different browser.',
         failed: 'Audio failed to start: reason unknown. Press the button to try again.',
+        triggerVeryHighFirmware8: 'On firmware 8, Very high records continuously.',
         x8Idle: "The phone's clock needs to be right. The chime contains the phone's date and time.",
         chirp: 'Play settings chirp',
         chirpAgain: 'Play settings chirp again',
@@ -47,6 +48,9 @@
     const AUDIO_START_TIMEOUT_MS = 2000;
     /* The longest chime, with location and deployment ID, lasts under 3.5 s. */
     const CHIME_END_TIMEOUT_MS = 5000;
+    /* Longer than the 15 s the browser allows a location lookup, and time to answer the
+       permission prompt. Some prompts can be left open and then give no answer at all. */
+    const LOCATION_WAIT_MS = 30000;
     const MINUTES_PER_DAY = 1440;
 
     const STORAGE_KEY = 'bat-recorder-setup';
@@ -68,7 +72,8 @@
 
     function loadSaved() {
         try {
-            return JSON.parse(localStorage.getItem(STORAGE_KEY)) || {};
+            const value = JSON.parse(localStorage.getItem(STORAGE_KEY));
+            return value !== null && typeof value === 'object' && !Array.isArray(value) ? value : {};
         } catch (error) {
             return {};
         }
@@ -142,6 +147,7 @@
 
     const panels = {
         x8: {
+            section: element('panel-x8'),
             button: element('x8-send'),
             status: element('x8-status'),
             sendLabel: () => TEXT.play,
@@ -149,6 +155,7 @@
             send: sendX8
         },
         audiomoth: {
+            section: element('panel-audiomoth'),
             button: element('audiomoth-send'),
             status: element('audiomoth-status'),
             sendLabel: () => element('am-clock-set').checked ? TEXT.playAfterTone : TEXT.play,
@@ -156,6 +163,7 @@
             send: sendAudiomoth
         },
         pippyg: {
+            section: element('panel-pippyg'),
             button: element('pippyg-send'),
             status: element('pippyg-status'),
             sendLabel: () => chirpPlayed ? TEXT.chirpAgain : TEXT.chirp,
@@ -182,6 +190,14 @@
         showStatus(panel, panel.idleText());
     }
 
+    /* The send button reads the fields once, when it is pressed. So during a run a change
+       to a field would look applied but not be, and the fields are locked. */
+    function lockFields(panel, locked) {
+        panel.section.querySelectorAll('input, select, .plain').forEach(function (control) {
+            control.disabled = locked;
+        });
+    }
+
     /* A run is one press: audio that is starting, playing or waiting to repeat. */
 
     let run = null;
@@ -203,20 +219,39 @@
         if (thisRun.context) thisRun.context.close().catch(function () {});
         thisRun.panel.button.disabled = false;
         thisRun.panel.button.textContent = thisRun.panel.sendLabel();
+        lockFields(thisRun.panel, false);
         showResult();
     }
 
     function failRun(thisRun) {
-        if (run === thisRun) finish(thisRun, function () { showStatus(thisRun.panel, TEXT.failed, true); });
+        if (run !== thisRun) return;
+        finish(thisRun, function () {
+            const text = thisRun.count === 0 ? TEXT.failed : 'Audio stopped after ' + chimes(thisRun.count) + '. Press the button to try again.';
+            showStatus(thisRun.panel, text, true);
+        });
+    }
+
+    /* A context at the chirp's own rate plays it without the browser's resampler, which
+       lowers its 12 kHz carrier. Older browsers can refuse this option. */
+    function newAudioContext(sampleRate) {
+        if (sampleRate) {
+            try {
+                return new RealAudioContext({ sampleRate: sampleRate });
+            } catch (error) {
+                /* The default rate below still plays the chirp. */
+            }
+        }
+        return new RealAudioContext();
     }
 
     /* Call during a press: iOS only starts audio that is created during one.
-       Calls `ready` once the audio is running. */
-    function startRun(panel, ready) {
+       Calls `ready` once the audio is running. `sampleRate` is optional. */
+    function startRun(panel, ready, sampleRate) {
         const thisRun = { panel: panel, context: null, connector: null, wakeLock: null, count: 0, deadline: 0 };
         run = thisRun;
+        lockFields(panel, true);
         try {
-            thisRun.context = new RealAudioContext();
+            thisRun.context = newAudioContext(sampleRate);
             /* Safari 16.4 and later: play even with the side switch on silent. */
             if (navigator.audioSession) navigator.audioSession.type = 'playback';
             const timeout = new Promise(function (resolve) { setTimeout(resolve, AUDIO_START_TIMEOUT_MS); });
@@ -320,10 +355,17 @@
 
     /* Field checks. Each returns the value, or shows an error and returns undefined. */
 
+    /* On a touch screen, focus would open the keyboard, which can cover the error. The
+       error names the field, and the press handler scrolls the error into view. */
     function fieldError(panel, field, text) {
         showStatus(panel, text, true);
-        element(field).focus();
+        if (window.matchMedia('(pointer: fine)').matches) element(field).focus({ preventScroll: true });
         return undefined;
+    }
+
+    /* Number() alone also accepts forms such as 0x10 and 1e1. */
+    function decimalNumber(text) {
+        return /^[-+]?(\d+\.?\d*|\.\d+)$/.test(text) ? Number(text) : NaN;
     }
 
     /* Returns { latitude, longitude }, both null when both fields are blank. */
@@ -333,8 +375,8 @@
         if (latitudeText === '' && longitudeText === '') return { latitude: null, longitude: null };
         if (longitudeText === '') return fieldError(panel, longitudeField, TEXT.longitudeMissing);
         if (latitudeText === '') return fieldError(panel, latitudeField, TEXT.latitudeMissing);
-        const latitude = Number(latitudeText);
-        const longitude = Number(longitudeText);
+        const latitude = decimalNumber(latitudeText);
+        const longitude = decimalNumber(longitudeText);
         if (!Number.isFinite(latitude) || Math.abs(latitude) > 90) return fieldError(panel, latitudeField, TEXT.latitudeInvalid);
         if (!Number.isFinite(longitude) || Math.abs(longitude) > 180) return fieldError(panel, longitudeField, TEXT.longitudeInvalid);
         return { latitude: latitude, longitude: longitude };
@@ -346,7 +388,8 @@
         const text = element('am-id').value.trim();
         if (text === '') return null;
         if (text.length !== 16) {
-            return fieldError(panel, 'am-id', 'Deployment ID wrong length: ' + text.length + ' characters. Enter exactly 16 hexadecimal digits.');
+            const count = text.length === 1 ? '1 character' : text.length + ' characters';
+            return fieldError(panel, 'am-id', 'Deployment ID wrong length: ' + count + '. Enter exactly 16 hexadecimal digits.');
         }
         if (!/^[0-9a-fA-F]+$/.test(text)) return fieldError(panel, 'am-id', TEXT.idNotHex);
         const bytes = [];
@@ -423,7 +466,7 @@
             thisRun.endTimer = setTimeout(function () { failRun(thisRun); }, (wait * 1000) + CHIME_END_TIMEOUT_MS);
             /* The audio clock starts the chirp on the second more exactly than a timer. */
             source.start(thisRun.context.currentTime + wait);
-        });
+        }, window.PippygChirp.SAMPLE_RATE);
     }
 
     /* The result of the PippyG's wake, sleep and mode settings */
@@ -438,19 +481,32 @@
             const overnight = wake > sleep ? ', overnight' : '';
             return 'PippyG awake ' + durationText(span) + ' a day' + overnight + ': ' + clockText(wake) + ' to ' + clockText(sleep) + '.';
         }
-        const extra = extraHours * 60;
-        const name = 'Bird + ' + extraHours + ' hours';
-        if (span === 0) return 'Not checked: ' + name + ' when Wake Time equals Sleep Time.';
-        if (span <= 2 * extra) {
-            return name + ': the ' + extraHours + ' hours after Wake Time and the ' + extraHours + ' hours before Sleep Time overlap.';
-        }
-        return 'PippyG awake ' + durationText(2 * extra) + ' a day at 48 kHz: ' + clockText(wake) + ' to ' + clockText(wake + extra) +
-            ' and ' + clockText(sleep - extra) + ' to ' + clockText(sleep) + '.';
+        if (span === 0) return 'Not checked: Bird + ' + extraHours + ' hours when Wake Time equals Sleep Time.';
+        const blocks = birdBlocks(wake, sleep, extraHours * 60);
+        const minutes = blocks.reduce(function (total, block) {
+            return total + (block[1] - block[0] + MINUTES_PER_DAY) % MINUTES_PER_DAY;
+        }, 0);
+        const times = blocks.map(function (block) { return clockText(block[0]) + ' to ' + clockText(block[1]); });
+        return 'PippyG awake ' + durationText(minutes) + ' a day at 48 kHz: ' + times.join(' and ') + '.';
+    }
+
+    /* The blocks of a Bird + N setting, as [start, end] in minutes since midnight. Firmware 8
+       and 10 compare the time of day with plain wake + extra and sleep - extra, which do not
+       wrap at midnight. So a block that reaches midnight stops there. Blocks that touch
+       become one block, which can run past midnight. */
+    function birdBlocks(wake, sleep, extra) {
+        const first = [wake, Math.min(wake + extra, MINUTES_PER_DAY)];
+        const second = [Math.max(sleep - extra, 0), sleep];
+        const overnight = wake > sleep;
+        const joined = overnight ? first[1] === MINUTES_PER_DAY && second[0] === 0 : first[1] >= second[0];
+        if (joined) return [[wake, sleep]];
+        return [first, second].filter(function (block) { return block[1] > block[0]; });
     }
 
     function showPippygChoices() {
         const bird = Number(element('pg-mode').value) !== 0;
         element('pg-trigger-top').textContent = bird ? 'Continuous' : 'Very high';
+        element('pg-trigger-note').textContent = bird ? '' : TEXT.triggerVeryHighFirmware8;
         const seconds = bird ? LENGTH_S_BIRD : LENGTH_S_BAT;
         Array.from(element('pg-length').options).forEach(function (option, code) {
             option.textContent = seconds[code] + ' s (' + LENGTH_MB[code] + ' MB)';
@@ -471,6 +527,12 @@
         save();
     }
 
+    /* A saved value that is not one of the options would leave the select blank. */
+    function setSelect(id, value, fallback) {
+        element(id).value = value;
+        if (element(id).selectedIndex < 0) element(id).value = fallback;
+    }
+
     function setUpPippygFields() {
         ['pg-wake', 'pg-sleep'].forEach(function (id) {
             const select = element(id);
@@ -479,12 +541,12 @@
             }
         });
         const choices = saved.pippyg || {};
-        element('pg-mode').value = choices.mode || '0';
-        element('pg-trigger').value = choices.trigger || String(DEFAULT_TRIGGER_CODE);
-        element('pg-wake').value = choices.wake || String(DEFAULT_WAKE_MINUTES);
-        element('pg-sleep').value = choices.sleep || String(DEFAULT_SLEEP_MINUTES);
+        setSelect('pg-mode', choices.mode, '0');
+        setSelect('pg-trigger', choices.trigger, String(DEFAULT_TRIGGER_CODE));
+        setSelect('pg-wake', choices.wake, String(DEFAULT_WAKE_MINUTES));
+        setSelect('pg-sleep', choices.sleep, String(DEFAULT_SLEEP_MINUTES));
         element('pg-id').value = choices.id || '0';
-        element('pg-length').value = choices.length || '0';
+        setSelect('pg-length', choices.length, '0');
         element('pg-noise').checked = Boolean(choices.noise);
         showPippygChoices();
         ['pg-mode', 'pg-trigger', 'pg-wake', 'pg-sleep', 'pg-id', 'pg-length', 'pg-noise'].forEach(function (id) {
@@ -493,12 +555,18 @@
                 savePippygChoices();
             });
         });
+        ['pg-id', 'pg-lat', 'pg-lon'].forEach(function (id) {
+            element(id).addEventListener('input', function () {
+                if (panels.pippyg.status.classList.contains('error')) showIdle(panels.pippyg);
+            });
+        });
     }
 
     /* Filling in fields from the phone */
 
+    /* The send button stays off until the lookup ends, because a chime or chirp sent now
+       would leave out the location that the fields are about to show. */
     function useLocation(panel, latitudeField, longitudeField) {
-        if (run) return;
         if (!window.isSecureContext) {
             showStatus(panel, TEXT.locationInsecure, true);
             return;
@@ -508,19 +576,37 @@
             return;
         }
         showStatus(panel, TEXT.locating);
+        lockFields(panel, true);
+        panel.button.disabled = true;
+        let lookupOver = false;
+        function endLookup(showResult) {
+            if (lookupOver) return;
+            lookupOver = true;
+            clearTimeout(lookupTimer);
+            lockFields(panel, false);
+            panel.button.disabled = false;
+            showResult();
+        }
+        const lookupTimer = setTimeout(function () {
+            endLookup(function () { showStatus(panel, TEXT.locationNotFound, true); });
+        }, LOCATION_WAIT_MS);
         navigator.geolocation.getCurrentPosition(function (position) {
-            element(latitudeField).value = position.coords.latitude.toFixed(6);
-            element(longitudeField).value = position.coords.longitude.toFixed(6);
-            showIdle(panel);
+            endLookup(function () {
+                element(latitudeField).value = position.coords.latitude.toFixed(6);
+                element(longitudeField).value = position.coords.longitude.toFixed(6);
+                showIdle(panel);
+            });
         }, function (error) {
-            showStatus(panel, error.code === error.PERMISSION_DENIED ? TEXT.locationRefused : TEXT.locationNotFound, true);
+            endLookup(function () {
+                showStatus(panel, error.code === error.PERMISSION_DENIED ? TEXT.locationRefused : TEXT.locationNotFound, true);
+            });
         }, { enableHighAccuracy: true, timeout: 15000, maximumAge: 60000 });
     }
 
     function useRandomId() {
         const bytes = crypto.getRandomValues(new Uint8Array(8));
         element('am-id').value = Array.from(bytes, function (byte) { return pad(byte.toString(16)); }).join('').toUpperCase();
-        if (!run) showIdle(panels.audiomoth);
+        showIdle(panels.audiomoth);
     }
 
     /* Tabs */
@@ -555,7 +641,10 @@
     }
 
     tabs.forEach(function (tab, index) {
-        tab.addEventListener('click', function () { selectTab(tab.dataset.tab, false); });
+        tab.addEventListener('click', function () {
+            /* Tapping the selected tab must not stop a run. */
+            if (tab.getAttribute('aria-selected') !== 'true') selectTab(tab.dataset.tab, false);
+        });
         tab.addEventListener('keydown', function (event) {
             const step = event.key === 'ArrowRight' ? 1 : event.key === 'ArrowLeft' ? -1 : 0;
             if (step === 0) return;
@@ -576,7 +665,7 @@
             if (run) stopRun();
             else panel.send();
             /* The button may be stuck above the status line, far down the page. */
-            if (document.activeElement === panel.button) panel.status.scrollIntoView({ block: 'nearest' });
+            panel.status.scrollIntoView({ block: 'nearest' });
         });
     });
 
@@ -595,6 +684,7 @@
     element('am-random').addEventListener('click', useRandomId);
 
     showClock();
+    const isPanel = function (name) { return Object.prototype.hasOwnProperty.call(panels, name); };
     const linked = location.hash.slice(1);
-    selectTab(panels[linked] ? linked : panels[saved.tab] ? saved.tab : 'x8', false);
+    selectTab(isPanel(linked) ? linked : isPanel(saved.tab) ? saved.tab : 'x8', false);
 }());

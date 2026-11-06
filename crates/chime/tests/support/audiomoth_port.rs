@@ -888,7 +888,7 @@ impl AudioMothPort {
             Event::Chime(Chime {
                 payload,
                 payload_len,
-                start_sample: self.start_sample,
+                start_sample: self.start_sample as i64,
                 end_sample: self.counter,
                 corrected_bits: self.corrected_bits,
                 level_dbfs: f32::NAN,
@@ -901,7 +901,7 @@ impl AudioMothPort {
 
     fn unreadable(&self, reason: UnreadableReason) -> Event {
         Event::Unreadable(Unreadable {
-            start_sample: self.start_sample,
+            start_sample: self.start_sample as i64,
             end_sample: self.counter,
             reason,
             bytes_received: self.byte_count,
