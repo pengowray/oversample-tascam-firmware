@@ -18,7 +18,7 @@
         x8Idle: "The phone's clock needs to be right. The chime contains the phone's date and time.",
         chirp: 'Play settings chirp',
         chirpAgain: 'Play settings chirp again',
-        chirpIdle: "Needed first: the phone's clock is right, and the PippyG is powered on, with the start-up flashes finished and the red LED following sound.",
+        chirpIdle: "The phone's clock needs to be right. The chirp contains the phone's local time and the settings above.",
         chirpWaiting: 'Waiting for the next whole second to play the chirp.',
         chirpMisread: 'Older firmware can misread a chirp without warning, so check the first recording\'s time and location.',
         locating: "Getting the phone's location",
@@ -186,7 +186,7 @@
         const latest = document.createElement('span');
         latest.className = 'latest';
         latest.textContent = 'Latest chime: ' + dateText(chimeTime) + ' ' + timeText(chimeTime);
-        showStatus(panel, chimes(count) + ' played. ');
+        showStatus(panel, count + ' of up to ' + CHIME_LIMIT + ' chimes played. ');
         panel.status.append(latest);
     }
 

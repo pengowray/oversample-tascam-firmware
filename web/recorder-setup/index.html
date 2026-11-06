@@ -25,11 +25,11 @@
 
   <section id="panel-x8" role="tabpanel" aria-labelledby="tab-x8" hidden>
     <h2>Tascam X8 Oversample Bat Recorder</h2>
-    <p class="note">Playing the chime will not set the X8's clock until a future firmware patch.</p>
+    <p class="note exception">Playing the chime will not set the X8's clock until a future firmware patch.</p>
+    <p class="note">To test the chime, record it on the X8 at 192&nbsp;kHz. On a computer, run the <code>decode_wav</code> program on the WAV file.</p>
     <div class="send-bar"><button class="send" id="x8-send" type="button"></button></div>
     <p class="status" id="x8-status" role="status"></p>
     <ul class="help">
-      <li>To test the chime, record it on the X8 at 192&nbsp;kHz. On a computer, run the <code>decode_wav</code> program on the WAV file.</li>
       <li>Hold the phone's speaker still, 10&nbsp;to&nbsp;20&nbsp;cm from the X8's microphones, with the volume up.</li>
       <li>Use the phone's own speaker. Bluetooth adds delay and can remove the chime's 18&nbsp;kHz tone.</li>
       <li>If you hear no tune, check silent mode. iPhones use a side switch or Action button.</li>
@@ -72,7 +72,8 @@
   </section>
 
   <section id="panel-pippyg" role="tabpanel" aria-labelledby="tab-pippyg" hidden>
-    <p class="note">This page has never been tested on a real PippyG.</p>
+    <p class="note exception">This page has never been tested on a real PippyG.</p>
+    <p class="note">Needed first: the PippyG is powered on, the start-up flashes have finished, and the red LED reacts to sound.</p>
 
     <div class="fields">
       <label>Recording Mode
@@ -105,7 +106,7 @@
       <label>Device ID
         <input id="pg-id" type="text" inputmode="numeric" autocomplete="off">
       </label>
-      <label>Recording length
+      <label>Recording Length
         <select id="pg-length">
           <option value="0"></option>
           <option value="1"></option>
@@ -134,7 +135,7 @@
     <p class="status tall" id="pippyg-status" role="status"></p>
     <ul class="help">
       <li>Success: the red LED flashes 8 to 10 times, then stays off. Firmware 10 also writes chirp.txt to the SD card.</li>
-      <li>Failure: no flashes, and the red LED keeps following sound. Change the phone's volume and the distance, then play the chirp again.</li>
+      <li>Failure: no flashes, and the red LED keeps reacting to sound. Change the phone's volume and the distance, then play the chirp again.</li>
       <li>Manual: about 4&nbsp;cm from the microphone hole, 75% volume or more. Pipistrelle app notes: 10 to 15&nbsp;cm, 25% to 33% volume; quieter is often better.</li>
       <li>Power: once programmed, the PippyG stops listening until it is powered off and on. Its settings are lost when the power is off.</li>
     </ul>

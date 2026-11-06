@@ -47,12 +47,13 @@ main { max-width: 26rem; margin: 0 auto; padding: 16px; }
 h1 { margin: 0 0 8px; font-size: 18px; font-weight: 600; }
 h2 { margin: 0 0 12px; font-size: 15px; font-weight: 600; }
 
-/* The time is what every recorder receives, so it is the largest thing on the
-   page. Tabular figures stop it moving as the seconds change. */
+/* The time is what every recorder receives, so it is large enough to compare with
+   a watch, but the send button stays the main thing on the page. Tabular figures
+   stop it moving as the seconds change. */
 .clock { margin: 0 0 12px; font-variant-numeric: tabular-nums; }
 .clock .label { display: block; color: var(--muted); font-size: 13px; }
-.clock .time { display: block; font-size: clamp(48px, 16vw, 64px); line-height: 1.05; font-weight: 600; }
-.clock .date { display: block; font-size: 18px; }
+.clock .time { display: block; font-size: clamp(36px, 11vw, 44px); line-height: 1.05; font-weight: 600; }
+.clock .date { display: block; }
 
 /* Selection is shown by colour and a bar, so the labels keep their width. */
 .tabs { display: flex; margin: 0 0 16px; border-bottom: 1px solid var(--line); }
@@ -139,6 +140,8 @@ input:disabled, select:disabled, .plain:disabled, .send:disabled { opacity: 0.6;
 .status .latest { white-space: nowrap; }
 
 .note { margin: 0 0 16px; }
+/* What the reader would not assume: the recorder can't use the sound yet, or nobody has tested it. */
+.note.exception { font-weight: 600; }
 .help { margin: 0 0 16px; padding: 0; list-style: none; }
 .help li { margin-bottom: 8px; }
 code { font-family: ui-monospace, "Atkinson Hyperlegible Mono", monospace; font-size: 0.95em; }
