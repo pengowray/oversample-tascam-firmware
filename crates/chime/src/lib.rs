@@ -48,8 +48,9 @@
 //! The format is the AudioMoth chime by Open Acoustic Devices
 //! (<https://www.openacousticdevices.info>), published under the MIT licence in
 //! the AudioMoth-Chime and AudioMoth-Firmware-Basic repositories, Copyright (c)
-//! 2020 OpenAcousticDevices. Their JavaScript encoder is copied unchanged into
-//! `web/recorder-setup/` with its licence in `web/recorder-setup/LICENSE-audiomoth.txt`.
+//! 2020 OpenAcousticDevices. Their JavaScript encoder is copied unchanged into the
+//! `batchi-chime` repository, which holds the phone page, with its licence in
+//! `LICENSE-audiomoth.txt`.
 //! The format constants and the Hamming codewords in [`format`] are taken from
 //! that encoder.
 

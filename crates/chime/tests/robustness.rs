@@ -14,7 +14,7 @@
 //! # How a trial is built
 //!
 //! Each trial renders a chime with a time payload, which is what
-//! `web/recorder-setup/index.html` sends, with a Unix time, a time zone and random seeds
+//! the page in the `batchi-chime` repository sends, with a Unix time, a time zone and random seeds
 //! that depend on the row and the trial. The signal then goes through the effects of
 //! its row in this order:
 //!

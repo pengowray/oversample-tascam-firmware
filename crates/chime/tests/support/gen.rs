@@ -1,4 +1,4 @@
-//! Rust port of the encoder in `web/recorder-setup/audiomothchime.js` and of the
+//! Rust port of the encoder in `audiomothchime.js` in the `batchi-chime` repository and of the
 //! payload and tune code in `audiomothchime_connector.js`, by Open Acoustic
 //! Devices (MIT licence).
 //!

@@ -1,10 +1,11 @@
 //! Checks that the Rust port of the encoder in `support/gen.rs` matches the
-//! JavaScript encoder, using a render from `tools/chime_render.mjs`.
+//! JavaScript encoder, using a render from `tools/chime_render.mjs` in the `batchi-chime`
+//! repository, which is beside this one.
 //!
-//! The fixture was made with:
+//! The fixture was made with this command, from this repository's root:
 //!
 //! ```text
-//! node tools/chime_render.mjs --rate 48000 --unix 1793000000 --tz 660 \
+//! node ../batchi-chime/tools/chime_render.mjs --rate 48000 --unix 1793000000 --tz 660 \
 //!     --out crates/chime/tests/fixtures/js_48000_u1793000000_tz660.wav
 //! ```
 //!

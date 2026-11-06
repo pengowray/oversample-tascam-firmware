@@ -83,21 +83,10 @@ cargo run -p bat-app --release --example library -- DIR OUT.csv
 
 Both take `AUDIBLE=LO,HI` (Hz) to try another audible band.
 
-## Recorder setup page
+## Testing a chime recording
 
-`web/recorder-setup/` is a separate static page for a phone. It sets a bat recorder's
-clock and settings by playing sound at it: open `/recorder-setup/` on the same server,
-or publish the folder on any https host. Location needs https.
-
-| Tab | Sound | Sends |
-|---|---|---|
-| Tascam X8 | AudioMoth chime | Date, time and UTC offset |
-| AudioMoth | AudioMoth chime, with an optional tone first | The same, plus optional location and deployment ID |
-| PippyG | Our own encoder for the PippyG's chirp (`pippyg_chirp.js`) | Device ID, location, date and time, wake and sleep times, recording mode, trigger level, recording length |
-
-`audiomothchime.js` and `audiomothchime_connector.js` are unmodified copies of Open
-Acoustic Devices' MIT-licensed library (`LICENSE-audiomoth.txt`). The chirp encoder is
-checked by `node --test tools/test_pippyg_chirp.mjs` and has not been tried on a real PippyG.
+The phone page that plays the chime, `Bat recorder setup by sound`, is in its own repository,
+`batchi-chime`, beside this one in `~/projects`.
 
 The X8 firmware cannot read the chime yet. To test a recording, record the chime on the
 X8 at 192 kHz, copy the WAV to the computer and run:

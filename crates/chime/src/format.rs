@@ -2,7 +2,7 @@
 //! and the time message in the payload.
 //!
 //! The values come from `audiomothchime.js` and `audiomothchime_connector.js`
-//! by Open Acoustic Devices (MIT licence, copies in `web/recorder-setup/`).
+//! by Open Acoustic Devices (MIT licence, copies in the `batchi-chime` repository).
 
 use core::fmt;
 
