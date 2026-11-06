@@ -816,7 +816,7 @@ debug line? Is the stutter during a take better?
 
 ## Step 13 test file: MANUAL's mix, debug figures on a switch, auto level, bat glyph (built 2026-11-06, not yet installed)
 
-`work/patch13/#PortaX8_0231.203` (B231, SHA-256 `6c253918…d9fb75a8`). Includes steps 11
+`work/patch13/#PortaX8_0231.203` (B231, SHA-256 `ee5d9a37…cd05d248`). Includes steps 11
 and 12.
 
 - **Listen to** now chooses between MANUAL's mix and the raw inputs: MANUAL's
@@ -841,11 +841,12 @@ and 12.
   on the right. The default Listen to averages the two sides, -6 dB, which is the
   same as both raw inputs with one active.
 - **Silent mix.** When the firmware has the input of every track that is on muted,
-  a notice covers the waterfall. With REC PAUSE on (settings+0x194 is 0) and the
-  recorder stopped, the fix is REC. Otherwise it is usually one of MANUAL's settings
-  pages left open under the bat screen: the firmware mutes the inputs on most of
-  them (ITCM 0x161ec, screen byte 0x2a2d1). The patch reads the mute words at
-  0x29e5c + 0x14 per channel. Whether the raw inputs carry sound with REC PAUSE on
+  and the reason is one of these two, a notice covers the waterfall. One of MANUAL's
+  settings pages left open under the bat screen comes first: the firmware mutes the
+  inputs on most of them (ITCM 0x161ec, page byte 0x2a2d1), and ignores REC until it
+  closes. Otherwise, with REC PAUSE on (settings+0x194 is 0) and the recorder stopped,
+  the fix is REC. The brief mute while an app opens has no notice. The patch reads
+  the mute words at 0x29e5c + 0x14 per channel. Whether the raw inputs carry sound with REC PAUSE on
   is not known; no reader of settings+0x194 that the review checked turns input power
   off directly, but the return to the app screen skips `FUN_80da5e94` in that state.
   In MANUAL's default, REC from stop enters the recording guide (transport 9, or
@@ -859,8 +860,9 @@ and 12.
   since the settings changed) and drawing. Line 3: output underruns and lost input
   frames since those settings changed, with the seconds, and the ring levels. Line
   4: on-track bits, the mix's level or the two words heard, then words 0 to 11 in
-  dB. Mode, what is heard, Auto volume and the recorder's state count as settings:
-  changing one restarts the counts.
+  dB. Changing the mode, what is heard, Auto volume, the recorder's state or the
+  tile restarts the counts, and so does each opening of the bat screen, including
+  coming back with PLAY.
 - **Auto volume** (off by default, settings screen) changes the headphones only: a
   gain at the end of the app's processing, +24 to -24 dB, aiming for -12 dBFS. The
   level of a call fades with a 1.5 s time constant, so calls in a pass keep the gain
@@ -1105,9 +1107,12 @@ are in the SDRAM data (lc_manual.png at 0x819a188c). Image: +0 colour (0xAARRGGB
 height (16 bits each), +0x14 stride, +0x18 trim bytes, +0x1c cache size, +0x20 cache
 entry. **Static constructors write the colour and layout at start-up (the table at
 0x81382be4), so `work/ram/sdram-81900000.bin` shows both as 0; a hand-made descriptor
-must set them, or the draw path's "textureLayout" assert hangs the unit.** The pixels
-are drawn by the CPU blender (`FUN_0001ca54`), with no stride alignment. Height and
-width are separate bindings, and x and y centre the item from them: (parent + 1) / 2
+must set them, or the draw path's "textureLayout" assert hangs the unit.** For an area
+of 50 pixels or more, the CPU copies the mask into a scratch buffer of ARGB pixels at
+0x20200000 (`FUN_80e03294`) and the PXP blends that; smaller areas go to the CPU blender
+`FUN_0001ca54`. Both step through the mask by the stride, which needs no alignment. Other
+layouts exist: 0x1e488 (4 bytes per pixel, format 0) and 0x1e490 (2 bytes, format 4). Height
+and width are separate bindings, and x and y centre the item from them: (parent + 1) / 2
 - size / 2 (`FUN_813e0120`). The parent is 50 x 50.
 
 **USER SETTINGS tiles** (cursor 11 to 13). Each is shown only while its slot

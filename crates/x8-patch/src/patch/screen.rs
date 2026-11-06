@@ -267,6 +267,10 @@ fn draw_debug(fb: &mut Rgb565Buffer<'_>, app: &BatApp<'static>) {
     draw_strip(fb, top + STRIP_ROWS as i32, &line, background);
 
     let mut line = Line::new();
+    let task = TASK.load(Relaxed) as i32;
+    if task <= 0 {
+        let _ = write!(line, "no task {task} | ");
+    }
     let _ = write!(
         line,
         "dry {} lost {} in {} s | ring in {} out {}",
@@ -276,10 +280,6 @@ fn draw_debug(fb: &mut Rgb565Buffer<'_>, app: &BatApp<'static>) {
         IN_WRITE.load(Relaxed).wrapping_sub(IN_READ.load(Relaxed)),
         OUT_WRITE.load(Relaxed).wrapping_sub(OUT_READ.load(Relaxed)),
     );
-    let task = TASK.load(Relaxed) as i32;
-    if task <= 0 {
-        let _ = write!(line, " | no task {task}");
-    }
     draw_strip(fb, top + 2 * STRIP_ROWS as i32, &line, background);
 
     // Peak level of each input word since the last redraw, in dB below full
@@ -357,13 +357,21 @@ fn update_status(app: &mut BatApp<'static>) {
     }
     let hear_mix = !PLAYBACK.load(Relaxed) && app.feed() == Feed::Mix;
     HEAR_MIX.store(hear_mix, Relaxed);
-    app.set_mix_silence((hear_mix && on_tracks_muted()).then(|| {
-        if transport <= 1 && read_byte(stock::MONITOR_WHEN_STOPPED) == 0 {
-            MixSilence::RecPause
-        } else {
-            MixSilence::PageOpen
-        }
-    }));
+    // The firmware also mutes the inputs briefly while an app opens, which
+    // needs no notice. A page comes first: it mutes whatever REC PAUSE does,
+    // and REC does nothing until it is closed.
+    let page = read_byte(stock::DSP_PAGE);
+    let rec_pause = transport <= 1 && read_byte(stock::MONITOR_WHEN_STOPPED) == 0;
+    let silence = if !hear_mix || !on_tracks_muted() {
+        None
+    } else if !matches!(page, 0 | 7 | 0xb) || (rec_pause && page != 0) {
+        Some(MixSilence::PageOpen)
+    } else if rec_pause {
+        Some(MixSilence::RecPause)
+    } else {
+        None
+    };
+    app.set_mix_silence(silence);
 }
 
 /// Text in a fixed buffer, for formatting without an allocator.

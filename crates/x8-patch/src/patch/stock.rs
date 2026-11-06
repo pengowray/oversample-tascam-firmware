@@ -123,6 +123,9 @@ pub const ICON_WIDTHS: [usize; 2] = [0x80f2_a9d5, 0x80f2_b4a5];
 /// Settings + 0x194: 0 when REC PAUSE is on, so the firmware mutes every
 /// input in the mix while the recorder is stopped (ITCM 0x161d8).
 pub const MONITOR_WHEN_STOPPED: *const u8 = 0x81e8_ca10 as *const u8;
+/// DSP state + 0x625: the app's page. Most pages mute the inputs (ITCM 0x161ec
+/// keeps them only on 0, 7 and 0xb), and the firmware ignores REC on any but 0.
+pub const DSP_PAGE: *const u8 = 0x0002_a2d1 as *const u8;
 /// DSP state + 0x1b0, one word every 0x14 bytes for channels 0 to 5: 1 while
 /// the firmware has that input muted in the mix, for REC PAUSE or an open
 /// settings page among other reasons.
