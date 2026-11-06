@@ -23,8 +23,12 @@
 //! on; REC PAUSE off; a settings page open). `DEBUG=1` offers the debug switch and draws the X8 patch's
 //! longest debug lines over the last-call panel, to check that they fit.
 //! `AUTO=on` or `AUTO=bats` sets Auto volume, for the settings screen.
+//! `LISTEN=first` or `LISTEN=second` chooses one side in Listen to, for the settings
+//! screen; the default is both.
 
-use bat_app::{AutoVolume, BatApp, Buffers, CallKind, Feed, HEIGHT, InputKind, InputName, MixSilence, Mode, Recorder, Rgb565Buffer, WIDTH};
+use bat_app::{
+    AutoVolume, BatApp, Buffers, CallKind, Feed, HEIGHT, InputKind, InputName, MixSilence, Mode, MonitorSource, Recorder, Rgb565Buffer, WIDTH,
+};
 use embedded_graphics::prelude::*;
 use embedded_graphics::primitives::Rectangle;
 use u8g2_fonts::types::{FontColor, VerticalPosition};
@@ -106,6 +110,11 @@ fn main() {
             _ => None,
         });
     }
+    match std::env::var("LISTEN").as_deref() {
+        Ok("first") => app.set_source(MonitorSource::First),
+        Ok("second") => app.set_source(MonitorSource::Second),
+        _ => {}
+    }
     if let Ok(volume) = std::env::var("AUTO") {
         app.set_auto_volume(match volume.as_str() {
             "on" => AutoVolume::On,
@@ -155,7 +164,7 @@ fn main() {
         const LINES: [&str; 4] = [
             "HET | in 5+6 | leaving standby | 192 kHz | auto bats only",
             "CPU % irq 100 hook 100 dsp 100 (max 100) draw 100",
-            "dry 9999 lost 999999 skip 9999 in 999 s | ring in 8192 out 16384",
+            "dry 9999 lost 999999 skip 9999 in 999 s | ring in 8192 out 15360",
             "on 3f mix -99 dB: 99 99 99 99 99 99 99 99 99 99 99 99",
         ];
         let font = FontRenderer::new::<fonts::u8g2_font_helvR08_tf>();

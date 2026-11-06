@@ -27,6 +27,15 @@ put it in `web/samples/` (ignored by git) and open
 `http://localhost:8742/?wav=samples/NAME.wav`. Add `&mode=te` (or `het`, `comb`,
 `fd`, `pitch`) to start in that listening mode.
 
+**Stereo.** In HET, COMB and 1:1 with both inputs chosen in Listen to, which is the
+default, channel 1 of a two-channel WAV file plays in the left ear and channel 2 in
+the right ear. FD, TE and PITCH play the average of the two channels in both ears. A
+mono file plays as both inputs, so it sounds the same in both ears. 1:1 has no `mode=`
+value or number key: tap its button on the screen. The emulator page has no MANUAL's
+mix, BAT PLAYBACK, X8 output gain or audio rings, and its Auto volume aims for a
+different level from the X8's. Use the page to hear the left and right separation, and
+not to judge X8 levels or dropouts.
+
 `build.sh` needs the `wasm-bindgen` command-line tool at the version pinned in
 `crates/bat-app-web/Cargo.toml` (`cargo install wasm-bindgen-cli --version 0.2.127`).
 

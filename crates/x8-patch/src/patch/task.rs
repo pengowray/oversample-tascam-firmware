@@ -12,7 +12,7 @@ use super::state::{
     LAST_RENDER, LOAD_SECOND, LOAD_WINDOW_START, OUT_READ, OUT_WRITE, SESSION, SESSION_SEEN, STACK, Stack, TASK,
     TOUCH_DOWN, TOUCH_READ, TOUCH_WRITE,
 };
-use super::{blocks_per_second, read_byte, stock, system_state};
+use super::{blocks_per_second, read_byte, spare, stock, system_state};
 
 /// Frames processed per call at most when processing in task 1 (only if the
 /// DSP task could not be created), so one call cannot hold task 1 for long.
@@ -56,9 +56,17 @@ const BACKLOG_FRAMES: u32 = 6_144;
 ///
 /// The total rises above 8,192 only after the output has run dry, because input keeps
 /// arriving while the output waits to be primed: to 12,288 for a task running at twice
-/// real time, and towards 16,384, the size of the output ring, for a task barely
-/// keeping up. A task running at more than 1.33 times real time stays under this limit
-/// and drops nothing.
+/// real time, and towards 16,384 (the input ring's 8,192 plus the 8,192 the output is
+/// primed with) for a task barely keeping up. A task running at more than 1.33 times
+/// real time stays under this limit and drops nothing.
+///
+/// A total above the output ring's 15,360 frames would not fit once the task has caught
+/// up. This limit does not always catch it. If the output starts partway through a pass,
+/// the pass can end with fewer than BACKLOG_FRAMES waiting and a total of up to 17,407:
+/// 8,191 in the output ring before it starts, 1,024 in the chunk being processed and
+/// 8,192 in the input ring. So `process_input` leaves input in its ring while the output
+/// ring is full, and `drop_backlog` also drops whatever is above the size of the output
+/// ring, however little is waiting. The app is then told about the jump and fades it.
 ///
 /// In a block-by-block model of the rings (random hold-ups with means of 4 to 32 ms,
 /// task speeds of 1.1 to 2 times real time), this rule gave the same underruns as
@@ -117,8 +125,9 @@ fn drop_backlog(app: &mut BatApp<'static>) {
     let read = IN_READ.load(Relaxed);
     let waiting = IN_WRITE.load(Acquire).wrapping_sub(read);
     let held = waiting.wrapping_add(OUT_WRITE.load(Relaxed).wrapping_sub(OUT_READ.load(Acquire)));
-    if waiting > BACKLOG_FRAMES && held > MOST_HELD_FRAMES {
-        let skip = (waiting - BACKLOG_FRAMES).min(held - MOST_HELD_FRAMES);
+    let above_limit = if waiting > BACKLOG_FRAMES { (waiting - BACKLOG_FRAMES).min(held.saturating_sub(MOST_HELD_FRAMES)) } else { 0 };
+    let skip = above_limit.max(held.saturating_sub(spare::OUT_FRAMES)).min(waiting);
+    if skip > 0 {
         IN_READ.store(read.wrapping_add(skip), Release);
         BACKLOG_DROPPED.store(BACKLOG_DROPPED.load(Relaxed).wrapping_add(skip), Relaxed);
         app.input_lost(skip);
@@ -148,7 +157,16 @@ fn new_session(app: &mut BatApp<'static>) {
     if session != SESSION_SEEN.load(Relaxed) {
         SESSION_SEEN.store(session, Relaxed);
         IN_READ.store(IN_WRITE.load(Acquire), Release);
-        OUT_WRITE.store(OUT_READ.load(Acquire), Release);
+        // The interrupt can read a block between the load and the store, which would leave
+        // the write count behind the read count and `process_input` with no room. So repeat
+        // until the read count has not moved.
+        loop {
+            let read = OUT_READ.load(Acquire);
+            OUT_WRITE.store(read, Release);
+            if OUT_READ.load(Acquire) == read {
+                break;
+            }
+        }
         ACTIONS_READ.store(ACTIONS_WRITE.load(Acquire), Release);
         TOUCH_READ.store(TOUCH_WRITE.load(Acquire), Release);
         TOUCH_DOWN.store(false, Relaxed);

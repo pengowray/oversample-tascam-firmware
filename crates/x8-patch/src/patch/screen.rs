@@ -18,7 +18,7 @@ use super::state::{
     BAT_ACTIVE, BLOCKS, BUFFERS, CALLS_PER_S, CYCLES_PER_S, DEBUG_SHOWN, DRAW_PERMILLE, DSP_PERMILLE,
     DUMMY_LCDIF, FRAME, HEAR_MIX, HEARD_WORDS, HOOK_CYCLES_PER_S, IN_DROPPED, IN_READ, IN_WRITE,
     LAST_EVENT, LAUNCH_AT, LOAD_WINDOW_START, LAUNCH_FROM, LAUNCHING, MUTE_SEEN, MUTE_SEEN_AT, NO_APP, NO_INPUT_WORDS, OUT_LAST, OUT_READ,
-    OUT_WRITE, PENDING, PLAYBACK, POPUP_HIDDEN, SAVED_BUFFER, SAVED_LITERAL, SCREEN_APP, SESSION,
+    OUT_WRITE, PENDING, PLAYBACK, POPUP_HIDDEN, PRIMED, SAVED_BUFFER, SAVED_LITERAL, SCREEN_APP, SESSION,
     SOURCE_PEAK, STOCK_CYCLES_PER_S, TASK, TEST_DSP_MAX, TEST_SETTINGS, TEST_START_BLOCKS, TEST_START_DRY,
     TEST_START_BACKLOG, TEST_START_LOST, TEST_START_SKIPPED, UNDERRUNS, WORD_PEAKS, WORK_ENTER,
 };
@@ -99,8 +99,14 @@ pub(super) extern "C" fn enter_work() {
     SESSION.store(SESSION.load(Relaxed).wrapping_add(1), Release);
     SCREEN_APP.store(app_byte() as u32, Relaxed);
     MUTE_SEEN.store(false, Relaxed);
-    // The audio hook leaves the output alone while the bat screen is closed.
-    OUT_LAST.store(0, Relaxed);
+    // The audio hook leaves the output alone while the bat screen is closed. Empty the
+    // output ring and start with the output stopped, so nothing from the last opening
+    // plays in the time before the DSP task wakes and runs `new_session` (up to 20 ms).
+    OUT_LAST[0].store(0, Relaxed);
+    OUT_LAST[1].store(0, Relaxed);
+    PRIMED.store(false, Relaxed);
+    // Rounded down because the audio hook needs a multiple of 4 here.
+    OUT_READ.store(OUT_WRITE.load(Relaxed) & !3, Release);
 
     // Take over the display: Qt's present function now writes to a dummy,
     // and the display shows the patch's buffer.

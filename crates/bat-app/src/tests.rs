@@ -4,6 +4,8 @@ use std::vec::Vec;
 use super::*;
 use bat_dsp::spectrum::SpectrumAnalyzer;
 
+mod stereo;
+
 const FS: f32 = 192_000.0;
 
 fn chirp(f0: f32, f1: f32, amp: f32, n: usize) -> Vec<f32> {

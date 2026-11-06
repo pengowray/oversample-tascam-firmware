@@ -11,15 +11,15 @@ use super::state::{
 };
 use super::{Handler, blocks_per_second, rate_class, spare, stock};
 
-/// Output samples buffered before the headphones start playing the bat app's
+/// Output frames buffered before the headphones start playing the bat app's
 /// output (43 ms at 192 kHz), so the DSP task's passes do not run dry.
-const PRIME_SAMPLES: u32 = 8_192;
-/// When the output ring runs dry there are no samples left to fade, so the output
-/// falls away from the last sample by this factor per sample: 60 dB in 95 samples
+const PRIME_FRAMES: u32 = 8_192;
+/// When the output ring runs dry there are no frames left to fade, so each ear
+/// falls away from its last sample by this factor per frame: 60 dB in 95 frames
 /// (0.5 ms at 192 kHz). A step to zero would be a click on top of the gap.
 const DRY_DECAY: f32 = 0.93;
-/// When the output starts again it fades in over this many samples (0.33 ms).
-const RESUME_FADE_SAMPLES: u32 = 64;
+/// When the output starts again it fades in over this many frames (0.33 ms).
+const RESUME_FADE_FRAMES: u32 = 64;
 
 const CHUNK: usize = 1_024;
 
@@ -115,6 +115,14 @@ pub(super) fn process_input(app: &mut BatApp<'static>, budget: u32, time_blocks:
                 IN_DROPPED_SEEN.store(seen.wrapping_add(lost), Relaxed);
             }
         }
+        // Leave input in the input ring while the output ring has no room for it. If the
+        // input ring then overflows, or `drop_backlog` drops some input, the app is told
+        // about the jump and fades it. The app could not fade frames thrown away after it
+        // had processed them. Only this task moves OUT_WRITE, and the interrupt only makes
+        // more room, so these frames still fit when the app has processed them.
+        let write = OUT_WRITE.load(Relaxed);
+        let used = write.wrapping_sub(OUT_READ.load(Acquire));
+        n = n.min(spare::OUT_FRAMES.saturating_sub(used) as usize);
         if n == 0 {
             break;
         }
@@ -127,14 +135,20 @@ pub(super) fn process_input(app: &mut BatApp<'static>, budget: u32, time_blocks:
         }
         IN_READ.store(read.wrapping_add(n as u32), Release);
         app.process(&first[..n], &second[..n], &mut left[..n], &mut right[..n]);
-        let write = OUT_WRITE.load(Relaxed);
-        let space = spare::OUT_SAMPLES - write.wrapping_sub(OUT_READ.load(Acquire));
-        for (i, &y) in left[..n.min(space as usize)].iter().enumerate() {
-            let at = write.wrapping_add(i as u32) % spare::OUT_SAMPLES;
-            // SAFETY: inside the output ring.
-            unsafe { ptr::write_volatile(out.add(at as usize), y) };
+        let mut at = (write % spare::OUT_FRAMES) as usize;
+        for (&l, &r) in left[..n].iter().zip(&right[..n]) {
+            // SAFETY: `at` is below OUT_FRAMES, so both samples are inside the output ring.
+            unsafe {
+                ptr::write_volatile(out.add(2 * at), l);
+                ptr::write_volatile(out.add(2 * at + 1), r);
+            }
+            at += 1;
+            if at == spare::OUT_FRAMES as usize {
+                at = 0;
+            }
         }
-        OUT_WRITE.store(write.wrapping_add(n.min(space as usize) as u32), Release);
+        // Both samples of every frame are written before the interrupt can read them.
+        OUT_WRITE.store(write.wrapping_add(n as u32), Release);
         done += n as u32;
     }
     done
@@ -240,9 +254,9 @@ unsafe extern "C" fn audio_hook(a: usize, b: usize, c: usize, d: usize) -> usize
     let available = OUT_WRITE.load(Acquire).wrapping_sub(read);
     let mut primed = PRIMED.load(Relaxed);
     let mut fade_in = OUT_FADE_IN.load(Relaxed);
-    if !primed && available >= PRIME_SAMPLES {
+    if !primed && available >= PRIME_FRAMES {
         primed = true;
-        fade_in = RESUME_FADE_SAMPLES;
+        fade_in = RESUME_FADE_FRAMES;
     } else if primed && available < 4 {
         primed = false;
         UNDERRUNS.store(UNDERRUNS.load(Relaxed).wrapping_add(1), Relaxed);
@@ -250,29 +264,35 @@ unsafe extern "C" fn audio_hook(a: usize, b: usize, c: usize, d: usize) -> usize
     PRIMED.store(primed, Relaxed);
     let gain = stock_gain * 2_147_483_647.0;
     let ring = spare::OUT_RING as *const f32;
-    let mut last = f32::from_bits(OUT_LAST.load(Relaxed));
+    let mut left = f32::from_bits(OUT_LAST[0].load(Relaxed));
+    let mut right = f32::from_bits(OUT_LAST[1].load(Relaxed));
+    // One modulo per block. OUT_READ is always a multiple of 4: this interrupt moves it in
+    // steps of 4, and `enter_work` rounds it down. OUT_FRAMES is a multiple of 4 too, so the
+    // block's 4 frames never cross the end of the ring.
+    let at = (read % spare::OUT_FRAMES) as usize;
     for k in 0..4 {
-        let y = if primed {
-            // SAFETY: inside the output ring.
-            let y = unsafe { ptr::read_volatile(ring.add((read.wrapping_add(k as u32) % spare::OUT_SAMPLES) as usize)) };
+        if primed {
+            // SAFETY: `at + k` is below OUT_FRAMES, so both samples are inside the output ring.
+            (left, right) = unsafe { (ptr::read_volatile(ring.add(2 * (at + k))), ptr::read_volatile(ring.add(2 * (at + k) + 1))) };
             if fade_in > 0 {
                 fade_in -= 1;
-                y * (RESUME_FADE_SAMPLES - fade_in) as f32 / RESUME_FADE_SAMPLES as f32
-            } else {
-                y
+                let share = (RESUME_FADE_FRAMES - fade_in) as f32 / RESUME_FADE_FRAMES as f32;
+                left *= share;
+                right *= share;
             }
         } else {
-            last * DRY_DECAY
-        };
-        last = y;
-        let sample = ((y * OUTPUT_GAIN).clamp(-OUTPUT_CEILING, OUTPUT_CEILING) * gain) as i32;
+            left *= DRY_DECAY;
+            right *= DRY_DECAY;
+        }
+        let word = |y: f32| ((y * OUTPUT_GAIN).clamp(-OUTPUT_CEILING, OUTPUT_CEILING) * gain) as i32;
         // SAFETY: the words of this frame in the output block.
         unsafe {
-            ptr::write_volatile(output.add(2 * k), sample);
-            ptr::write_volatile(output.add(2 * k + 1), sample);
+            ptr::write_volatile(output.add(2 * k), word(left));
+            ptr::write_volatile(output.add(2 * k + 1), word(right));
         }
     }
-    OUT_LAST.store(last.to_bits(), Relaxed);
+    OUT_LAST[0].store(left.to_bits(), Relaxed);
+    OUT_LAST[1].store(right.to_bits(), Relaxed);
     OUT_FADE_IN.store(fade_in, Relaxed);
     if primed {
         OUT_READ.store(read.wrapping_add(4), Release);

@@ -11,7 +11,9 @@
 //! RUSTFLAGS="-C no-vectorize-loops -C no-vectorize-slp" cargo run -p bat-app --release --example bench
 //!
 //! Without IN.wav it plays noise with ten 5 ms calls a second. `HOPS=128,192`
-//! chooses the FFT hops for the stage table. The stages that the app does not
+//! chooses the FFT hops for the stage table. The last table has the app with one
+//! chain against two, on two different signals: the file's first two channels, or the
+//! noise and the same noise backwards. The stages that the app does not
 //! make public (the waterfall and snapshot writes, the meters) are copied here,
 //! so keep them in step with `BatApp::analyse`. The stages add up to about the
 //! whole app's analysis, as the two tables show.
@@ -19,7 +21,7 @@
 use std::hint::black_box;
 use std::time::Instant;
 
-use bat_app::{BatApp, Buffers, FFT_HOP, HEIGHT, Mode, Rgb565Buffer, Setting, WIDTH};
+use bat_app::{AutoVolume, BatApp, Buffers, FFT_HOP, HEIGHT, Mode, MonitorSource, Rgb565Buffer, Setting, WIDTH};
 use bat_dsp::classify::CallClassifier;
 use bat_dsp::detector::{CallDetector, DEFAULT_BAND_LO_HZ};
 use bat_dsp::freq_div::FrequencyDivider;
@@ -37,6 +39,7 @@ const WF_COLUMN_SAMPLES: usize = 1920;
 const CHUNK: usize = 256;
 const VIEW_HI: f32 = 96_000.0;
 const RUNS: usize = 5;
+const STEREO_RUNS: usize = 15;
 
 /// The shortest of some runs, which is the one least disturbed by whatever else
 /// this machine is doing.
@@ -77,6 +80,25 @@ fn load(path: Option<&String>) -> Vec<f32> {
             noise + call
         })
         .collect()
+}
+
+/// Two different signals of the same length, for the table of one chain against two.
+fn load_two(path: Option<&String>, x: &[f32]) -> (Vec<f32>, Vec<f32>) {
+    if let Some(path) = path {
+        let mut reader = hound::WavReader::open(path).expect("open wav");
+        let spec = reader.spec();
+        let ch = spec.channels as usize;
+        let samples: Vec<f32> = match spec.sample_format {
+            hound::SampleFormat::Float => reader.samples::<f32>().map(Result::unwrap).collect(),
+            hound::SampleFormat::Int => {
+                let scale = 1.0 / (1u64 << (spec.bits_per_sample - 1)) as f32;
+                reader.samples::<i32>().map(|s| s.unwrap() as f32 * scale).collect()
+            }
+        };
+        let side = |c: usize| samples.chunks(ch).map(|f| f[c.min(ch - 1)]).collect();
+        return (side(0), side(1));
+    }
+    (x.to_vec(), x.iter().rev().copied().collect())
 }
 
 fn level(db: f32, floor_db: f32, scale: f32) -> u8 {
@@ -346,4 +368,44 @@ fn main() {
     println!();
     println!("{:<42}{:>10.2}", "auto volume, when on", per_s(on - off));
     println!("{:<42}{:>10.2}", "auto volume, when bats only", per_s(bats_only - off));
+
+    // The whole app with one chain against two.
+    let (first, second) = load_two(args.get(1), &x);
+    println!();
+    println!("Whole app, source First or Both, with Auto volume off or on, with and without its analysis:");
+    println!("{:<8}{:>9}{:>9}{:>9}{:>9}  |{:>9}{:>9}{:>9}{:>9}", "mode", "First", "Both", "First on", "Both on", "First", "Both", "First on", "Both on");
+    for mode in [Mode::Het, Mode::Comb, Mode::Thru] {
+        print!("{:<8}", mode.label());
+        let row = [
+            (MonitorSource::First, AutoVolume::Off, false),
+            (MonitorSource::Both, AutoVolume::Off, false),
+            (MonitorSource::First, AutoVolume::On, false),
+            (MonitorSource::Both, AutoVolume::On, false),
+            (MonitorSource::First, AutoVolume::Off, true),
+            (MonitorSource::Both, AutoVolume::Off, true),
+            (MonitorSource::First, AutoVolume::On, true),
+            (MonitorSource::Both, AutoVolume::On, true),
+        ];
+        for (i, (source, volume, skip)) in row.into_iter().enumerate() {
+            let mut storage = vec![0.0f32; 96_000];
+            let mut buffers = Box::new(Buffers::new());
+            let mut app = BatApp::new(FS, &mut storage, &mut buffers);
+            app.set_mode(mode);
+            app.set_source(source);
+            app.set_auto_volume(volume);
+            app.set_skip_analysis(skip);
+            let (mut l, mut r) = (vec![0.0; 1024], vec![0.0; 1024]);
+            let t = best_of(STEREO_RUNS, || {
+                for (a, b) in first.chunks(1024).zip(second.chunks(1024)) {
+                    let k = a.len();
+                    app.process(a, b, &mut l[..k], &mut r[..k]);
+                }
+            });
+            if i == 4 {
+                print!("  |");
+            }
+            print!("{:>9.2}", per_s(t));
+        }
+        println!();
+    }
 }

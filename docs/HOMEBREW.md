@@ -1140,6 +1140,348 @@ test) and `auto_volume` (the tables above). `calls.rs` takes `HOP=`, and `screen
 - Does `Press REC to record and listen` ever appear? If it does, note what was on screen before it.
 - Open BAT DETECTOR from the LAUNCHER after VOICE with REC PAUSE off: no notice should flash.
 
+## Step 15 test file: stereo headphones in HET, COMB and 1:1 (built 2026-11-07, not yet installed)
+
+`work/patch15/#PortaX8_0233.203` (B233, SHA-256 `659bdb02…eb9a410b`). Includes steps 11
+to 14. The last build installed on a unit is B231, so the "What to check" lists of steps 11 to
+14 apply to this build as well as the list below. No hook address, table word or header field
+changed, so `BUILDS` in `tools/x8patch.py` is the same as for B232. Nothing in this step has run on a
+unit, and nobody has heard the stereo. Every figure below is from a host build, a model or the
+firmware listing, and estimates are marked.
+
+**What changed.** With both sides chosen in Listen to, HET, COMB and 1:1 play the first input
+buffer passed to `BatApp::process` in the left ear and the second input buffer in the right ear.
+This covers a pair of inputs, MANUAL's mix, and BAT PLAYBACK's left and right. There is no new setting, and
+these three modes no longer have a way to play the average of two inputs. So the Step 13 line
+"The default Listen to averages the two sides" now holds only for the analysis and for FD and TE.
+
+| What | Heard or analysed as | Why |
+|---|---|---|
+| HET, COMB, 1:1 with both sides chosen | Stereo | The request for this step |
+| HET, COMB, 1:1 with one side chosen, or one input on | One chain, copied to both ears | Costs the same as B232 and runs no second filter |
+| FD | Mono: the average, or the chosen side | Stereo would need about 46% of the CPU while recording (an estimate), against a budget of about 42%. Figures from the unit decide this: see "What to check". |
+| TE | Mono | The recording has one channel of storage |
+| PITCH | Mono | Hidden on the X8 |
+| Waterfall, detector, classifier, TE recording | Mono: the average, or the chosen side | One analysis runs, on the same signal as B232 |
+
+- **HET and COMB.** Each heterodyne voice has one oscillator shared by both channels and one
+  low-pass filter per channel. A shared oscillator keeps the left and right phase relationship
+  of the input, so a sound equally loud and in phase at both mics stays centred. Retuning moves
+  both channels. The mono path is unchanged.
+- **The mix.** MANUAL's mix with both sides chosen is always stereo, even with one input on,
+  because the two buffers are the mix's left and right. At the default pans (see Step 13), one mic
+  on the mix is heard in one ear only. This is a question for the owner, below.
+- **Auto volume.** One gain and one gate for both ears, because separate gains would bring left
+  and right to the same level and flatten the stereo image. The envelope follows the larger of
+  the two absolute values. The noise floor uses each ear's sum of squares over the 10 ms window
+  and takes the larger at the end of the window. A mean of the two squares was tried first and
+  rejected: it reads 3 dB low with one ear silent, which put the other ear's noise 3 dB above the
+  limit. The limit is 36 dB below the Auto volume target, which is -48.0 dBFS at the headphones.
+  The table below has the figures. With the same signal in both ears, each ear is bit-identical to
+  B233's one-chain path. With one ear silent, the other ear is. Tests check both, with Auto volume
+  set to On and to Bats only.
+- **Joins.** After lost input, each ear's input fades from that ear's last sample over 64 samples,
+  as the mono signal does in B232. `last_ears` keeps the last sample of each chain up to date, so a
+  change between mono and stereo starts from what was heard. If a join and a change from stereo
+  to one chain happen in the same chunk, the HET or COMB filter starts from the left ear's last
+  sample, because that is what the filter last received, and the TE recording still starts from
+  the average, as in B232.
+- **A change between one chain and two.** Going to stereo, the second filter takes a copy of the
+  first filter's state. Each ear's output then fades from where it was over 64 samples
+  (`switch_step`), because the right ear otherwise steps from one filter's output to another's.
+
+| Median RMS of 10 ms windows from 3 s on, louder ear, Auto volume On, dBFS at the headphones (limit -48.0) | B232 | Mean of squares | B233 |
+|---|---|---|---|
+| 261105_0086 HET, right input silent | -47.9 | -44.7 | -47.7 |
+| 261105_0086 COMB, right input silent | -47.0 | -44.1 | -47.0 |
+| 261105_0083 HET, right input silent | -47.7 | -45.2 | -47.7 |
+| 261105_0083 COMB, right input silent | -47.2 | -44.5 | -47.2 |
+| 0066 COMB, right input silent | -47.0 | -44.0 | -47.0 |
+| 261105_0086 HET, as recorded | -46.9 | -47.1 | -47.9 |
+| 261105_0083 HET, as recorded | -47.3 | -47.9 | -48.7 |
+| 0066 COMB, as recorded, channels 5.5 dB apart | -45.9 | -45.0 | -46.3 |
+
+**Compared with a build of B232 (8e7b23b), on six recordings.** Each recording ran in each of the
+6 modes, with Listen to on both sides (Both), the first side (First) and the second side (Second),
+and with Auto volume Off, On and Bats only. Each combination ran twice: once plain, and once with
+wheel turns, MARK, analysis skips, and jumps in the input that the app was or was not told about.
+
+| Check | Result |
+|---|---|
+| Waterfall, snapshots, detections, last call, TE recording and screen | Bit-identical in all 648 comparisons |
+| Output with First or Second in all modes, and with Both in FD, TE and PITCH | Bit-identical (part of the 648) |
+| One input on, with Listen to set to Both before the other input went off | Bit-identical in 108 of 108, and one chain |
+| Identical inputs: Both against First and against B232 | Bit-identical in 108 of 108 |
+| Each ear with Auto volume off, against B232's chain on that input alone, with joins and retunes | Bit-identical in 72 of 72 |
+| The ear that has a silent input, in HET, COMB and 1:1 | Exactly zero in 108 of 108, so isolation has no figure: it is infinite |
+| Tone pairs, phase differences 0 to 170 degrees, levels 0 to -20 dB, after retunes and mode changes | Worst phase error 0.0058 degrees, worst level error 0.0008 dB |
+| Stereo output with analysis skips against without | Bit-identical in 45 of 54. The other 9 are Auto volume Bats only, which waits for the detector. B232's own runs with and without skips differ at the same samples on the same recordings |
+
+Size of the click at each event, in dB: the largest change between neighbouring samples in the 400
+samples after the event, against the largest in the 0.1 s before it. Each cell gives the median and
+then the worst across the test runs. A negative figure means the largest change after the event is
+smaller than the largest before it.
+
+| Event | HET | COMB | 1:1 |
+|---|---|---|---|
+| 2,048-frame jump, B232 | -6.9 / +5.0 | -6.9 / +5.2 | -4.2 / +7.9 |
+| 2,048-frame jump, B233 left ear | -6.8 / +7.8 | -6.7 / +9.2 | -3.7 / +7.2 |
+| 2,048-frame jump, B233 right ear | -6.9 / +5.1 | -6.7 / +6.9 | -4.5 / +6.2 |
+| Both to First with a join in the same chunk, B232, left ear | -5.6 / +6.7 | -4.7 / +7.4 | |
+| Both to First with a join in the same chunk, B233, left ear | -5.6 / +2.3 | -5.8 / +2.9 | |
+| Listen to between Both and First, B232 | -3.8 / +14.9 | -6.4 / +9.1 | +7.4 / +32.4 |
+| Listen to between Both and First, B233 left ear | -7.4 / +4.5 | -7.2 / +2.2 | -4.3 / +9.2 |
+| Listen to between Both and First, B233 right ear | -5.1 / +20.7 | -6.0 / +14.7 | -4.4 / +11.4 |
+
+The +20 dB worst figures are in the ear whose sound changes to the other mic. B232's own change
+between First and Second gives +20.8 dB. When the sound going into a filter changes at a switch,
+the filter's output still moves quickly for a moment: 0.21 of the input's peak in one sample in HET
+and 0.30 in COMB. A small tick is possible when Listen to changes during a loud sound.
+
+**Output ring.** The ring now holds frames of `[f32; 2]`, left then right, at 0x865e2000.
+`OUT_FRAMES` is 15,360 frames, which is 122,880 bytes and ends at exactly 0x86600000, and a
+compile-time assertion requires it. `PRIME_FRAMES` stays 8,192. Evidence that the whole range is
+unused by stock code:
+
+- The init table (`work/ram/map.txt`) has a zero run ending at 0x865e1d88 and the next one starting
+  at 0x86600000. The highest code literal below the gap is 0x865e1b84.
+- MPU region 9 (set up from 0x80e01404 to 0x80e0144c) has RBAR 0x86400019 and RASR 0x03030029: base
+  0x86400000, 2 MiB, TEX 0, C 1, B 1, S 0, no subregions disabled. So the ring is cached,
+  write-back with no write allocate, and ends at the end of the region.
+- `refsin` over 0x865e1d88 to 0x86600004, in `work/ghidra` and `work/ghidra-rec`, finds one
+  reference, the reset handler's 0x86600000. `work/notes` does not mention the range.
+- A raw scan of the app, ITCM, DTCM and SDRAM runs finds no `movt` with an upper half from 0x8640
+  to 0x8660. Five aligned words in the image fall in the range (at 0x801a92c0, 0x8038911c,
+  0x803aa74c, 0x803adc34, 0x812337b0). Their neighbours read as data, and the two queried in Ghidra
+  have no references.
+- The reset handler points the stack at 0x86600000 for one call to 0x80e3f958, which uses no stack,
+  then moves it to DTCM. Those are the only two `msr msp` in the image, so nothing is stored there.
+
+This evidence is static. An address computed at run time cannot be ruled out, IAR no-init data
+is not listed in the init table, and `work/ram` holds the flash contents and not a RAM dump.
+B231 used the range only up to 0x865f1fff, so 0x865f2000 to 0x865fffff (56 KB) has never been used
+on a unit.
+
+15,360 is not a power of two, so the ring position comes from `%`. `OUT_WRITE` and `OUT_READ` count
+frames in 32 bits, so each wraps at 2^32, after 6.2 hours of sound on the bat screen. When a count
+wraps, the ring position it gives moves back 4,096 frames, because 2^32 is not a multiple of 15,360.
+The write count wraps first, and the read count follows about 8,192 frames later, which is the usual
+fill of the ring. So about 21 ms of sound (the 4,096 frames) plays early and then plays again in its
+right place, with a click at each of the two jumps. The `%` keeps the position inside the ring, so
+nothing else happens. This is stated at `OUT_WRITE` in `state.rs`.
+
+The input ring, the chunk being processed and the output ring can together hold up to 17,407 frames:
+8,191 in the output ring before it starts playing, 1,024 in the chunk and 8,192 in the input ring.
+The output ring holds 15,360, so not all of those would fit. Two rules cover this:
+
+- `process_input` leaves input in the input ring while the output ring has no room. It used to
+  throw away processed output, with no fade.
+- `drop_backlog` has a second rule. As well as its Step 14 rule, it drops whatever is above 15,360
+  frames across both rings, even when fewer than `BACKLOG_FRAMES` (6,144) are waiting in the input
+  ring, and it tells the app, which fades the jump.
+
+| Block-by-block model of both rings: 264 cases, 792 simulated minutes, task speeds 1.05 to 5 times real time. Hold-ups and speeds are model inputs, not unit figures. | B232 | New ring, B232's rules | B233 |
+|---|---|---|---|
+| Frames thrown away after processing | 252, in 8 events | 82,940, in 2,796 events | 0 |
+| Underruns | 88,926 | 88,933 | 88,936 |
+| Frames dropped, with a fade | 90.64 M | 90.61 M | 90.89 M |
+
+This model reproduces Step 14's figure (32 ms hold-ups every 250 ms: no drops, no underruns). The
+largest rise in drops it shows from B232 to B233 is from 22,773 to 26,775 frames a minute, at a task
+speed of 1.33 times real time with 20% of the time in 32 ms hold-ups. That case already has 109
+underruns a minute. A simpler model, written first for this step, showed a larger rise at the same
+speed: from 35,243 to 177,824 frames a minute with 32 ms hold-ups, and about 224 underruns a minute.
+It shows no drops at 1.5 and 2 times real time.
+`MOST_HELD_FRAMES` stays 14,336, which is still below the size of the ring.
+
+**Interrupt hook.** The ring's left sample goes to `output.add(2 * k)` and its right sample to
+`output.add(2 * k + 1)`. The two float reads, the fade-in, the dry decay and the clamp and scale are per channel, and `OUT_LAST`
+is two values. `read % OUT_FRAMES` runs once per hook call and compiles to one `umull` and shifts,
+with no division. `OUT_READ` is always a multiple of 4, and so is `OUT_FRAMES`, so the 4 frames of a
+hook call never cross the end of the ring and the hook needs no compare. Instructions executed per
+hook call, counted from `rustc`'s assembly of the LTO builds of both commits, with `it` as one instruction (no objdump is installed):
+
+| Path through `audio_hook` | B232 | B233 |
+|---|---|---|
+| Inputs, primed, no fade (the usual path) | 269 | 312 |
+| MANUAL's mix or BAT PLAYBACK, primed, no fade | 385 | 428 |
+| Dry | 244 | 288 |
+| Bat screen closed | 57 | 57 |
+| Worst: per-second block, debug peaks, playback, just primed, fade on all 4 frames | 689 | 736 |
+| Whole function, static | 712 | 811 |
+
+The stack frame is 64 bytes in both. The only call is the stock callback, with no allocation and no
+panic path. The hook still runs from SDRAM, as in B232. Both samples of a frame are written before
+the Release store of `OUT_WRITE`.
+
+**Fixed along the way, both present in B232.**
+
+- `PRIMED` was never reset on opening, so frames from the last opening could play at full level for
+  up to 20 ms, until the DSP task woke and emptied the ring, and that counted as one `dry`.
+  `enter_work` now empties the ring and clears `PRIMED` while `BAT_ACTIVE` is false, when the
+  interrupt leaves them alone.
+- `new_session` could leave `OUT_WRITE` 4 frames behind `OUT_READ` if the interrupt fell between its
+  load and its store. It now repeats until the read count has not moved. `process_input` depends on
+  this, because a write count behind the read count would read as a full ring.
+
+**Cost.** Host figures in ms per second of 192 kHz audio, with auto-vectorisation off, best of 4
+runs of `bench`, which plays its noise with calls 15 times in each run. The unit figures are
+estimates: Step 14's estimated need for that mode, plus 2.93 points of CPU per host ms of difference
+from the B232 column here. The 2.93 comes from B231's HET on standby, which read dsp 57 with the
+interrupt and hook taking 37%, so it used 57% x 63% of the CPU for 12.27 host ms.
+
+| Mode | B232, Both | B233, one side | B233, Both | B233, Both, Auto volume on | Estimated need on the unit, Auto volume off / on | Margin against 42%, off / on |
+|---|---|---|---|---|---|---|
+| HET | 5.50 | 5.39 | 5.82 | 6.81 | 21.4% / 24.3% | 2.0 / 1.7 times |
+| COMB | 6.79 | 6.73 | 7.97 | 8.93 | 28.1% / 30.9% | 1.5 / 1.4 times |
+| 1:1 | 4.94 | 4.82 | 4.85 | 5.89 | 19.3% / 22.1% | 2.2 / 1.9 times |
+
+- With the analysis skipped, the host cost of B232 and then B233 with Both, in ms a second, is:
+  HET 1.09 and 1.43, COMB 2.35 and 3.61, 1:1 0.49 and 0.49. So if the task falls behind, the skip should still keep the headphones going in
+  all three modes. That has not been tested on a unit.
+- The host figures leave out the larger hook and the doubled ring traffic. Estimates: the hook's 43
+  extra instructions a block are 0.35 to 1% of the CPU, at 1 to 3 cycles an instruction (B231's strip
+  gives about 2.8). 24,000 more cache line fills a second are about 0.3 to 0.4%, at an assumed 80 to
+  100 cycles a fill. Twice as many ring writes are at most about 1.1%. Together that is 1 to 2.5
+  points of CPU, so COMB with Auto volume on needs about 32 to 33% against about 42%, or about 1.3
+  times. That is the margin FD has in B232.
+- The one tight case is COMB with Auto volume on during a busy bat pass. On roost-echolocation the
+  host figure is 9.59 in B232 and 10.85 in B233. Scaled two ways (Step 14's figure plus 2.93% per ms, and in
+  proportion to COMB's row in Step 14's table) that is an estimated 37 to 40% of the unit, or 1.05 to
+  1.15 times against 42%, before the 1 to 2.5 points above. B232 in the same case is an estimated
+  33 to 36%. Step 14 said a busy pass adds 3 to 4%. On this file it adds about 2 ms a second, which
+  is 6 to 7 points, with or without stereo. COMB is the mode most likely to show grey columns.
+
+**Levels on recordings.** Auto volume off, at the headphone stage, median over detected bat calls,
+from the `stereo_levels` example. "Ear - mono" compares the louder ear with B232's mono output, and
+correlation is between the two ears. The last three columns are medians per call, so they are not
+differences between the level columns.
+
+| File and mode | Left, dBFS | Right, dBFS | Mono, dBFS | Left against right, median / 90th percentile, dB | Ear - mono, dB | Correlation, calls / quiet |
+|---|---|---|---|---|---|---|
+| x8-3-4, HET 47.0 kHz | -67.7 | -65.8 | -71.9 | 4.5 / 8.9 | +4.5 | 0.07 / 0.18 |
+| x8-3-4, COMB | -63.2 | -62.2 | -63.6 | 1.0 / 6.0 | +1.7 | 0.37 / 0.75 |
+| roost-54khz, HET 53.5 kHz | -25.7 | -28.2 | -30.3 | 2.8 / 8.8 | +3.9 | 0.00 / 0.01 |
+| roost-54khz, COMB | -16.9 | -18.0 | -18.9 | 2.1 / 9.1 | +3.6 | 0.09 / 0.15 |
+| roost-echolocation, HET 32.0 kHz | -25.9 | -24.9 | -27.7 | 3.2 / 8.5 | +4.0 | 0.00 / 0.21 |
+| roost-echolocation, COMB | -22.2 | -23.3 | -24.3 | 3.5 / 9.6 | +3.9 | 0.02 / 0.24 |
+| 0066, HET 47.5 kHz | -70.7 | -64.9 | -69.1 | 6.8 / 12.3 | +5.2 | 0.02 / 0.12 |
+| 0066, COMB | -57.6 | -53.0 | -56.1 | 4.4 / 14.3 | +3.7 | 0.37 / 0.58 |
+
+- The ears differ by a median of 3 to 7 dB in HET, and 9 to 12 dB at the 90th percentile.
+- Correlation is near 0 in HET during calls. That is expected even for one call reaching two mics
+  a few wavelengths apart, so it does not prove that the mics heard different sounds. Expect a wide
+  image, and not a clean pan.
+- In quiet parts of the files, with Auto volume off, the louder ear is 2.6 to 4.1 dB above mono in HET.
+  With Auto volume on the difference is 0.2 dB or less on the two roost files, and 2.3 to 2.9 dB on
+  x8-3-4 and 0066, where the gain sits at its +24 dB limit. With a channel so noisy that the gain
+  sits at its -24 dB limit, that ear is about 6 dB louder than B232's average.
+- Share of samples at the output ceiling with Auto volume off, as B232, then B233 left and right:
+  roost-54khz COMB 0.59%, then 2.39% and 1.94%; roost-echolocation COMB 0.64%, then 1.36% and 1.25%;
+  roost-echolocation HET 0.60%, then 0.65% and 1.22%. There is none on x8-3-4 or 0066, which peak at -24 dBFS or lower. With Auto
+  volume on it is 0.002% or less. `OUTPUT_GAIN` and the ceiling are unchanged, because lowering
+  the gain would cost every quiet recording and the mono modes.
+
+**What you will notice.**
+
+- Each ear hears its own input in HET, COMB and 1:1. With Auto volume off, the louder ear is about
+  4 dB above B232's mono during calls. FD and TE play the average in both ears. With numbered inputs
+  chosen and only one of them on, that input sounds the same in both ears. MANUAL's mix is different:
+  see the first question below.
+- Bats only opens and closes both ears at the same sample.
+- With one mic unplugged and both tracks on, one ear has only what the dead input carries, and the
+  other ear has the live mic 6 dB louder than B232 with Auto volume off (261105_0083 with the right
+  input zeroed, HET: -46.4 dBFS against -52.4). Choosing the live input in Listen to plays it in both
+  ears. With both inputs chosen, the waterfall and the detector use the average, so the live mic
+  shows 6 dB lower there, as on B232.
+- Stepping Listen to while one input is on replaces a stored Both, even if you step straight back.
+  `Input 3` then stays chosen when the second input returns, and the Listen to value shows that.
+  B232 worked the same way, but the choice now also decides between stereo and one chain.
+
+**Sizes.**
+
+| Item | B232 | B233 | Limit |
+|---|---|---|---|
+| ITCM | 61.3 KB | 68.9 KB | 89.2 KB |
+| DTCM | 138.4 KB | 138.6 KB | 152.8 KB |
+| `APP` | 43,368 bytes | 43,640 bytes | |
+| `BatApp::process`, inlining the stereo code, in ITCM | 31,508 bytes | 38,676 bytes | |
+| `process_input`, in ITCM | 1,124 bytes | 1,316 bytes | |
+| Worst DSP task stack, following direct calls | 20,416 bytes | 20,624 bytes | 32,768 bytes |
+
+The DSP task's priority is still 16, and the app still allocates nothing.
+
+**On screen.** Exact text:
+
+| Where | Text | Width |
+|---|---|---|
+| Under Listen to, a pair of numbered inputs | `Left ear: input 3. Right ear: input 4. Mono in FD and TE.` | 259 px of 298 |
+| Under Listen to, MANUAL's mix, Left and right, Both inputs | `Stereo in HET, COMB and 1:1. Mono in FD and TE.` | 240 px |
+| Under Listen to, any single choice, or one input on | `Heard in both ears and shown on the waterfall.` | 218 px |
+| Under Listen to, No input | (empty) | |
+| Under Sounds to mark | `Marked on waterfall, played in TE and Auto volume Bats only.` | 281 px of 298 |
+| Silent mix notice with a page open in MANUAL | `Headphones muted. Press PLAY` / `then close the page in MANUAL` | 205 and 202 px, in a box 220 px wide |
+
+The silent mix notice has a 1 px border, because the waterfall's grey columns are the same grey as
+its box. The Auto volume label now lines up with the other labels on the screen.
+
+**Tools.** New `bat-app` example `stereo_levels` (the table above). `bench` has a table of one chain
+against two. `screenshot` takes `LISTEN=first` and `LISTEN=second`. `auto_volume` plays the average,
+so its figures stay comparable with Step 14. `web/README.md` says how to hear stereo in the emulator.
+
+**Questions for the owner.**
+
+- One mic on MANUAL's mix, which is the default feed, is heard in one ear only, at the default pans.
+  B232 played it in both ears at -6 dB. The help line says `Stereo in HET, COMB and 1:1`, which is
+  true. Choosing `Mix, left side` plays it in both ears at the raw level. Tracks 1 and 3 on together
+  also give one ear, and the app cannot tell, because it does not read the pans. Keep this, or use
+  one chain on the average when only one input is on? The second is a one-line change in
+  `wants_stereo` plus its tests, and the help line would then read `Heard in both ears and shown on
+  the waterfall.`
+- Inputs 3 to 6 are inverted in the raw words and inputs 1, 2 and EXT IN are not (Step 12). A stereo
+  pair with one input from each group, such as inputs 3 and 1 or inputs 3 and EXT IN, has opposite
+  polarity in the two ears. It is heard out of phase, most of all at low frequencies and in 1:1. B232
+  partly cancelled the same pair in its average, and the analysis still does. Should the polarity of
+  one group be corrected? That would change the waterfall and the detector for that pair, which this
+  step has kept bit-identical to B232.
+
+**What to check.** Everything in the "What to check" lists of steps 11 to 14 first, because none
+of those builds has been installed. Then:
+
+- **Which ear.** With Listen to on `Inputs 3 and 4`, tap the mic on input 3. Is it in the left ear?
+  The first sample of each output frame (word 0) is probably the left channel: the firmware shows
+  I2S with word 0 in the left slot, but what the FPGA does with the signal after that is unknown. If
+  the ears are swapped, MANUAL's mix and BAT PLAYBACK still come out as stock, because the hook reads
+  and writes the same word positions. Only `Left ear: input 3` and the match between the on-screen
+  meters and the ears are then wrong.
+- **HET and COMB in stereo**, on standby and while recording, with mics on inputs 3 and 4 and Debug
+  info on, for about a minute each. Is the image useful? Are the headphones continuous? Note `dry`,
+  `lost`, `drop` and `skip`, in each mode. These are the corrected dropout checks in Step 14's list.
+  `dsp` and `draw` are shares of wall time that include the interrupt and the recording tasks (see
+  Step 14), so they read higher than the CPU percentages above.
+  Predicted while recording with Both (an estimate): HET dsp about 35, 1:1 about 31, COMB about 50,
+  FD about 57, draw about 10, `lost` and `dry` near 0, with up to about 5 points more on each dsp for
+  the larger hook and ring traffic. On standby, HET about 2 points and COMB about 6 points above Step
+  14's prediction. The strip's `hook` should go from 6 or 7 to about 7 or 8.
+- **Auto volume** On and Bats only, in stereo, with a call on one mic only. The two ears should keep
+  their level difference, and open and close together. Is the hiss acceptable, and has it moved
+  compared with one input chosen?
+- **One mic unplugged**, with both tracks on. On the host, a silent input gives an ear with exactly
+  zero output, but a real unplugged input carries preamp noise and maybe hum. What does that ear
+  sound like, and does Auto volume stay at the level of the live ear?
+- **BAT PLAYBACK** in stereo: a two-channel file in HET, COMB and 1:1. Is each channel in its own ear?
+  What does a one-channel file do? That was not checked.
+- **The top of the ring.** Anything odd in the first minutes that could come from the stock code
+  using 0x865f2000 to 0x865fffff: stock features failing, or wrong sound after a long run. `ring out`
+  can now read up to 15,360.
+- **Changing Listen to** during sound: is the tick acceptable?
+- **Whether FD can go stereo.** These figures decide it. Stereo adds FD's stage again, 4.22 host ms a
+  second, which is 3.4 times what stereo adds to COMB (1.24). So, with Auto volume off, while
+  recording, read `dsp` in COMB with Inputs 3 and 4 and with Input 3 chosen. Call the difference C.
+  Then read `dsp`, `draw`, `skip` and `dry` in FD. FD should fit in stereo if FD's dsp + draw + 3.4 x C
+  stays below about 85 and `skip` stays near 0. On the estimates here, C is 8 (COMB's predicted 50 here
+  against 42 in Step 14), so that is 57 + 10 + 3.4 x 8 = 94, which is why FD stays mono for now.
+
 ## Firmware map (V2.03, in progress)
 
 Found with `tools/x8ram.py` (unpacks the RAM runs) and a headless Ghidra 10.4

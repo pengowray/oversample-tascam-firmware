@@ -10,6 +10,11 @@
 //! retuning. With the LOs spaced about 2 × the cutoff apart, the audible bands
 //! meet with little overlap.
 //!
+//! Stereo runs two channels against one oscillator, each with its own low-pass.
+//! With a shared oscillator, the phase difference between the channels at the output
+//! is the phase difference at the input, so a sound equally loud and in phase on both
+//! stays centred. Two oscillators would drift apart, and would cost more.
+//!
 //! Defaults match Oversample: 15 kHz cutoff, 30 kHz comb spacing.
 
 use crate::biquad::Butterworth4;
@@ -22,7 +27,8 @@ pub const DEFAULT_COMB_SPACING_HZ: f32 = 30_000.0;
 pub struct Heterodyne {
     sample_rate: f32,
     nco: Nco,
-    lowpass: Butterworth4,
+    /// The low-pass of each channel. The mono path uses only the first.
+    lowpass: [Butterworth4; 2],
     cutoff_hz: f32,
     /// 2 × the user gain: mixing halves the amplitude of the difference tone.
     out_gain: f32,
@@ -33,7 +39,7 @@ impl Heterodyne {
         Self {
             sample_rate,
             nco: Nco::new(sample_rate, lo_hz),
-            lowpass: Butterworth4::lowpass(sample_rate, DEFAULT_CUTOFF_HZ),
+            lowpass: [Butterworth4::lowpass(sample_rate, DEFAULT_CUTOFF_HZ); 2],
             cutoff_hz: DEFAULT_CUTOFF_HZ,
             out_gain: 2.0,
         }
@@ -52,7 +58,10 @@ impl Heterodyne {
     /// frequency, so calls within this distance of the LO are heard.
     pub fn set_cutoff(&mut self, cutoff_hz: f32) {
         self.cutoff_hz = cutoff_hz;
-        self.lowpass.set_coefficients(&Butterworth4::lowpass(self.sample_rate, cutoff_hz));
+        let filter = Butterworth4::lowpass(self.sample_rate, cutoff_hz);
+        for lowpass in &mut self.lowpass {
+            lowpass.set_coefficients(&filter);
+        }
     }
 
     pub fn cutoff(&self) -> f32 {
@@ -66,13 +75,32 @@ impl Heterodyne {
 
     pub fn reset(&mut self) {
         self.nco.reset_phase();
-        self.lowpass.reset();
+        for lowpass in &mut self.lowpass {
+            lowpass.reset();
+        }
+    }
+
+    /// Start the second channel's low-pass from the state of the first. Call this
+    /// when going from mono to stereo: the mono path leaves the second low-pass
+    /// holding whatever it held when stereo last stopped, and that would come out as
+    /// a click. After the copy both channels carry on from what was being heard.
+    pub fn copy_filter_to_second_channel(&mut self) {
+        self.lowpass[1] = self.lowpass[0];
     }
 
     #[inline]
     pub fn process_sample(&mut self, x: f32) -> f32 {
         let (lo, _) = self.nco.tick();
-        self.lowpass.process_sample(x * lo) * self.out_gain
+        self.lowpass[0].process_sample(x * lo) * self.out_gain
+    }
+
+    /// One sample of each channel, against one tick of the oscillator. Always inlined,
+    /// because a call for every sample would cost as much as the oscillator.
+    #[inline(always)]
+    pub fn process_sample_stereo(&mut self, left: f32, right: f32) -> (f32, f32) {
+        let (lo, _) = self.nco.tick();
+        let [filter_left, filter_right] = &mut self.lowpass;
+        (filter_left.process_sample(left * lo) * self.out_gain, filter_right.process_sample(right * lo) * self.out_gain)
     }
 
     pub fn process(&mut self, input: &[f32], output: &mut [f32]) {
@@ -82,10 +110,28 @@ impl Heterodyne {
         }
     }
 
+    /// Both channels against one oscillator. All four slices must have the same length.
+    pub fn process_stereo(&mut self, left: &[f32], right: &[f32], out_left: &mut [f32], out_right: &mut [f32]) {
+        debug_assert_eq!(left.len(), out_left.len());
+        debug_assert_eq!(right.len(), out_right.len());
+        for (((ol, or), &l), &r) in out_left.iter_mut().zip(out_right.iter_mut()).zip(left).zip(right) {
+            (*ol, *or) = self.process_sample_stereo(l, r);
+        }
+    }
+
     /// Add this heterodyne's output, times `scale`, to `output`.
     fn process_add(&mut self, input: &[f32], output: &mut [f32], scale: f32) {
         for (o, &x) in output.iter_mut().zip(input) {
             *o += self.process_sample(x) * scale;
+        }
+    }
+
+    /// Add this heterodyne's output for both channels, times `scale`, to the outputs.
+    fn process_add_stereo(&mut self, left: &[f32], right: &[f32], out_left: &mut [f32], out_right: &mut [f32], scale: f32) {
+        for (((ol, or), &l), &r) in out_left.iter_mut().zip(out_right.iter_mut()).zip(left).zip(right) {
+            let (a, b) = self.process_sample_stereo(l, r);
+            *ol += a * scale;
+            *or += b * scale;
         }
     }
 }
@@ -150,6 +196,13 @@ impl<const N: usize> HetComb<N> {
         }
     }
 
+    /// See [`Heterodyne::copy_filter_to_second_channel`].
+    pub fn copy_filter_to_second_channel(&mut self) {
+        for v in &mut self.voices {
+            v.copy_filter_to_second_channel();
+        }
+    }
+
     pub fn process(&mut self, input: &[f32], output: &mut [f32]) {
         debug_assert_eq!(input.len(), output.len());
         output.fill(0.0);
@@ -161,12 +214,29 @@ impl<const N: usize> HetComb<N> {
             v.process_add(input, output, scale);
         }
     }
+
+    /// Both channels, with one oscillator per voice. All four slices must have the
+    /// same length.
+    pub fn process_stereo(&mut self, left: &[f32], right: &[f32], out_left: &mut [f32], out_right: &mut [f32]) {
+        debug_assert_eq!(left.len(), out_left.len());
+        debug_assert_eq!(right.len(), out_right.len());
+        out_left.fill(0.0);
+        out_right.fill(0.0);
+        if self.active == 0 {
+            return;
+        }
+        let scale = 1.0 / self.active as f32;
+        for v in &mut self.voices[..self.active] {
+            v.process_add_stereo(left, right, out_left, out_right, scale);
+        }
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::test_util::{rms, run_blocks, sine, tone_power, zero_crossing_freq};
+    use std::vec::Vec;
 
     const FS: f32 = 192_000.0;
 
@@ -227,5 +297,115 @@ mod tests {
     fn comb_count_is_capped_at_n() {
         let comb: HetComb<2> = HetComb::new(FS, 20_000.0, 20_000.0, 5);
         assert_eq!(comb.active(), 2);
+    }
+
+    /// Run two channels through `process`, as (left, right).
+    fn stereo(x: &[f32], y: &[f32], mut process: impl FnMut(&[f32], &[f32], &mut [f32], &mut [f32])) -> (Vec<f32>, Vec<f32>) {
+        let (mut l, mut r) = (std::vec![0.0; x.len()], std::vec![0.0; x.len()]);
+        for (((a, b), ol), or) in x.chunks(256).zip(y.chunks(256)).zip(l.chunks_mut(256)).zip(r.chunks_mut(256)) {
+            process(a, b, ol, or);
+        }
+        (l, r)
+    }
+
+    #[test]
+    fn a_tone_in_one_channel_comes_out_of_that_channel_only() {
+        // Isolation: no leak at all. The silent channel's mixer and low-pass see only
+        // zeros, so its output is exactly zero, whatever the other channel carries.
+        let tone = sine(FS, 45_000.0, 0.5, 38_400);
+        let silence = std::vec![0.0; tone.len()];
+        for tone_in_left in [true, false] {
+            let (x, y) = if tone_in_left { (&tone, &silence) } else { (&silence, &tone) };
+            let mut het = Heterodyne::new(FS, 40_000.0);
+            let (l, r) = stereo(x, y, |a, b, ol, or| het.process_stereo(a, b, ol, or));
+            let (heard, quiet) = if tone_in_left { (l, r) } else { (r, l) };
+            let f = zero_crossing_freq(&heard[9_600..], FS);
+            assert!((f - 5_000.0).abs() < 20.0, "output at {f} Hz");
+            assert!((rms(&heard[9_600..]) * core::f32::consts::SQRT_2 - 0.5).abs() < 0.02);
+            assert!(quiet.iter().all(|&v| v == 0.0));
+        }
+    }
+
+    #[test]
+    fn identical_channels_match_the_mono_path_bit_for_bit() {
+        let x = sine(FS, 47_000.0, 0.5, 20_000);
+        let mut mono = Heterodyne::new(FS, 40_000.0);
+        let expected = run_blocks(&x, 256, |i, o| mono.process(i, o));
+        let mut het = Heterodyne::new(FS, 40_000.0);
+        let (l, r) = stereo(&x, &x, |a, b, ol, or| het.process_stereo(a, b, ol, or));
+        assert_eq!(l, expected);
+        assert_eq!(r, expected);
+
+        let mut comb: HetComb<3> = HetComb::new(FS, 25_000.0, DEFAULT_COMB_SPACING_HZ, 3);
+        let expected = run_blocks(&x, 256, |i, o| comb.process(i, o));
+        let mut comb: HetComb<3> = HetComb::new(FS, 25_000.0, DEFAULT_COMB_SPACING_HZ, 3);
+        let (l, r) = stereo(&x, &x, |a, b, ol, or| comb.process_stereo(a, b, ol, or));
+        assert_eq!(l, expected);
+        assert_eq!(r, expected);
+    }
+
+    #[test]
+    fn the_comb_keeps_each_channel_apart() {
+        // A call in the left channel near one LO and a call in the right near another.
+        let x = sine(FS, 30_000.0, 0.5, 38_400);
+        let y = sine(FS, 60_000.0, 0.25, 38_400);
+        let mut comb: HetComb<3> = HetComb::new(FS, 25_000.0, DEFAULT_COMB_SPACING_HZ, 3);
+        comb.set_gain(3.0);
+        let (l, r) = stereo(&x, &y, |a, b, ol, or| comb.process_stereo(a, b, ol, or));
+        let level = |v: &[f32]| rms(&v[9_600..]) * core::f32::consts::SQRT_2;
+        assert!((level(&l) - 0.5).abs() < 0.03, "{}", level(&l));
+        assert!((level(&r) - 0.25).abs() < 0.02, "{}", level(&r));
+    }
+
+    #[test]
+    fn reset_and_cutoff_cover_both_channels() {
+        let x = sine(FS, 41_000.0, 0.5, 4_000);
+        let silence = std::vec![0.0; 256];
+        let mut het = Heterodyne::new(FS, 40_000.0);
+        stereo(&x, &x, |a, b, ol, or| het.process_stereo(a, b, ol, or));
+        het.reset();
+        let (l, r) = stereo(&silence, &silence, |a, b, ol, or| het.process_stereo(a, b, ol, or));
+        assert!(l.iter().chain(&r).all(|&v| v == 0.0), "a reset must clear both low-passes");
+
+        // A tone 8 kHz from the LO, with the cutoff moved below it: both channels lose it.
+        let x = sine(FS, 48_000.0, 0.5, 38_400);
+        let mut het = Heterodyne::new(FS, 40_000.0);
+        het.set_cutoff(1_000.0);
+        let (l, r) = stereo(&x, &x, |a, b, ol, or| het.process_stereo(a, b, ol, or));
+        assert_eq!(l, r);
+        assert!(rms(&r[9_600..]) < 0.5 * 0.001, "{}", rms(&r[9_600..]));
+    }
+
+    #[test]
+    fn copying_the_filter_lets_stereo_carry_on_from_mono() {
+        // Mono for a while, with loud sound, then stereo on the same signal: the second
+        // channel follows the first from the first sample, with no stale state.
+        let x = sine(FS, 47_000.0, 0.5, 2_001);
+        let mut y = std::vec![0.0; x.len()];
+        let mut het = Heterodyne::new(FS, 40_000.0);
+        het.process(&x, &mut y);
+        het.copy_filter_to_second_channel();
+        let (l, r) = stereo(&x, &x, |a, b, ol, or| het.process_stereo(a, b, ol, or));
+        assert_eq!(l, r);
+        // The first channel carries on as if stereo had not started.
+        let mut plain = Heterodyne::new(FS, 40_000.0);
+        let mut first = std::vec![0.0; x.len()];
+        plain.process(&x, &mut first);
+        let mut rest = std::vec![0.0; x.len()];
+        plain.process(&x, &mut rest);
+        assert_eq!(l, rest);
+    }
+
+    #[test]
+    fn retuning_moves_both_channels_together() {
+        let x = sine(FS, 47_000.0, 0.5, 20_000);
+        let mut het = Heterodyne::new(FS, 40_000.0);
+        let (l1, r1) = stereo(&x[..10_001], &x[..10_001], |a, b, ol, or| het.process_stereo(a, b, ol, or));
+        assert_eq!(l1, r1);
+        het.set_lo(44_000.0);
+        let (l2, r2) = stereo(&x[10_001..], &x[10_001..], |a, b, ol, or| het.process_stereo(a, b, ol, or));
+        assert_eq!(l2, r2);
+        let f = zero_crossing_freq(&l2[4_000..], FS);
+        assert!((f - 3_000.0).abs() < 20.0, "output at {f} Hz");
     }
 }

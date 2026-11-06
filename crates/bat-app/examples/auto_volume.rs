@@ -7,7 +7,9 @@
 //! after `OUTPUT_GAIN` of +18 dB), with Auto volume at Off, as B231 had it, On, and
 //! Bats only, and HET tuned to the median peak of the bat calls in the file. Levels in
 //! dB are at the headphone stage, at the stock headphone gain. The files must be at
-//! 192 kHz.
+//! 192 kHz. The two channels are averaged and play as one signal in both ears, so the
+//! figures stay comparable with those from before stereo; `stereo_levels` has the two
+//! ears apart.
 //!
 //! - "quiet": 10 ms windows with no detection from 5 ms before it to 20 ms after it.
 //!   "gain" is the gain in those windows (median, then 5th to 95th percentile), and
@@ -161,8 +163,9 @@ fn play(a: &[f32], b: &[f32], mode: Mode, het_hz: f32, volume: AutoVolume) -> (R
     let (mut l, mut r) = ([0.0f32; WINDOW], [0.0f32; WINDOW]);
     let (mut run, mut baseline) = (Run::default(), Run::default());
     let mut old = B231::new();
-    for (x, y) in a.chunks_exact(WINDOW).zip(b.chunks_exact(WINDOW)) {
-        app.process(x, y, &mut l, &mut r);
+    let mean: Vec<f32> = a.iter().zip(b).map(|(x, y)| 0.5 * (x + y)).collect();
+    for x in mean.chunks_exact(WINDOW) {
+        app.process(x, x, &mut l, &mut r);
         run.add(&l, app.auto_volume_gain(), app.auto_volume_gate());
         if volume == AutoVolume::Off {
             old.apply(&mut l);

@@ -4,6 +4,13 @@
 //! Two stages run on the listening mode's output. The gain stage keeps calls near
 //! the target level without lifting the background noise above a set level. The
 //! gate, used only in [`AutoVolume::BatsOnly`], silences the output between calls.
+//!
+//! In stereo there is one gain and one gate for both ears. Separate gains would bring
+//! left and right to the same level, and flatten the stereo image. The envelope and the
+//! noise floor both follow the louder ear, so with the same signal in both ears, or one
+//! ear silent, the stereo path gives exactly what the mono path gives on that signal.
+//! A floor from the mean of the two ears' power would read 3 dB low with one ear silent,
+//! and the other ear's noise would come out 3 dB above the limit.
 
 use libm::{expf, log10f};
 
@@ -124,8 +131,10 @@ pub(crate) struct AutoLevel {
     floor_db: Option<f32>,
     /// The most gain that keeps the floor at or under the ceiling.
     floor_gain: f32,
-    /// The sum of squares of the window being filled, and the samples left in it.
+    /// The sum of squares of the window being filled, for one chain or the left ear,
+    /// and for the right ear, and the samples left in the window.
     sum: f32,
+    sum_right: f32,
     window_left: u32,
     window_len: u32,
     floor_rise: f32,
@@ -152,6 +161,7 @@ impl AutoLevel {
             floor_db: None,
             floor_gain: MAX_GAIN,
             sum: 0.0,
+            sum_right: 0.0,
             window_left: window_len,
             window_len,
             floor_rise: per_window(FLOOR_RISE_S),
@@ -173,6 +183,7 @@ impl AutoLevel {
             self.floor_db = None;
             self.floor_gain = MAX_GAIN;
             self.sum = 0.0;
+            self.sum_right = 0.0;
             self.window_left = self.window_len;
         }
         self.volume = volume;
@@ -184,6 +195,7 @@ impl AutoLevel {
     pub(crate) fn sound_changed(&mut self) {
         self.floor_db = None;
         self.sum = 0.0;
+        self.sum_right = 0.0;
         self.window_left = self.window_len;
     }
 
@@ -215,53 +227,90 @@ impl AutoLevel {
     /// is false when the detector did not hear this block.
     pub(crate) fn apply(&mut self, out: &mut [f32], mode: Mode, analysed: bool) {
         if self.volume != AutoVolume::Off {
-            // FD and time expansion are silent until a call. FD has its own noise gate, so
-            // its floor would be the level of the calls. Most of the level of what time
-            // expansion plays is low frequencies, slowed to below hearing: on four of the
-            // X8's recordings at its default expansion, the median was -21 to -24 dBFS in
-            // all, and -38 to -51 dBFS above 300 Hz, about where the floor puts the noise in
-            // the other modes. With the floor, the median above 300 Hz fell by 9 to 21 dB,
-            // and the loudest calls above 300 Hz by 2 to 20 dB, to -25 to -43 dBFS.
-            let use_floor = !matches!(mode, Mode::Fd | Mode::Te);
-            if !use_floor {
-                self.floor_gain = MAX_GAIN;
-            }
-            let mut rest = out.as_mut();
+            let use_floor = self.floor_applies(mode);
+            let mut rest = &mut *out;
             while !rest.is_empty() {
                 let n = rest.len().min(self.window_left as usize);
                 let (block, later) = rest.split_at_mut(n);
-                self.apply_gain(block);
-                self.window_left -= n as u32;
-                if self.window_left == 0 {
-                    self.finish_window(use_floor);
+                for sample in block {
+                    self.sum += *sample * *sample;
+                    *sample *= self.next_gain(sample.abs());
                 }
+                self.window_advance(n as u32, use_floor);
                 rest = later;
             }
         }
-        // Time expansion is already silent until a call triggers it or MARK is
-        // pressed, and its playback lasts seconds, far beyond any hold.
-        let gated = self.volume == AutoVolume::BatsOnly && mode != Mode::Te;
-        self.gate.apply(out, !gated, analysed);
+        self.gate.apply(out, !gated(self.volume, mode), analysed);
     }
 
-    fn apply_gain(&mut self, block: &mut [f32]) {
-        for sample in block {
-            let peak = sample.abs();
-            self.sum += *sample * *sample;
-            self.envelope = if peak > self.envelope { peak } else { self.envelope * self.keep };
-            let for_target = self.target / self.envelope.max(1e-9);
-            // The fast rate is only for a sound louder than the gain allows for.
-            let rate = if for_target < self.gain { self.fall } else { self.rise };
-            let wanted = for_target.min(self.floor_gain).clamp(MIN_GAIN, MAX_GAIN);
-            self.gain += (wanted - self.gain) * rate;
-            *sample *= self.gain;
+    /// The same for both ears, with one gain and one gate. The slices must have the
+    /// same length.
+    pub(crate) fn apply_stereo(&mut self, left: &mut [f32], right: &mut [f32], mode: Mode, analysed: bool) {
+        if self.volume != AutoVolume::Off {
+            let use_floor = self.floor_applies(mode);
+            let (mut rest_left, mut rest_right) = (&mut *left, &mut *right);
+            while !rest_left.is_empty() {
+                let n = rest_left.len().min(self.window_left as usize);
+                let (block_left, later_left) = rest_left.split_at_mut(n);
+                let (block_right, later_right) = rest_right.split_at_mut(n);
+                for (l, r) in block_left.iter_mut().zip(block_right.iter_mut()) {
+                    self.sum += *l * *l;
+                    self.sum_right += *r * *r;
+                    let gain = self.next_gain(l.abs().max(r.abs()));
+                    *l *= gain;
+                    *r *= gain;
+                }
+                self.window_advance(n as u32, use_floor);
+                (rest_left, rest_right) = (later_left, later_right);
+            }
+        }
+        self.gate.apply_stereo(left, right, !gated(self.volume, mode), analysed);
+    }
+
+    /// Whether the noise floor limits the gain in this mode.
+    ///
+    /// FD and time expansion are silent until a call. FD has its own noise gate, so
+    /// its floor would be the level of the calls. Most of the level of what time
+    /// expansion plays is low frequencies, slowed to below hearing: on four of the
+    /// X8's recordings at its default expansion, the median was -21 to -24 dBFS in
+    /// all, and -38 to -51 dBFS above 300 Hz, about where the floor puts the noise in
+    /// the other modes. With the floor, the median above 300 Hz fell by 9 to 21 dB,
+    /// and the loudest calls above 300 Hz by 2 to 20 dB, to -25 to -43 dBFS.
+    fn floor_applies(&mut self, mode: Mode) -> bool {
+        let use_floor = !matches!(mode, Mode::Fd | Mode::Te);
+        if !use_floor {
+            self.floor_gain = MAX_GAIN;
+        }
+        use_floor
+    }
+
+    /// The gain for the next sample, whose level is `peak`.
+    #[inline]
+    fn next_gain(&mut self, peak: f32) -> f32 {
+        self.envelope = if peak > self.envelope { peak } else { self.envelope * self.keep };
+        let for_target = self.target / self.envelope.max(1e-9);
+        // The fast rate is only for a sound louder than the gain allows for.
+        let rate = if for_target < self.gain { self.fall } else { self.rise };
+        let wanted = for_target.min(self.floor_gain).clamp(MIN_GAIN, MAX_GAIN);
+        self.gain += (wanted - self.gain) * rate;
+        self.gain
+    }
+
+    /// `n` samples of the floor's window have been added to `sum`.
+    #[inline]
+    fn window_advance(&mut self, n: u32, use_floor: bool) {
+        self.window_left -= n;
+        if self.window_left == 0 {
+            self.finish_window(use_floor);
         }
     }
 
-    /// Move the floor towards the level of the window just filled.
+    /// Move the floor towards the level of the window just filled, taking the louder ear
+    /// in stereo. With one chain `sum_right` is zero.
     fn finish_window(&mut self, use_floor: bool) {
-        let level_db = db_power(self.sum / self.window_len as f32);
+        let level_db = db_power(self.sum.max(self.sum_right) / self.window_len as f32);
         self.sum = 0.0;
+        self.sum_right = 0.0;
         self.window_left = self.window_len;
         if !use_floor || level_db < SILENCE_DB {
             return;
@@ -284,6 +333,12 @@ impl AutoLevel {
 /// The most the noise floor may come out at for a target level, in dB.
 fn ceiling_db(target: f32) -> f32 {
     20.0 * log10f(target) - NOISE_BELOW_TARGET_DB
+}
+
+/// Whether the gate can close. Time expansion is already silent until a call triggers
+/// it or MARK is pressed, and its playback lasts seconds, far beyond any hold.
+fn gated(volume: AutoVolume, mode: Mode) -> bool {
+    volume == AutoVolume::BatsOnly && mode != Mode::Te
 }
 
 /// Silences the output between calls. The time left in the hold counts only sound the
@@ -317,11 +372,18 @@ impl Gate {
         self.hold_left = self.hold_left.max(if confirmed { self.hold_bat } else { self.hold });
     }
 
-    fn apply(&mut self, out: &mut [f32], always_open: bool, analysed: bool) {
+    /// Whether the gate is open for a block of `len` samples. Counts the block off the
+    /// hold if the detector heard it.
+    fn open_for(&mut self, len: usize, always_open: bool, analysed: bool) -> bool {
         let open = always_open || self.hold_left > 0;
         if analysed {
-            self.hold_left = self.hold_left.saturating_sub(out.len() as u32);
+            self.hold_left = self.hold_left.saturating_sub(len as u32);
         }
+        open
+    }
+
+    fn apply(&mut self, out: &mut [f32], always_open: bool, analysed: bool) {
+        let open = self.open_for(out.len(), always_open, analysed);
         match (open, self.level) {
             (true, 1.0) => {}
             (false, 0.0) => out.fill(0.0),
@@ -330,6 +392,27 @@ impl Gate {
                 for sample in out {
                     self.level = (self.level + step).clamp(0.0, 1.0);
                     *sample *= self.level * self.level;
+                }
+            }
+        }
+    }
+
+    /// The same for both ears, with the same level for each sample.
+    fn apply_stereo(&mut self, left: &mut [f32], right: &mut [f32], always_open: bool, analysed: bool) {
+        let open = self.open_for(left.len(), always_open, analysed);
+        match (open, self.level) {
+            (true, 1.0) => {}
+            (false, 0.0) => {
+                left.fill(0.0);
+                right.fill(0.0);
+            }
+            _ => {
+                let step = if open { self.open_step } else { -self.close_step };
+                for (l, r) in left.iter_mut().zip(right.iter_mut()) {
+                    self.level = (self.level + step).clamp(0.0, 1.0);
+                    let let_through = self.level * self.level;
+                    *l *= let_through;
+                    *r *= let_through;
                 }
             }
         }

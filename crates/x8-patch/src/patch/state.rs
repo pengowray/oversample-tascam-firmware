@@ -74,13 +74,21 @@ pub(super) static IN_DROPPED: AtomicU32 = AtomicU32::new(0); // interrupt
 /// has told it about.
 pub(super) static IN_HOLE_AT: AtomicU32 = AtomicU32::new(0); // interrupt
 pub(super) static IN_DROPPED_SEEN: AtomicU32 = AtomicU32::new(0); // DSP task
-pub(super) static OUT_WRITE: AtomicU32 = AtomicU32::new(0); // task 1
+/// Frames written to and read from the output ring. These keep counting past the ring's
+/// size, and a frame's place in the ring is the count modulo `OUT_FRAMES`. 2^32 is not a
+/// multiple of that, so when a count wraps, after 6.2 hours of sound on the bat screen, its
+/// place moves back 4,096 frames. The write count wraps first. In the 8,192 frames until the
+/// read count wraps too, about 21 ms of sound plays early, and then plays again in its right
+/// place, with a click at each jump. The `%` keeps every place inside the ring, so nothing
+/// else happens.
+pub(super) static OUT_WRITE: AtomicU32 = AtomicU32::new(0); // DSP task, or task 1 without one
+/// `enter_work` also sets these two while BAT_ACTIVE is false, when the interrupt leaves them alone.
 pub(super) static OUT_READ: AtomicU32 = AtomicU32::new(0); // interrupt
 pub(super) static PRIMED: AtomicBool = AtomicBool::new(false); // interrupt
 pub(super) static UNDERRUNS: AtomicU32 = AtomicU32::new(0); // interrupt
-/// The last output sample, as the bits of an f32, and the samples left of the
-/// fade after the output starts again.
-pub(super) static OUT_LAST: AtomicU32 = AtomicU32::new(0); // interrupt
+/// The last output frame, left then right, as the bits of two f32s, and the frames
+/// left of the fade after the output starts again.
+pub(super) static OUT_LAST: [AtomicU32; 2] = [const { AtomicU32::new(0) }; 2]; // interrupt
 pub(super) static OUT_FADE_IN: AtomicU32 = AtomicU32::new(0); // interrupt
 pub(super) static BACKLOG_DROPPED: AtomicU32 = AtomicU32::new(0); // DSP task
 /// Peak magnitude of each of the 12 words of an input frame since the last

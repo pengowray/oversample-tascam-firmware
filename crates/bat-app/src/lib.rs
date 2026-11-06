@@ -2,7 +2,8 @@
 //! detection, and its screen.
 //!
 //! [`BatApp`] takes two of the recorder's inputs in blocks, makes the audio for
-//! the headphones in the chosen listening mode, finds bat calls, and draws a
+//! the headphones in the chosen listening mode (each input to its own ear in HET,
+//! COMB and 1:1, and mono in the others), finds bat calls, and draws a
 //! 320 × 480 screen (the X8's panel, used in portrait like the stock apps)
 //! into an RGB565 framebuffer. It knows nothing about the hardware: the X8
 //! firmware, or the web emulator in `crates/bat-app-web`, feeds it audio and
@@ -168,7 +169,7 @@ pub enum Screen {
 pub enum Setting {
     /// Sounds peaking below this are not counted as bat calls.
     LowestBatCall,
-    /// The sound heard in the headphones and analysed.
+    /// The sound heard in the headphones and analysed: see [`MonitorSource`].
     ListenTo,
     /// Whether the headphone level follows the sound automatically, and whether the
     /// headphones are silent between calls: see [`AutoVolume`].
@@ -208,7 +209,9 @@ const fn kind_bit(kind: CallKind) -> u8 {
 pub enum MonitorSource {
     First,
     Second,
-    /// The average of the two.
+    /// In HET, COMB and 1:1, the first block in the left ear and the second in the
+    /// right. Everything else hears the average of the two: the waterfall, the
+    /// detector, the time expansion recording, and FD, TE and PITCH.
     Both,
 }
 
@@ -420,6 +423,25 @@ pub struct BatApp<'a> {
     join_left: u32,
     /// The last sample passed to the listening modes.
     last_mono: f32,
+    /// The same offset for each ear's own input, for the stereo chains, and the last
+    /// sample passed to the chain each ear hears. With one chain that is the mono
+    /// sample in both, so a change to stereo at a join starts from what was heard.
+    /// `mono` is faded apart from these because the time expansion recording uses it.
+    join_step_ears: [f32; 2],
+    last_ears: [f32; 2],
+    /// An extra offset on the mono sound passed to HET or COMB, for a join in the same
+    /// chunk as a change from stereo to one chain. That chain's filter last received the
+    /// left ear's sample. `join_step` starts from `last_mono`, the average, which is what
+    /// the time expansion recording last received.
+    join_step_filter: f32,
+    /// Whether the last chunk gave each ear its own chain.
+    stereo: bool,
+    /// The offset added to each ear's output after a change between one chain and two,
+    /// and how many samples of its fade are left, so neither ear steps to its new
+    /// sound. `last_out` is the last output sample of each ear.
+    switch_step: [f32; 2],
+    switch_left: u32,
+    last_out: [f32; 2],
 
     meters: [Meter; 2],
     recording: bool,
@@ -452,7 +474,11 @@ pub struct BatApp<'a> {
     clock_s: u32,
 
     mono: [f32; CHUNK],
+    /// The listening mode's output with one chain. With two, in a chunk with a join
+    /// fade, the left ear's faded input.
     out: [f32; CHUNK],
+    /// The time expander's output. With two chains the modes do not use it, so in a
+    /// chunk with a join fade it holds the right ear's faded input.
     te_out: [f32; CHUNK],
 }
 
@@ -551,6 +577,13 @@ impl<'a> BatApp<'a> {
             field!((*this).join_step).write(0.0);
             field!((*this).join_left).write(0);
             field!((*this).last_mono).write(0.0);
+            field!((*this).join_step_ears).write([0.0; 2]);
+            field!((*this).last_ears).write([0.0; 2]);
+            field!((*this).join_step_filter).write(0.0);
+            field!((*this).stereo).write(false);
+            field!((*this).switch_step).write([0.0; 2]);
+            field!((*this).switch_left).write(0);
+            field!((*this).last_out).write([0.0; 2]);
             field!((*this).meters).write([Meter::new(); 2]);
             field!((*this).recording).write(false);
             field!((*this).recorded_samples).write(0);
@@ -674,8 +707,9 @@ impl<'a> BatApp<'a> {
             Setting::ListenTo => {
                 let (choices, n) = self.listen_choices();
                 if n > 1 {
-                    // With one input, every source means that input, whichever
-                    // is stored: the stored one comes back with a second input.
+                    // With one input, every source means that input, whichever is
+                    // stored. The stored one comes back with a second input, unless
+                    // it has been stepped since, which stores the new choice.
                     let one_input = self.feed() == Feed::Inputs && self.inputs[1].is_none();
                     let current = (self.feed(), if one_input { MonitorSource::First } else { self.source() });
                     // A choice no longer offered counts as one past the end, so
@@ -779,7 +813,9 @@ impl<'a> BatApp<'a> {
     /// Name the inputs passed to [`process`](Self::process). With the second
     /// `None`, both blocks must carry the first input: one meter shows, and
     /// Listen to has nothing to choose. With both `None`, no input is on: a
-    /// notice covers the waterfall.
+    /// notice covers the waterfall. On the host's mix (see [`set_feed`](Self::set_feed))
+    /// these name the inputs turned on, but the blocks carry the mix's left and right
+    /// whatever they are, so both meters show and Listen to keeps its choices.
     pub fn set_inputs(&mut self, inputs: [Option<InputName>; 2]) {
         self.inputs = inputs;
     }
@@ -1036,8 +1072,25 @@ impl<'a> BatApp<'a> {
         }
     }
 
-    /// Process a block of the two inputs into the headphone output. All four
-    /// slices must have the same length; any length works.
+    /// Whether each ear gets its own block: HET, COMB or 1:1, with Both chosen and two
+    /// different signals to hear. With one input on, both blocks carry that input, so
+    /// one chain is enough, whatever is stored for Listen to. The mix's two blocks are
+    /// its two sides, however many inputs are on, so the mix with Both is always stereo.
+    fn wants_stereo(&self) -> bool {
+        matches!(self.mode, Mode::Het | Mode::Comb | Mode::Thru)
+            && self.source() == MonitorSource::Both
+            && (self.feed() == Feed::Mix || self.inputs[1].is_some())
+    }
+
+    /// Whether the last chunk gave each ear its own chain.
+    pub fn is_stereo(&self) -> bool {
+        self.stereo
+    }
+
+    /// Process a block of the two inputs into the headphone output. In stereo (see
+    /// [`is_stereo`](Self::is_stereo)) `first` is heard in `out_l` and `second` in
+    /// `out_r`; otherwise both outputs carry the same sound. All four slices must have
+    /// the same length; any length works.
     pub fn process(&mut self, first: &[f32], second: &[f32], out_l: &mut [f32], out_r: &mut [f32]) {
         let n = first.len().min(second.len()).min(out_l.len()).min(out_r.len());
         let mut start = 0;
@@ -1113,6 +1166,16 @@ impl<'a> BatApp<'a> {
             self.trigger_te();
         }
 
+        let stereo = self.wants_stereo();
+        if stereo && !self.stereo {
+            // The second filter still holds whatever it held when stereo last stopped.
+            match self.mode {
+                Mode::Het => self.het.copy_filter_to_second_channel(),
+                Mode::Comb => self.comb.copy_filter_to_second_channel(),
+                _ => {}
+            }
+        }
+
         // After lost input, start the sound from where it stopped, so the join has
         // no step. The offset fades to nothing over JOIN_FADE_SAMPLES. This comes
         // before the listening modes and the time expansion recording, because a
@@ -1122,26 +1185,73 @@ impl<'a> BatApp<'a> {
         let mono = &mut self.mono[..len];
         if self.join_left == JOIN_FADE_SAMPLES {
             self.join_step = self.last_mono - mono[0];
+            self.join_step_ears = [self.last_ears[0] - first[0], self.last_ears[1] - second[0]];
+            let filter_heard_left = self.stereo && !stereo && matches!(self.mode, Mode::Het | Mode::Comb);
+            self.join_step_filter = if filter_heard_left { self.last_ears[0] - self.last_mono } else { 0.0 };
         }
-        for m in mono.iter_mut().take(self.join_left as usize) {
-            *m += self.join_step * self.join_left as f32 / JOIN_FADE_SAMPLES as f32;
-            self.join_left -= 1;
-        }
+        let join_left = self.join_left;
+        add_fading_step(mono, self.join_step, join_left);
+        self.join_left = join_left.saturating_sub(len as u32);
         self.last_mono = mono[len - 1];
         let mono = &self.mono[..len];
-        let out = &mut self.out[..len];
         self.te.process(mono, &mut self.te_out[..len]);
-        match self.mode {
-            Mode::Het => self.het.process(mono, out),
-            Mode::Comb => self.comb.process(mono, out),
-            Mode::Fd => self.fd.process(mono, out),
-            Mode::Te => out.copy_from_slice(&self.te_out[..len]),
-            Mode::Pitch => self.pitch.process(mono, out),
-            Mode::Thru => out.copy_from_slice(mono),
+        if stereo {
+            // The two inputs go straight to the modes, except in a chunk with a join fade.
+            let (left, right) = if join_left > 0 {
+                let (left, right) = (&mut self.out[..len], &mut self.te_out[..len]);
+                left.copy_from_slice(first);
+                right.copy_from_slice(second);
+                add_fading_step(left, self.join_step_ears[0], join_left);
+                add_fading_step(right, self.join_step_ears[1], join_left);
+                (&*left, &*right)
+            } else {
+                (first, second)
+            };
+            self.last_ears = [left[len - 1], right[len - 1]];
+            match self.mode {
+                Mode::Het => self.het.process_stereo(left, right, out_l, out_r),
+                Mode::Comb => self.comb.process_stereo(left, right, out_l, out_r),
+                _ => {
+                    out_l.copy_from_slice(left);
+                    out_r.copy_from_slice(right);
+                }
+            }
+            self.level.apply_stereo(out_l, out_r, self.mode, !self.skip_analysis);
+        } else {
+            // The time expansion recording has had its copy, so this does not reach it.
+            if join_left > 0 && self.join_step_filter != 0.0 {
+                add_fading_step(&mut self.mono[..len], self.join_step_filter, join_left);
+            }
+            let mono = &self.mono[..len];
+            let out = &mut self.out[..len];
+            match self.mode {
+                Mode::Het => self.het.process(mono, out),
+                Mode::Comb => self.comb.process(mono, out),
+                Mode::Fd => self.fd.process(mono, out),
+                Mode::Te => out.copy_from_slice(&self.te_out[..len]),
+                Mode::Pitch => self.pitch.process(mono, out),
+                Mode::Thru => out.copy_from_slice(mono),
+            }
+            self.level.apply(out, self.mode, !self.skip_analysis);
+            out_l.copy_from_slice(out);
+            out_r.copy_from_slice(out);
+            self.last_ears = [mono[len - 1]; 2];
         }
-        self.level.apply(out, self.mode, !self.skip_analysis);
-        out_l.copy_from_slice(out);
-        out_r.copy_from_slice(out);
+
+        // After a change between one chain and two, each ear starts from where it was.
+        // This has to come after the modes, because the ears may have been hearing
+        // different filters. Nothing was heard before the first chunk.
+        if stereo != self.stereo {
+            self.stereo = stereo;
+            if self.samples > 0 {
+                self.switch_step = [self.last_out[0] - out_l[0], self.last_out[1] - out_r[0]];
+                self.switch_left = JOIN_FADE_SAMPLES;
+            }
+        }
+        add_fading_step(out_l, self.switch_step[0], self.switch_left);
+        add_fading_step(out_r, self.switch_step[1], self.switch_left);
+        self.switch_left = self.switch_left.saturating_sub(len as u32);
+        self.last_out = [out_l[len - 1], out_r[len - 1]];
 
         self.samples += len as u64;
         if self.recording {
@@ -1356,6 +1466,16 @@ impl<'a> BatApp<'a> {
             ExpanderState::Playing { progress } => (1.0 - progress) * self.te.playback_len() as f32 / self.sample_rate,
             _ => 0.0,
         }
+    }
+}
+
+/// Add `step` to the start of `x`, fading to nothing, with `left` samples of a fade
+/// over JOIN_FADE_SAMPLES still to come. Inlined so that it stays in ITCM on the X8.
+#[inline(always)]
+fn add_fading_step(x: &mut [f32], step: f32, mut left: u32) {
+    for v in x.iter_mut().take(left as usize) {
+        *v += step * left as f32 / JOIN_FADE_SAMPLES as f32;
+        left -= 1;
     }
 }
 

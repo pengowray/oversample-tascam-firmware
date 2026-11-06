@@ -201,15 +201,18 @@ fn notice_lines(fb: Fb, x: i32, heading_y: i32, lines: &[&str]) {
 /// waterfall stays in view. That corner shows the oldest columns and the highest
 /// frequencies, the least used part of the waterfall, and a MARK press still shows at
 /// the right. White on `PANEL` has a contrast of 12:1, whatever the waterfall shows.
+/// The waterfall's grey columns are also `PANEL`, so the box has a border.
 fn mix_silence_notice(fb: Fb, silence: MixSilence) {
     let lines: &[&str] = match silence {
         MixSilence::RecPause => &["Press REC once to listen"],
         MixSilence::Stopped => &["Press REC to record and listen"],
-        MixSilence::PageOpen => &["Press PLAY and close the page", "open in MANUAL to listen"],
+        MixSilence::PageOpen => &["Headphones muted. Press PLAY", "then close the page in MANUAL"],
     };
     let width = |line: &&str| BODY.get_rendered_dimensions(*line, Point::zero(), VerticalPosition::Baseline).map_or(0, |d| d.advance.x);
     let panel = corner_notice(lines.iter().map(width).max().unwrap_or(0), lines.len());
     rounded(fb, panel, 3, PANEL);
+    let border = PrimitiveStyleBuilder::new().stroke_color(LINE).stroke_width(1).build();
+    let _ = RoundedRectangle::new(panel, CornerRadii::new(Size::new(3, 3))).into_styled(border).draw(fb);
     let (x, y) = (panel.top_left.x + CORNER_NOTICE_PAD_X, panel.top_left.y + CORNER_NOTICE_BASELINE);
     for (line, y) in lines.iter().zip((0..).map(|row| y + row * CORNER_NOTICE_LINE)) {
         text(fb, &BODY, *line, x, y, LEFT, TEXT);
@@ -548,6 +551,48 @@ fn last_heading(kind: CallKind) -> &'static str {
     }
 }
 
+/// The line under Listen to: what each ear hears.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub(crate) enum ListenHelp {
+    /// A pair of inputs with numbers for names.
+    Ears(&'static str, &'static str),
+    /// Two sides without numbers for names: the mix, playback or EXT IN.
+    Stereo,
+    /// One signal, the same in both ears.
+    OneSignal,
+    /// No input is on: nothing is heard, and a notice on the main screen says why.
+    Nothing,
+}
+
+impl core::fmt::Display for ListenHelp {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        match self {
+            ListenHelp::Ears(left, right) => write!(f, "Left ear: input {left}. Right ear: input {right}. Mono in FD and TE."),
+            ListenHelp::Stereo => f.write_str("Stereo in HET, COMB and 1:1. Mono in FD and TE."),
+            ListenHelp::OneSignal => f.write_str("Heard in both ears and shown on the waterfall."),
+            ListenHelp::Nothing => Ok(()),
+        }
+    }
+}
+
+/// Whether an input's short name is its number.
+fn is_number(short: &str) -> bool {
+    !short.is_empty() && short.bytes().all(|b| b.is_ascii_digit())
+}
+
+pub(crate) fn listen_help(app: &BatApp) -> ListenHelp {
+    match (app.feed(), app.inputs(), app.source()) {
+        (Feed::Mix, _, MonitorSource::Both) => ListenHelp::Stereo,
+        (Feed::Mix, ..) => ListenHelp::OneSignal,
+        (Feed::Inputs, [None, _], _) => ListenHelp::Nothing,
+        (Feed::Inputs, [Some(first), Some(second)], MonitorSource::Both) => match app.input_kind() {
+            InputKind::Live if is_number(first.short) && is_number(second.short) => ListenHelp::Ears(first.short, second.short),
+            _ => ListenHelp::Stereo,
+        },
+        (Feed::Inputs, ..) => ListenHelp::OneSignal,
+    }
+}
+
 fn outline_selected(fb: Fb, r: Rectangle) {
     let outline = PrimitiveStyleBuilder::new().stroke_color(ACCENT).stroke_width(2).build();
     let _ = RoundedRectangle::new(r, CornerRadii::new(Size::new(6, 6))).into_styled(outline).draw(fb);
@@ -558,7 +603,7 @@ fn outline_selected(fb: Fb, r: Rectangle) {
 fn auto_volume_row(app: &BatApp, fb: Fb, j: usize) {
     let r = switch_row(j);
     let (x, y) = (r.top_left.x, r.top_left.y);
-    let after = text(fb, &BODY, "Auto volume", x + 8, y + 14, LEFT, TEXT);
+    let after = text(fb, &BODY, "Auto volume", x + 10, y + 14, LEFT, TEXT);
     text(fb, &SMALL, "headphones", after + 5, y + 14, LEFT, TEXT_MUTED);
     for (i, &volume) in AutoVolume::ALL.iter().enumerate() {
         let c = auto_volume_choice(i, j);
@@ -633,9 +678,9 @@ fn settings(app: &BatApp, fb: Fb) {
             outline_selected(fb, r);
         }
         let (x, y) = (r.top_left.x + 10, r.top_left.y);
-        let (label, help) = match setting {
-            Setting::LowestBatCall => ("Lowest bat call", "Sounds peaking below this are not counted as bat calls."),
-            _ => ("Listen to", "Heard in the headphones and shown on the waterfall."),
+        let label = match setting {
+            Setting::LowestBatCall => "Lowest bat call",
+            _ => "Listen to",
         };
         text(fb, &BODY, label, x, y + 18, LEFT, TEXT_MUTED);
         if *setting == Setting::LowestBatCall {
@@ -651,7 +696,7 @@ fn settings(app: &BatApp, fb: Fb) {
                 (Feed::Inputs, [Some(first), Some(second)], MonitorSource::Both) => match app.input_kind() {
                     InputKind::Playback => "Left and right",
                     // EXT IN's short names are not numbers.
-                    InputKind::Live if first.short.len() == 1 && second.short.len() == 1 => "",
+                    InputKind::Live if is_number(first.short) && is_number(second.short) => "",
                     InputKind::Live => "Both inputs",
                 },
             };
@@ -662,7 +707,11 @@ fn settings(app: &BatApp, fb: Fb) {
                 text(fb, &VALUE, value, x, y + 38, LEFT, TEXT);
             }
         }
-        text(fb, &SMALL, help, x, y + 58, LEFT, TEXT_MUTED);
+        if *setting == Setting::LowestBatCall {
+            text(fb, &SMALL, "Sounds peaking below this are not counted as bat calls.", x, y + 58, LEFT, TEXT_MUTED);
+        } else {
+            text(fb, &SMALL, format_args!("{}", listen_help(app)), x, y + 58, LEFT, TEXT_MUTED);
+        }
         // With one choice, Listen to has nothing to change.
         if *setting == Setting::ListenTo && !app.listen_has_choices() {
             continue;
@@ -678,7 +727,7 @@ fn settings(app: &BatApp, fb: Fb) {
     }
     // Lined up with the text in the panels above.
     text(fb, &BODY_BOLD, "Sounds to mark", 16, SWITCHES_HEADING, LEFT, TEXT);
-    text(fb, &SMALL, "If on: marked on the waterfall, played in TE, heard in Bats only.", 16, SWITCHES_HELP, LEFT, TEXT_MUTED);
+    text(fb, &SMALL, "Marked on waterfall, played in TE and Auto volume Bats only.", 16, SWITCHES_HELP, LEFT, TEXT_MUTED);
     text(fb, &SMALL, "These settings reset when the recorder is turned off.", 16, SETTINGS_NOTE, LEFT, TEXT_MUTED);
     rounded(fb, DONE, 4, ACCENT);
     text(fb, &BODY_BOLD, "Done", DONE.center().x, DONE.top_left.y + 28, CENTER, TEXT);
