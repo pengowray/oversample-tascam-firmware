@@ -216,7 +216,7 @@ pub struct Header {
 #[unsafe(link_section = ".header")]
 pub static X8_PATCH_HEADER: Header = Header {
     magic: *b"BATX",
-    version: 12,
+    version: 13,
     key_hook,
     rec_key_hook,
     touch_hook,
@@ -1376,23 +1376,19 @@ fn tracks_on() -> u32 {
 }
 
 /// The inputs the app hears: the first two different inputs among the tracks
-/// turned on in MANUAL, taking inputs 3 to 6 and EXT IN before inputs 1 and 2
-/// (the included mics' jacks). All six tracks are on by default, so with the
-/// default assignment that means inputs 3 and 4. With none on, the X8 powers
-/// the inputs down.
+/// turned on in MANUAL, in track order. All six tracks are on by default, so
+/// with the default assignment that means inputs 1 and 2. With none on, the X8
+/// powers the inputs down.
 fn selected_inputs() -> [Option<Input>; 2] {
     let on = tracks_on();
     let mut picked: [Option<Input>; 2] = [None; 2];
-    for wanted_jacks_1_2 in [false, true] {
-        for track in 0..stock::TRACKS {
-            let Some(input) = track_input(track).filter(|_| on >> track & 1 != 0) else { continue };
-            let jacks_1_2 = input.word == stock::INPUT_WORDS[0] || input.word == stock::INPUT_WORDS[1];
-            if jacks_1_2 != wanted_jacks_1_2 || picked.contains(&Some(input)) {
-                continue;
-            }
-            if let Some(free) = picked.iter_mut().find(|slot| slot.is_none()) {
-                *free = Some(input);
-            }
+    for track in 0..stock::TRACKS {
+        let Some(input) = track_input(track).filter(|_| on >> track & 1 != 0) else { continue };
+        if picked.contains(&Some(input)) {
+            continue;
+        }
+        if let Some(free) = picked.iter_mut().find(|slot| slot.is_none()) {
+            *free = Some(input);
         }
     }
     picked
