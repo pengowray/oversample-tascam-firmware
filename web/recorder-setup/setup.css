@@ -50,6 +50,7 @@ h2 { margin: 0 0 12px; font-size: 15px; font-weight: 600; }
 /* The time is what every recorder receives, so it is the largest thing on the
    page. Tabular figures stop it moving as the seconds change. */
 .clock { margin: 0 0 12px; font-variant-numeric: tabular-nums; }
+.clock .label { display: block; color: var(--muted); font-size: 13px; }
 .clock .time { display: block; font-size: clamp(48px, 16vw, 64px); line-height: 1.05; font-weight: 600; }
 .clock .date { display: block; font-size: 18px; }
 
@@ -90,11 +91,12 @@ input[type="text"], select {
   font-variant-numeric: tabular-nums;
 }
 input::placeholder { color: var(--muted); opacity: 1; }
+/* The error message names the field. The inset shadow thickens the border without moving anything. */
+[aria-invalid="true"] { border-color: var(--rec); box-shadow: inset 0 0 0 1px var(--rec); }
 .hint { margin: 0 0 12px; color: var(--muted); font-size: 13px; }
 .hint.result { color: var(--text); font-variant-numeric: tabular-nums; }
 .check { display: flex; align-items: center; gap: 8px; min-height: 44px; }
 .check input { width: 20px; height: 20px; margin: 0; accent-color: var(--accent); }
-.check + .hint { margin-top: -4px; }
 
 /* A quiet control for filling in a field. Only the send button is filled. */
 .plain {
@@ -109,11 +111,10 @@ input::placeholder { color: var(--muted); opacity: 1; }
   cursor: pointer;
 }
 
-/* The send button stays in view while the person scrolls through the fields. */
+/* The send button stays in view while the person scrolls through the fields. The
+   band of page colour keeps the scrolled text clear of the button. */
+.send-bar { position: sticky; bottom: 0; z-index: 1; padding: 8px 0; background: var(--bg); }
 .send {
-  position: sticky;
-  bottom: 8px;
-  z-index: 1;
   display: block;
   width: 100%;
   min-height: 56px;
@@ -127,12 +128,12 @@ input::placeholder { color: var(--muted); opacity: 1; }
   font-weight: 600;
   cursor: pointer;
 }
-.send:disabled { background: var(--muted); cursor: default; }
-/* Fields are locked during a run and during a location lookup. */
-input:disabled, select:disabled, .plain:disabled { opacity: 0.6; cursor: default; }
+/* Fields are locked during a run and during a location lookup, and the send button
+   during a lookup and a chirp. All locked controls look the same. */
+input:disabled, select:disabled, .plain:disabled, .send:disabled { opacity: 0.6; cursor: default; }
 
 /* Reserved lines keep the text below in place when the status changes. */
-.status { min-height: calc(2 * 1.45em); margin: 12px 0 20px; font-variant-numeric: tabular-nums; }
+.status { min-height: calc(2 * 1.45em); margin: 4px 0 20px; font-variant-numeric: tabular-nums; }
 .status.tall { min-height: calc(4 * 1.45em); }
 .status.error { color: var(--rec); font-weight: 600; }
 .status .latest { white-space: nowrap; }

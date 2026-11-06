@@ -21,7 +21,7 @@
         chirpIdle: "Needed first: the phone's clock is right, and the PippyG is powered on, with the start-up flashes finished and the red LED following sound.",
         chirpWaiting: 'Waiting for the next whole second to play the chirp.',
         chirpMisread: 'Older firmware can misread a chirp without warning, so check the first recording\'s time and location.',
-        locating: "Getting the phone's location.",
+        locating: "Getting the phone's location",
         locationRefused: 'Location permission refused: allow location for this page, or type the latitude and longitude.',
         locationInsecure: 'Secure page needed: this browser offers location only on https. Type the latitude and longitude.',
         locationNotFound: 'Location not found: try again, or type the latitude and longitude.',
@@ -172,9 +172,13 @@
         }
     };
 
+    /* Any new status replaces an error, so it also clears the mark on that error's field. */
     function showStatus(panel, text, isError) {
         panel.status.textContent = text;
         panel.status.classList.toggle('error', Boolean(isError));
+        panel.section.querySelectorAll('[aria-invalid]').forEach(function (field) {
+            field.removeAttribute('aria-invalid');
+        });
     }
 
     /* The second part stays on one line, so the date never breaks at a hyphen. */
@@ -359,6 +363,7 @@
        error names the field, and the press handler scrolls the error into view. */
     function fieldError(panel, field, text) {
         showStatus(panel, text, true);
+        element(field).setAttribute('aria-invalid', 'true');
         if (window.matchMedia('(pointer: fine)').matches) element(field).focus({ preventScroll: true });
         return undefined;
     }
@@ -373,12 +378,14 @@
         const latitudeText = element(latitudeField).value.trim();
         const longitudeText = element(longitudeField).value.trim();
         if (latitudeText === '' && longitudeText === '') return { latitude: null, longitude: null };
-        if (longitudeText === '') return fieldError(panel, longitudeField, TEXT.longitudeMissing);
-        if (latitudeText === '') return fieldError(panel, latitudeField, TEXT.latitudeMissing);
         const latitude = decimalNumber(latitudeText);
         const longitude = decimalNumber(longitudeText);
-        if (!Number.isFinite(latitude) || Math.abs(latitude) > 90) return fieldError(panel, latitudeField, TEXT.latitudeInvalid);
-        if (!Number.isFinite(longitude) || Math.abs(longitude) > 180) return fieldError(panel, longitudeField, TEXT.longitudeInvalid);
+        /* A wrong value is reported before a missing one, so 200 with a blank longitude
+           does not ask for a longitude and then fail on the latitude. */
+        if (latitudeText !== '' && !(Math.abs(latitude) <= 90)) return fieldError(panel, latitudeField, TEXT.latitudeInvalid);
+        if (longitudeText !== '' && !(Math.abs(longitude) <= 180)) return fieldError(panel, longitudeField, TEXT.longitudeInvalid);
+        if (longitudeText === '') return fieldError(panel, longitudeField, TEXT.longitudeMissing);
+        if (latitudeText === '') return fieldError(panel, latitudeField, TEXT.latitudeMissing);
         return { latitude: latitude, longitude: longitude };
     }
 
@@ -566,18 +573,25 @@
 
     /* The send button stays off until the lookup ends, because a chime or chirp sent now
        would leave out the location that the fields are about to show. */
-    function useLocation(panel, latitudeField, longitudeField) {
+    function useLocation(panel, locateButton, latitudeField, longitudeField) {
+        /* The status line can be far below this button, off the screen. */
+        function showLocationError(text) {
+            showStatus(panel, text, true);
+            panel.status.scrollIntoView({ block: 'nearest' });
+        }
         if (!window.isSecureContext) {
-            showStatus(panel, TEXT.locationInsecure, true);
+            showLocationError(TEXT.locationInsecure);
             return;
         }
         if (!navigator.geolocation) {
-            showStatus(panel, TEXT.locationNotFound, true);
+            showLocationError(TEXT.locationNotFound);
             return;
         }
-        showStatus(panel, TEXT.locating);
+        showIdle(panel);
         lockFields(panel, true);
         panel.button.disabled = true;
+        const buttonLabel = locateButton.textContent;
+        locateButton.textContent = TEXT.locating;
         let lookupOver = false;
         function endLookup(showResult) {
             if (lookupOver) return;
@@ -585,10 +599,11 @@
             clearTimeout(lookupTimer);
             lockFields(panel, false);
             panel.button.disabled = false;
+            locateButton.textContent = buttonLabel;
             showResult();
         }
         const lookupTimer = setTimeout(function () {
-            endLookup(function () { showStatus(panel, TEXT.locationNotFound, true); });
+            endLookup(function () { showLocationError(TEXT.locationNotFound); });
         }, LOCATION_WAIT_MS);
         navigator.geolocation.getCurrentPosition(function (position) {
             endLookup(function () {
@@ -598,7 +613,7 @@
             });
         }, function (error) {
             endLookup(function () {
-                showStatus(panel, error.code === error.PERMISSION_DENIED ? TEXT.locationRefused : TEXT.locationNotFound, true);
+                showLocationError(error.code === error.PERMISSION_DENIED ? TEXT.locationRefused : TEXT.locationNotFound);
             });
         }, { enableHighAccuracy: true, timeout: 15000, maximumAge: 60000 });
     }
@@ -679,8 +694,8 @@
             if (!run) showIdle(panels.audiomoth);
         });
     });
-    element('am-locate').addEventListener('click', function () { useLocation(panels.audiomoth, 'am-lat', 'am-lon'); });
-    element('pg-locate').addEventListener('click', function () { useLocation(panels.pippyg, 'pg-lat', 'pg-lon'); });
+    element('am-locate').addEventListener('click', function () { useLocation(panels.audiomoth, element('am-locate'), 'am-lat', 'am-lon'); });
+    element('pg-locate').addEventListener('click', function () { useLocation(panels.pippyg, element('pg-locate'), 'pg-lat', 'pg-lon'); });
     element('am-random').addEventListener('click', useRandomId);
 
     showClock();
