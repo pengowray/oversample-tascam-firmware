@@ -115,8 +115,13 @@ const SWITCH_W: u32 = 44;
 const SWITCH_H: u32 = 24;
 /// Baseline of the note under the last switch.
 pub const SETTINGS_NOTE: i32 = 425;
+/// Opens the chime test, on the settings screen. It is beside Done because it is rarely
+/// used, and the settings screen has no other room for a control.
+pub const CHIME_TEST: Rectangle = Rectangle::new(Point::new(6, BUTTONS_Y), Size::new(112, BUTTON_H as u32));
 /// Closes the settings screen, where the mode buttons are on the main screen.
-pub const DONE: Rectangle = Rectangle::new(Point::new(6, BUTTONS_Y), Size::new(308, BUTTON_H as u32));
+pub const DONE: Rectangle = Rectangle::new(Point::new(126, BUTTONS_Y), Size::new(188, BUTTON_H as u32));
+/// Goes back to the settings screen from the chime test.
+pub const BACK: Rectangle = Rectangle::new(Point::new(6, BUTTONS_Y), Size::new(308, BUTTON_H as u32));
 
 /// Panel of stepped setting `i`.
 pub fn setting_row(i: usize) -> Rectangle {
@@ -190,6 +195,7 @@ pub enum SettingsHit {
     /// Anywhere on a switch's row; flips it. Numbered among all settings.
     Switch(usize),
     Done,
+    ChimeTest,
 }
 
 /// What a tap at (x, y) hits, with `stepped` stepped settings followed by
@@ -198,6 +204,9 @@ pub fn settings_hit(x: i32, y: i32, stepped: usize, rows: usize) -> Option<Setti
     let p = Point::new(x, y);
     if DONE.contains(p) {
         return Some(SettingsHit::Done);
+    }
+    if CHIME_TEST.contains(p) {
+        return Some(SettingsHit::ChimeTest);
     }
     (0..rows).find_map(|i| {
         if i >= stepped {

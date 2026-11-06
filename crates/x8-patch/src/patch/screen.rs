@@ -187,7 +187,7 @@ pub(super) fn draw_frame() {
     update_status(app);
     app.render(&mut fb);
     DEBUG_SHOWN.store(app.debug_info(), Relaxed);
-    if app.debug_info() && app.screen() == Screen::Main {
+    if app.debug_info() && app.screen() != Screen::Settings {
         draw_debug(&mut fb, app);
     }
 }
@@ -215,6 +215,7 @@ fn draw_debug(fb: &mut Rgb565Buffer<'_>, app: &BatApp<'static>) {
     let inputs_heard = if app.feed() == Feed::Inputs { (words & 0xf | (words >> 8 & 0xf) << 4) << 24 } else { 0 };
     let settings = app.mode() as u32
         | (app.auto_volume() as u32) << 4
+        | ((app.screen() == Screen::ChimeTest) as u32) << 6
         | (app.feed() as u32) << 8
         | (app.source() as u32) << 10
         | (PLAYBACK.load(Relaxed) as u32) << 13

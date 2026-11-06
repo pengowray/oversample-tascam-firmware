@@ -7,6 +7,7 @@ description = "The X8 bat app: listening modes, call detection and its 320x480 s
 
 [dependencies]
 bat-dsp = { path = "../bat-dsp" }
+chime = { path = "../chime" }
 embedded-graphics = "0.8.2"
 u8g2-fonts = "0.8.0"
 libm = "0.2.16"

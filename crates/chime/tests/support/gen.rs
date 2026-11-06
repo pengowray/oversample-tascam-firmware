@@ -9,6 +9,8 @@
 //! `tests/generator.rs` checks the result against a render from the JavaScript.
 
 use std::f64::consts::PI;
+use std::vec;
+use std::vec::Vec;
 
 const CARRIER_FREQUENCY: f64 = 18000.0;
 const NUMBER_OF_STOP_BITS: usize = 8;

@@ -1607,6 +1607,134 @@ The emulator page has no MANUAL's mix, so none of this has been played there.
   the left ear and the right ear should play different sound. With one track on, both ears should play the
   same sound. Is the return to the bat screen free of clicks?
 
+## Step 17 test file: the chime test screen (built 2026-11-07, not yet installed)
+
+`work/patch17/#PortaX8_0235.203` (B235, SHA-256 `8649341c…8a744013`). Includes steps 11 to 16. Install this file in
+place of B234. No stock hook site or header field changed, so `BUILDS` in `tools/x8patch.py` needs no
+change, and all the checks in that tool pass on this file. None of this step's changes has run on a real
+recorder.
+
+**What changed.** The X8 can now read the AudioMoth chime from its inputs and show the time straight away,
+so testing a chime no longer needs a recording and `decode_wav`. SETTINGS has a new `Chime test` button
+beside `Done`, because Debug info fills the half row beside Auto volume on the X8. The button opens a screen
+titled `CHIME TEST`. The screen does not change the X8's clock, because we have not found where the firmware
+keeps the time.
+
+Below, a channel is one of the two signals the host passes to `BatApp::process`: an input, a side of
+MANUAL's mix, or a side of BAT PLAYBACK.
+
+- **The clock.** Large digits show the time from the latest chime read, plus the time since that chime's
+  first start symbol began, measured by counting samples, so the digits keep ticking. Below them are the
+  date and UTC offset, and how long ago the decoder finished reading that chime. Before any chime is read, the
+  digits show `--:--:--`.
+- **The table.** One column per channel. The rows show the number of chimes read, the number of chimes that
+  failed, the carrier level and SNR of the latest chime read on that channel, and the level in the 17 to 19 kHz
+  band now, with a grey bar whose scale runs from -100 to 0 dBFS.
+- **The failure line.** In yellow, the reason the latest chime failed. When a chime is read on either channel,
+  the line clears, and the `Chimes failed` counts stay.
+- **A new test.** Opening the screen starts a new test. Pressing PLAY to come back to the screen also starts
+  a new test, because no samples are counted while the bat screen is closed, so the time from the earlier chime
+  would be wrong.
+- **Lost input.** Frames lost outside a chime are added to the sample count, so the digits stay right. Frames
+  lost during a chime can leave a chime that still passes its CRC, with a time wrong by the length of the loss.
+  The app counts such a chime as failed, with the line `Input 3: input frames lost during the chime`.
+- **The bat analysis stops while the screen is open.** It is the same stop as when the DSP task falls behind,
+  but it is not added to `skip`. So the waterfall has grey columns for that period, and no calls are detected. A
+  call in progress ends when the screen opens, and is reported then. `Bats only` stays in the state it was in: an
+  open gate stays open, and a closed gate stays closed. With Auto volume On, the gain does not change.
+- **The headphones keep playing.** With Auto volume off, the output in HET, COMB, 1:1 and FD is bit-identical with
+  the screen open and closed. A recording in progress is stock code and carries on.
+- **Debug info.** With it on, the debug strip now also shows on this screen, on top of the second help line and the
+  lines about the analysis, so the cost can be read on a real recorder. Its figures restart when the screen opens.
+
+**What the decoders listen to.** The `Listen to` setting chooses the feed, as it does for the headphones. Each channel
+of that feed gets its own decoder, and the decoders do not use the average, because two mics whose distances to the
+phone differ by about 10 mm can cancel at 18 kHz.
+
+| Feed and inputs on | Decoders running | Columns on the screen |
+|---|---|---|
+| Numbered inputs, EXT IN or BAT PLAYBACK, with two channels | 2 | The two names, such as `Input 3` and `Input 4` |
+| Numbered inputs or EXT IN, one on | 1 | One name, such as `Input 3` |
+| `MANUAL's mix`, `Mix, left side` or `Mix, right side`, one or more inputs on | 2 | `Mix, left side` and `Mix, right side` |
+| No input on | 0 | The notice `No inputs turned on in MANUAL`, and nothing else |
+
+If the mix is muted, `Press REC once to listen` or the other words of the main screen's corner notice replace the
+help lines. If the sample rate is not 192 kHz, the main screen's `Wrong sample rate` notice shows, and nothing else.
+
+**Cost.** Figures from this PC, in ms of processing per second of 192 kHz audio, from the new table in `bench`, with
+auto-vectorisation off and no chime in the input. On this PC, one decoder costs about 1.9 ms a second with no chime in
+the input, and about 2.4 ms a second while chimes play with no gap between them.
+
+| Mode | Main screen, Listen to on two channels | Chime test, two channels | Chime test, one channel |
+|---|---|---|---|
+| HET | 5.97 | 5.10 | 2.92 |
+| COMB | 8.14 | 7.22 | 4.18 |
+| 1:1 | 4.88 | 4.09 | 2.31 |
+| FD | 9.04 | 8.31 | 6.53 |
+
+So on the PC, stopping the bat analysis saves more time than the two decoders use. The X8's figures may differ, because
+the app's processing runs from ITCM and DTCM, and only `FrontEnd::push`, 644 bytes that run for every input sample, was
+moved to ITCM. `ChimeTest::listen`, 19,848 bytes, is larger than the 17,632 bytes free in ITCM, so it runs from
+SDRAM. The data of the two decoders, about 19 KB each, is in `Buffers`, also in SDRAM. Drawing the screen takes about
+0.1 ms per display frame on the PC. If the DSP task falls behind while the decoders are reading a chime, `drop_backlog`
+discards input, and that chime fails.
+
+| Item | B234 | B235 | Limit |
+|---|---|---|---|
+| ITCM | 70.8 KB | 73.8 KB | 89.2 KB |
+| DTCM | 141.9 KB | 142.1 KB | 152.8 KB |
+| Patch stored in the update file | 206.4 KB | 243.2 KB | |
+| `.noinit`, the end of the patch's memory | ends at 0x818d4d88 | ends at 0x818e6f40 | 0x81900000 |
+
+**On screen.** A fresh subagent that had not seen the code drafted this text, and it was then checked against the code.
+
+| Where | Text |
+|---|---|
+| SETTINGS button | `Chime test` |
+| Title | `CHIME TEST` |
+| Above the digits | `No chime read yet`, or `Time from the chime. X8 clock not changed.` |
+| Under the date | `Last chime read 12 s ago`, `Last chime read 4 min 12 s ago`, `Last chime read 1 h 12 min ago` |
+| Table rows | `Chimes read`, `Chimes failed`, `Last carrier dBFS`, `Last SNR dB`, `17-19 kHz now` |
+| SNR with no noise measured | `not measured` |
+| Failure line | `Input 3: carrier stopped after 6 complete bytes`, `Input 3: CRC check failed`, `Input 3: chime was too long`, `Input 3: two different readings passed CRC`, `Input 3: message refused after CRC passed`, `Input 3: input frames lost during the chime` |
+| Help | `On the phone, press "Play chimes for 1 minute".`, `Hold the phone steady near a mic, with the volume up.` |
+| About the analysis | `Bat analysis is stopped while this screen is open.`, `The waterfall gets grey columns for this time.`, `A recording in progress continues.` |
+| Button | `Back` |
+
+**Tests.** `crates/bat-app/src/tests/chime_test.rs` plays chimes from the Rust port of the encoder through the app. It
+checks:
+
+- The time, that it ticks, how long ago the chime was read, and the clock over 200 s.
+- That the screen's pixels change as they should: the digits, each channel's column, and a failure on each channel.
+- The levels and the SNR with noise under the chime.
+- A time zone on each channel, and lost frames before a chime and during one.
+- Each row of the "What the decoders listen to" table, with the chime on the channel that would miss it if the wrong
+  number of decoders ran.
+- A chime cut off and then a chime read, a new test on opening and on `input_lost(0)`, and nothing listening with the
+  screen closed.
+- The headphones with Auto volume off, the grey columns, `Bats only` staying open and staying closed, a call in
+  progress when the screen opens, and that the text fits.
+
+**Emulator.** I played a 12 s two-channel file at 192 kHz through the emulator page. It has chimes starting at 1 s, 3.5 s
+and 6 s, and a chime starting at 8.5 s that is cut off before it ends. The screen showed the right time, the digits
+ticked, and each channel had its own counts. The emulator does not have MANUAL's mix, so the mix rows have not been run
+there. `screenshot` takes `chime` as its mode.
+
+**What to check.** Everything in the "What to check" lists of steps 11 to 16 first. Then, on the phone, open `Bat recorder
+setup by sound`, and press `Play chimes for 1 minute` on the `Tascam X8` tab.
+
+- **Reading a chime.** In SETTINGS, tap `Chime test`, and hold the phone near a mic. How close does the phone need to
+  be? Do the digits match `Phone's clock` on the page, within about 1 s? The phone's audio delay can add to any difference.
+- **The 17 to 19 kHz bar.** Does it rise when the phone plays? What level does it show when a chime is read, and when
+  one fails?
+- **MANUAL's mix and the numbered inputs.** Do the decoders read a chime on each feed? With Listen to on the mix and REC
+  PAUSE on, does `Press REC once to listen` show, and do the decoders read chimes after you press REC?
+- **The cost.** Turn Debug info on, use two mics, set Listen to on `Inputs 3 and 4`, and choose COMB. While chimes play,
+  note `dsp`, `dry`, `lost` and `drop`, on standby and while recording. Do the headphones play without gaps? Do any
+  chimes that read on standby fail while recording?
+- **Going back.** Tap `Back` and `Done`. Does the waterfall show grey columns for the period on the test screen, and does
+  detection restart? Does a recording made during the test sound the same as one made with the screen closed?
+
 ## Firmware map (V2.03, in progress)
 
 Found with `tools/x8ram.py` (unpacks the RAM runs) and a headless Ghidra 10.4

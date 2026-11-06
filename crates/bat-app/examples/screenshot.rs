@@ -3,8 +3,8 @@
 //! cargo run -p bat-app --release --example screenshot -- IN.wav OUT.png [SECONDS] [MODE] [SCALE] [OFFSET RANGE PER_ROW]
 //!
 //! SECONDS: how much of the file to play first (default: all of it).
-//! MODE: het, comb, fd, te, pitch, or settings for the settings screen
-//! (default het). SCALE: 1 to 4 (default 2).
+//! MODE: het, comb, fd, te, pitch, settings for the settings screen, or chime for
+//! the chime test, which listens to the file (default het). SCALE: 1 to 4 (default 2).
 //! OFFSET, RANGE (dB) and PER_ROW (0 or 1): waterfall contrast, as
 //! `BatApp::set_display` (default: the app's defaults).
 //! The file must be at 192 kHz; channel 1 feeds input 3, channel 2 input 4.
@@ -135,6 +135,9 @@ fn main() {
     }
     let ch = |c: usize| -> Vec<f32> { (0..n).map(|i| samples[i * channels + c.min(channels - 1)]).collect() };
     let (a, b) = (ch(0), ch(1));
+    if args.get(4).map(String::as_str) == Some("chime") {
+        app.open_chime_test();
+    }
     let (mut l, mut r) = (vec![0.0; n], vec![0.0; n]);
     let skips: Vec<(f32, f32)> = std::env::var("SKIP").map_or(Vec::new(), |list| {
         list.split(',')

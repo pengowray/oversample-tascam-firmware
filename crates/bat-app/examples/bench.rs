@@ -11,9 +11,10 @@
 //! RUSTFLAGS="-C no-vectorize-loops -C no-vectorize-slp" cargo run -p bat-app --release --example bench
 //!
 //! Without IN.wav it plays noise with ten 5 ms calls a second. `HOPS=128,192`
-//! chooses the FFT hops for the stage table. The last table has the app with one
+//! chooses the FFT hops for the stage table. The stereo table has the app with one
 //! chain against two, on two different signals: the file's first two channels, or the
-//! noise and the same noise backwards. The stages that the app does not
+//! noise and the same noise backwards. The last table has the chime test, on those
+//! signals, with no chime in them. The stages that the app does not
 //! make public (the waterfall and snapshot writes, the meters) are copied here,
 //! so keep them in step with `BatApp::analyse`. The stages add up to about the
 //! whole app's analysis, as the two tables show.
@@ -407,5 +408,41 @@ fn main() {
             print!("{:>9.2}", per_s(t));
         }
         println!();
+    }
+
+    // The chime test: its decoders run, and the analysis stops. The input has no chime,
+    // so the decoders are listening and not reading a message.
+    println!();
+    println!("Whole app with source Both, on the main screen and with the chime test open:");
+    println!("{:<8}{:>16}{:>20}{:>20}{:>16}", "mode", "main screen", "test, two inputs", "test, one input", "draw ms/frame");
+    for mode in [Mode::Het, Mode::Comb, Mode::Thru, Mode::Fd] {
+        print!("{:<8}", mode.label());
+        let input3 = bat_app::InputName { short: "3", long: "Input 3" };
+        let mut draw = 0.0;
+        for (open, one_input) in [(false, false), (true, false), (true, true)] {
+            let mut storage = vec![0.0f32; 96_000];
+            let mut buffers = Box::new(Buffers::new());
+            let mut app = BatApp::new(FS, &mut storage, &mut buffers);
+            app.set_mode(mode);
+            if one_input {
+                app.set_inputs([Some(input3), None]);
+            }
+            if open {
+                app.open_chime_test();
+            }
+            let (mut l, mut r) = (vec![0.0; 1024], vec![0.0; 1024]);
+            let t = best_of(STEREO_RUNS, || {
+                for (a, b) in first.chunks(1024).zip(second.chunks(1024)) {
+                    let k = a.len();
+                    app.process(a, b, &mut l[..k], &mut r[..k]);
+                }
+            });
+            print!("{:>18.2}", per_s(t));
+            if open {
+                let mut pixels = vec![0u16; WIDTH * HEIGHT];
+                draw = best_of(20, || app.render(&mut bat_app::Rgb565Buffer::new(&mut pixels, WIDTH, HEIGHT)));
+            }
+        }
+        println!("{:>16.3}", draw * 1000.0);
     }
 }

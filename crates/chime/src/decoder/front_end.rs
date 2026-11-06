@@ -163,6 +163,7 @@ impl FrontEnd {
 
     /// Takes one input sample. When a baseband sample is due, adds it to `ring` and
     /// returns it.
+    #[inline(never)]
     pub(super) fn push(&mut self, sample: f32, ring: &mut Ring) -> Option<Baseband> {
         self.input_samples += 1;
         let sample = if sample.abs() < MAX_SAMPLE { sample } else { 0.0 };

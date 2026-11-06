@@ -58,6 +58,7 @@ name = "bat-app"
 version = "0.1.0"
 dependencies = [
  "bat-dsp",
+ "chime",
  "embedded-graphics",
  "hound",
  "libm",

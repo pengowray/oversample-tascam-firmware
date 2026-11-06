@@ -19,6 +19,16 @@ use crate::{
 use bat_dsp::heterodyne::DEFAULT_COMB_SPACING_HZ;
 use bat_dsp::time_expansion::{DEFAULT_POST_MS, DEFAULT_PRE_MS};
 
+mod chime_screen;
+#[cfg(test)]
+pub(crate) use chime_screen::{CLOCK_Y, COLUMN_X, FAILURE_Y, ROW_H, ROW_Y, chime_text, columns as chime_columns, lines_with_widths as chime_test_lines};
+
+/// The width of the chime test's clock, for tests.
+#[cfg(test)]
+pub(crate) fn chime_clock_width(text: &str) -> i32 {
+    chime_screen::CLOCK.get_rendered_dimensions(text, Point::zero(), VerticalPosition::Baseline).unwrap().advance.x
+}
+
 const SMALL: FontRenderer = FontRenderer::new::<fonts::u8g2_font_helvR08_tf>();
 const BODY: FontRenderer = FontRenderer::new::<fonts::u8g2_font_helvR10_tf>();
 const BODY_BOLD: FontRenderer = FontRenderer::new::<fonts::u8g2_font_helvB10_tf>();
@@ -71,6 +81,11 @@ pub fn draw(app: &BatApp, fb: Fb) {
     if app.screen == Screen::Settings {
         title_bar(fb, "SETTINGS", false);
         settings(app, fb);
+        return;
+    }
+    if app.screen == Screen::ChimeTest {
+        title_bar(fb, "CHIME TEST", false);
+        chime_screen::draw(app, fb);
         return;
     }
     let title = match app.input_kind() {
@@ -203,11 +218,7 @@ fn notice_lines(fb: Fb, x: i32, heading_y: i32, lines: &[&str]) {
 /// the right. White on `PANEL` has a contrast of 12:1, whatever the waterfall shows.
 /// The waterfall's grey columns are also `PANEL`, so the box has a border.
 fn mix_silence_notice(fb: Fb, silence: MixSilence) {
-    let lines: &[&str] = match silence {
-        MixSilence::RecPause => &["Press REC once to listen"],
-        MixSilence::Stopped => &["Press REC to record and listen"],
-        MixSilence::PageOpen => &["Headphones muted. Press PLAY", "then close the page in MANUAL"],
-    };
+    let lines = mix_silence_lines(silence);
     let width = |line: &&str| BODY.get_rendered_dimensions(*line, Point::zero(), VerticalPosition::Baseline).map_or(0, |d| d.advance.x);
     let panel = corner_notice(lines.iter().map(width).max().unwrap_or(0), lines.len());
     rounded(fb, panel, 3, PANEL);
@@ -216,6 +227,15 @@ fn mix_silence_notice(fb: Fb, silence: MixSilence) {
     let (x, y) = (panel.top_left.x + CORNER_NOTICE_PAD_X, panel.top_left.y + CORNER_NOTICE_BASELINE);
     for (line, y) in lines.iter().zip((0..).map(|row| y + row * CORNER_NOTICE_LINE)) {
         text(fb, &BODY, *line, x, y, LEFT, TEXT);
+    }
+}
+
+/// What to press to hear the mix.
+fn mix_silence_lines(silence: MixSilence) -> &'static [&'static str] {
+    match silence {
+        MixSilence::RecPause => &["Press REC once to listen"],
+        MixSilence::Stopped => &["Press REC to record and listen"],
+        MixSilence::PageOpen => &["Headphones muted. Press PLAY", "then close the page in MANUAL"],
     }
 }
 
@@ -729,6 +749,8 @@ fn settings(app: &BatApp, fb: Fb) {
     text(fb, &BODY_BOLD, "Sounds to mark", 16, SWITCHES_HEADING, LEFT, TEXT);
     text(fb, &SMALL, "Marked on waterfall, played in TE and Auto volume Bats only.", 16, SWITCHES_HELP, LEFT, TEXT_MUTED);
     text(fb, &SMALL, "These settings reset when the recorder is turned off.", 16, SETTINGS_NOTE, LEFT, TEXT_MUTED);
+    rounded(fb, CHIME_TEST, 4, BUTTON);
+    text(fb, &BODY_BOLD, "Chime test", CHIME_TEST.center().x, CHIME_TEST.top_left.y + 28, CENTER, TEXT);
     rounded(fb, DONE, 4, ACCENT);
     text(fb, &BODY_BOLD, "Done", DONE.center().x, DONE.top_left.y + 28, CENTER, TEXT);
 }

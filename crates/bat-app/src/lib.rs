@@ -16,6 +16,7 @@
 #[cfg(test)]
 extern crate std;
 
+mod chime_test;
 pub mod fb;
 mod layout;
 mod level;
@@ -162,6 +163,8 @@ pub enum Recorder {
 pub enum Screen {
     Main,
     Settings,
+    /// Shows what the chime decoders read, while they listen: see [`chime_test`].
+    ChimeTest,
 }
 
 /// Rows of the settings screen, top to bottom.
@@ -314,8 +317,9 @@ impl Meter {
     }
 }
 
-/// The app's large buffers, which its processing touches only once per
-/// spectrum column or display column: about 120 KB. They are kept outside
+/// The app's large buffers: about 158 KB. Its processing touches them only once per
+/// spectrum column or display column, except for the chime test's decoders, which it
+/// touches for every sample while that screen is open. They are kept outside
 /// [`BatApp`] so that on the X8 the app's own state (about 44 KB, touched for
 /// every sample) can sit in fast on-chip memory while these stay in SDRAM.
 pub struct Buffers {
@@ -329,12 +333,14 @@ pub struct Buffers {
     history_centre: [u64; HISTORY],
     /// The last call, scaled to the snapshot's size, column-major.
     snapshot: [u8; SNAP_W * SNAP_H],
+    /// The chime test's decoders, one per block of input, built when the screen opens.
+    chime: [core::mem::MaybeUninit<chime::Decoder>; 2],
 }
 
 impl Buffers {
-    /// All zero, for a `static`.
+    /// All zero, with the chime test's decoders not built yet, for a `static`.
     pub const fn new() -> Self {
-        Self { wf: [0; WF_W * WF_H], history: [0; HISTORY * BINS], history_centre: [0; HISTORY], snapshot: [0; SNAP_W * SNAP_H] }
+        Self { wf: [0; WF_W * WF_H], history: [0; HISTORY * BINS], history_centre: [0; HISTORY], snapshot: [0; SNAP_W * SNAP_H], chime: [const { core::mem::MaybeUninit::uninit() }; 2] }
     }
 }
 
@@ -412,6 +418,7 @@ pub struct BatApp<'a> {
     /// The chunks now being passed are not analysed; see
     /// [`set_skip_analysis`](Self::set_skip_analysis).
     skip_analysis: bool,
+    chime: chime_test::ChimeTest,
     skipped_chunks: u32,
     /// The next chunk does not follow on from the last one.
     input_gap: bool,
@@ -572,6 +579,7 @@ impl<'a> BatApp<'a> {
             field!((*this).history_next).write(0);
             field!((*this).snapshot_hz).write((VIEW_LO_HZ, VIEW_HI_HZ));
             field!((*this).skip_analysis).write(false);
+            field!((*this).chime).write(chime_test::ChimeTest::new());
             field!((*this).skipped_chunks).write(0);
             field!((*this).input_gap).write(false);
             field!((*this).lost_frames).write(0);
@@ -685,6 +693,27 @@ impl<'a> BatApp<'a> {
     /// Show the settings screen, as the menu button does.
     pub fn open_settings(&mut self) {
         self.screen = Screen::Settings;
+    }
+
+    /// Show the chime test, which starts listening with nothing read.
+    pub fn open_chime_test(&mut self) {
+        self.screen = Screen::ChimeTest;
+        self.chime.restart(&mut self.bufs.chime, self.sample_rate as u32);
+    }
+
+    /// How many blocks of input the chime test listens to: with one input on, both blocks
+    /// carry it, except on the mix, where the input may be panned to either side.
+    fn chime_channels(&self) -> usize {
+        match (self.feed(), self.inputs) {
+            (_, [None, _]) => 0,
+            (Feed::Inputs, [_, None]) => 1,
+            _ => 2,
+        }
+    }
+
+    /// Whether the chunks passed now are analysed.
+    fn analysis_runs(&self) -> bool {
+        !self.skip_analysis && self.screen != Screen::ChimeTest
     }
 
     /// Lowest frequency counted as a bat call, in Hz.
@@ -965,6 +994,9 @@ impl<'a> BatApp<'a> {
             self.change_setting(self.selected_setting(), steps);
             return;
         }
+        if self.screen == Screen::ChimeTest {
+            return;
+        }
         let step = |i: usize, len: usize| (i as i32 + steps).clamp(0, len as i32 - 1) as usize;
         match self.mode {
             Mode::Het => self.set_het_lo(self.het.lo() + steps as f32 * HET_STEP_HZ),
@@ -979,6 +1011,12 @@ impl<'a> BatApp<'a> {
 
     /// A tap on the touchscreen, in screen pixels.
     pub fn touch(&mut self, x: i32, y: i32) {
+        if self.screen == Screen::ChimeTest {
+            if layout::BACK.contains(embedded_graphics::prelude::Point::new(x, y)) {
+                self.screen = Screen::Settings;
+            }
+            return;
+        }
         if self.screen == Screen::Settings {
             match layout::settings_hit(x, y, Setting::STEPPED, Setting::ALL.len()) {
                 Some(layout::SettingsHit::Row(i)) => self.setting = i,
@@ -1001,6 +1039,7 @@ impl<'a> BatApp<'a> {
                     self.change_setting(Setting::ALL[i], 1);
                 }
                 Some(layout::SettingsHit::Done) => self.screen = Screen::Main,
+                Some(layout::SettingsHit::ChimeTest) => self.open_chime_test(),
                 None => {}
             }
             return;
@@ -1120,7 +1159,8 @@ impl<'a> BatApp<'a> {
         self.skip_analysis = skip;
     }
 
-    /// Chunks of 256 samples (1.33 ms at 192 kHz) not analysed since the start.
+    /// Chunks of 256 samples (1.33 ms at 192 kHz) that the host has chosen not to have
+    /// analysed since the start. The chime test's stop to the analysis does not count.
     pub fn skipped_chunks(&self) -> u32 {
         self.skipped_chunks
     }
@@ -1141,10 +1181,16 @@ impl<'a> BatApp<'a> {
         }
         if frames > 0 {
             self.join_left = JOIN_FADE_SAMPLES;
+            self.chime.input_jumped(self.samples);
         } else {
             // If the number of chains changes next, its fade has to start from what is
             // heard, which is silence and not the last sample from before the pause.
             self.last_out = [0.0; 2];
+            // The time since a chime started can no longer be counted, and the decoders'
+            // input has a jump in it.
+            if self.screen == Screen::ChimeTest {
+                self.chime.restart(&mut self.bufs.chime, self.sample_rate as u32);
+            }
         }
     }
 
@@ -1154,6 +1200,11 @@ impl<'a> BatApp<'a> {
         let peak = |x: &[f32]| x.iter().fold(0.0f32, |m, v| m.max(v.abs()));
         self.meters[0].update(peak(first), chunk_s);
         self.meters[1].update(peak(second), chunk_s);
+
+        if self.screen == Screen::ChimeTest {
+            let channels = self.chime_channels();
+            self.chime.listen(&mut self.bufs.chime, [first, second], channels, self.samples);
+        }
 
         let source = self.source();
         let mono = &mut self.mono[..len];
@@ -1175,6 +1226,7 @@ impl<'a> BatApp<'a> {
             self.trigger_te();
         }
 
+        let analysis_runs = self.analysis_runs();
         let stereo = self.wants_stereo();
         if stereo && !self.stereo {
             // The second filter still holds whatever it held when stereo last stopped.
@@ -1225,7 +1277,7 @@ impl<'a> BatApp<'a> {
                     out_r.copy_from_slice(right);
                 }
             }
-            self.level.apply_stereo(out_l, out_r, self.mode, !self.skip_analysis);
+            self.level.apply_stereo(out_l, out_r, self.mode, analysis_runs);
         } else {
             // The time expansion recording has had its copy, so this does not reach it.
             if join_left > 0 && self.join_step_filter != 0.0 {
@@ -1241,7 +1293,7 @@ impl<'a> BatApp<'a> {
                 Mode::Pitch => self.pitch.process(mono, out),
                 Mode::Thru => out.copy_from_slice(mono),
             }
-            self.level.apply(out, self.mode, !self.skip_analysis);
+            self.level.apply(out, self.mode, analysis_runs);
             out_l.copy_from_slice(out);
             out_r.copy_from_slice(out);
             self.last_ears = [mono[len - 1]; 2];
@@ -1298,13 +1350,14 @@ impl<'a> BatApp<'a> {
             snapshot_hz,
             sample_rate,
             skip_analysis,
+            screen,
             skipped_chunks,
             input_gap,
             lost_frames,
             level: auto_level,
             ..
         } = self;
-        let Buffers { wf, history, history_centre, snapshot } = &mut **bufs;
+        let Buffers { wf, history, history_centre, snapshot, .. } = &mut **bufs;
         let column_len = ((*sample_rate * WF_COLUMN_MS * 0.001) as u64).max(1);
         let bin_hz = *sample_rate / FFT_N as f32;
         let scale = 255.0 / *display_range_db;
@@ -1386,18 +1439,23 @@ impl<'a> BatApp<'a> {
             bin_max.fill(f32::MIN);
         };
 
-        let skip = *skip_analysis;
+        let skip = *skip_analysis || *screen == Screen::ChimeTest;
         if skip || *input_gap {
             *input_gap = false;
+            // The analysis stays stopped for as long as the chime test is open, so a call in
+            // progress ends now, and not when the user goes back.
+            let ended = if *screen == Screen::ChimeTest { detector.flush() } else { None };
             // No later column may span the jump.
-            if let Some(event) = detector.gap() {
+            if let Some(event) = ended.or(detector.gap()) {
                 mark(&event, history, history_centre);
             }
             let skipped = if skip { len as u64 } else { 0 };
             analyzer.skip(core::mem::take(lost_frames) as u64 + skipped);
         }
         if skip {
-            *skipped_chunks = skipped_chunks.wrapping_add(1);
+            if *skip_analysis {
+                *skipped_chunks = skipped_chunks.wrapping_add(1);
+            }
             // Keep the waterfall moving, so old columns do not stay at "now". A
             // column cut short by the skip may have held a call that has just
             // been ended, so it does not count as background.
@@ -1455,6 +1513,9 @@ impl<'a> BatApp<'a> {
     /// button, the waterfall in HET or COMB mode (where a tap tunes), or a
     /// control on the settings screen.
     pub fn is_tappable(&self, x: i32, y: i32) -> bool {
+        if self.screen == Screen::ChimeTest {
+            return layout::BACK.contains(embedded_graphics::prelude::Point::new(x, y));
+        }
         if self.screen == Screen::Settings {
             return match layout::settings_hit(x, y, Setting::STEPPED, Setting::ALL.len()) {
                 Some(layout::SettingsHit::Switch(i)) => Setting::ALL[i] != Setting::DebugInfo || self.debug_available,

@@ -88,8 +88,10 @@ Both take `AUDIBLE=LO,HI` (Hz) to try another audible band.
 The phone page that plays the chime, `Bat recorder setup by sound`, is in its own repository,
 `batchi-chime`, beside this one in `~/projects`.
 
-The X8 firmware cannot read the chime yet. To test a recording, record the chime on the
-X8 at 192 kHz, copy the WAV to the computer and run:
+Firmware B235 and later can read the chime live: in the app's settings, tap `Chime test`, and
+the screen shows the time from the chime. It does not change the X8's clock. The emulator has
+the same screen. To test a recording on any firmware, record the chime on the X8 at 192 kHz,
+copy the WAV to the computer and run:
 
 ```bash
 cargo run --release -p chime --example decode_wav -- FILE.wav
@@ -97,5 +99,5 @@ cargo run --release -p chime --example decode_wav -- FILE.wav
 
 It reports the time in the chime, the signal level and SNR, and how far the X8's clock
 differs from the phone's, using the WAV's `bext` chunk. That chunk gives the X8's clock only
-to about 1 s, so the difference is in whole seconds. Its decoder is the `chime` crate, which
-is `no_std` so a firmware patch can use it.
+to about 1 s, so the difference is in whole seconds. It uses the same decoder as the firmware,
+the `chime` crate.

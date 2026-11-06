@@ -26,7 +26,8 @@ SECTIONS
   /* Run from ITCM: the app's processing, including the closures of its analysis
      that the compiler does not inline, its meters, Auto volume (module level, also
      inlined at present), the DSP library it inlines from, the FFT, libm, the snapshot
-     builder and the patch's input loop. */
+     builder, the patch's input loop and the part of the chime decoder that runs for
+     every sample. The rest of the decoder does not fit. */
   .itcm : ALIGN(8)
   {
     __itcm_start = .;
@@ -39,6 +40,7 @@ SECTIONS
     *(.text.*libm*)
     *(.text.*build_snapshot*)
     *(.text.*process_input*)
+    *(.text.*FrontEnd4push*)
     . = ALIGN(8);
     __itcm_end = .;
   } > ITCM AT> PATCH
