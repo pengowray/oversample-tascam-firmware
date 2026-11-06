@@ -11,8 +11,8 @@
 //!
 //! The bat app: the BAT DETECTOR and BAT PLAYBACK tiles on the LAUNCHER
 //! (USER SETTINGS 2 and 3) open MANUAL with the bat screen over it, fed from
-//! inputs 3 and 4 or from the X8's playback. See docs/HOMEBREW.md, steps 9 to
-//! 11.
+//! the inputs turned on in MANUAL or from the X8's playback. See
+//! docs/HOMEBREW.md, steps 9 to 12.
 
 #![cfg_attr(target_os = "none", no_std)]
 #![cfg_attr(target_os = "none", no_main)]

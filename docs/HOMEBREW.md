@@ -779,25 +779,31 @@ USER SETTINGS 1, what does SAVE USER SETTINGS do?
 
 ## Step 12 test file: the bat app hears the inputs turned on in MANUAL (built 2026-11-06, not yet installed)
 
-`work/patch11/#PortaX8_0229.203` (B229, SHA-256 `c9ccf3ac…fe4d6919`). Includes step 11,
+`work/patch11/#PortaX8_0229.203` (B229, SHA-256 `40435549…105dd302`). Includes step 11,
 which has not been installed either.
 
 - **Which inputs.** BAT DETECTOR now hears two of the inputs turned on in
   MANUAL (the red tracks on its INPUT screen), through MANUAL's INPUT SELECT
   assignment, read about 10 times a second, so a change takes effect when you go
-  back with PLAY. If more than two different inputs are on, it takes inputs 3 to
-  6 and EXT IN first, in track order, then inputs 1 and 2 (the included mics'
-  jacks, which are on by default). With one input on, the app hears that input
-  alone. With none on, it hears inputs 3 and 4.
+  back with PLAY. All six tracks are on by default. If more than two different
+  inputs are on, it takes inputs 3 to 6 and EXT IN first, in track order, then
+  inputs 1 and 2 (the included mics' jacks), so the default is inputs 3 and 4 and
+  mics on other inputs need the unused tracks turned off. With one input on, the
+  app hears that input alone. With none on, the X8 powers its inputs down, so the
+  app hears silence and a notice covers the waterfall.
 - **On screen.** The meters are labelled with the inputs heard (1 to 6, EL and
   ER for EXT IN, L and R in BAT PLAYBACK); with one input there is one meter.
   Listen to shows Both inputs, or the input's name (Left and right, Left or
   Right in BAT PLAYBACK), and has no buttons with one input.
 - **Debug line.** The third debug line starts with the on-track bits and the two
-  input frame words heard, for example `on 3f w0,6`.
-- **Polarity.** Inputs 3 to 6 are inverted in the raw words and inputs 1 and 2
-  are not, and the patch reads the raw words. This matters only for Both inputs
-  with one input from each group.
+  input frame words heard, then gives the level of words 0 to 11 in order, for
+  example `on 3f w0,6 dB 40 99 ...`, so all twelve now fit on the screen.
+- **Polarity.** INPUT 3-4 and INPUT 5-6 are inverted in the raw words; inputs 1
+  and 2 and EXT IN are not. The patch reads the raw words, so this matters only
+  for Both inputs with one input from each group.
+- **ITCM.** `process_input` was inlined into code in SDRAM, so the linker script's
+  pattern for it matched nothing. It now runs from ITCM as intended, which may
+  help the stutter noted in step 10.
 
 **What to check.** With mics on inputs 3 and 4 and every track on, are the meters
 labelled 3 and 4, with sound? Turn off tracks 3 and 4 on MANUAL's INPUT screen
@@ -805,6 +811,8 @@ with mics on 5 and 6: do the meters say 5 and 6, and is the sound from them?
 With one track on: is there one meter, and sound from that input? Use INPUT
 SELECT to put INPUT 5-6 on tracks 1-2: do the labels still say 5 and 6? With a
 mic on input 1 or 2 alone, does it work at 192 kHz, and how far up does it reach?
+With every track off: does the notice show, and what do words 0 and 6 read on the
+debug line? Is the stutter during a take better?
 
 ## Firmware map (V2.03, in progress)
 
@@ -1005,12 +1013,16 @@ record. The sample rate is one global setting. Holding HOME (code 0xae) sends
 the launcher's number (0); a short HOME press only stops the transport.
 
 **Tracks and inputs.** MANUAL's on/off for tracks 1 to 6 is bits 0 to 5 of
-settings+0x200 or settings+0x204, on in either word (ITCM 0x161d8 mutes the
-inputs of other tracks, and REC's "No Armed Track" check uses the same bits;
-`FUN_80da70c4` edits them, moving a track pair between the words). The input pair
+settings+0x200 (on, not stereo linked) or settings+0x204 (on, stereo linked; MIC
+on the INPUT screen is tracks 1 and 2 linked). All six are on by default.
+`FUN_80dd4cac` handles a tap on a track number, `FUN_80da70c4` edits the words,
+and ITCM 0x161d8, `FUN_80da5e94` (input power and routing) and REC's "No Armed
+Track" check read them. An input pair with no track on is powered down. Bits 6
+and 7 are the master track. The input pair
 a track hears is the byte at settings+0x30 + 0x20 x track (copied from the app's
-preset when the app opens): 1 INPUT 1-2, 2 INPUT 3-4, 3 INPUT 5-6, 4 EXT IN, and
-the track's side of the pair is its number's: tracks 1, 3, 5 hear the left input.
+preset when the app opens): 0 none, 1 INPUT 1-2, 2 INPUT 3-4, 3 INPUT 5-6, 4 EXT
+IN, 5 probably USB. Tracks 1, 3 and 5 hear the left input of the pair, and tracks
+2, 4 and 6 the right.
 
 **USER SETTINGS tiles** (cursor 11 to 13). Each is shown only while its slot
 holds a preset. The slots are three words at 0x81e9da60, each the Qt number of

@@ -83,6 +83,8 @@ pub fn draw(app: &BatApp, fb: Fb) {
     waterfall(app, fb);
     if let Some(rate) = app.rate_warning() {
         rate_warning(fb, rate, app.input_kind());
+    } else if app.inputs()[0].is_none() {
+        no_input_notice(fb);
     }
     snapshot(app, fb);
     value_line(app, fb);
@@ -155,25 +157,51 @@ fn status_bar(app: &BatApp, fb: Fb) {
 /// gets no sound then, so the waterfall would stay empty. For live input the
 /// fix is the record rate setting; for playback, a recording made at 192 kHz.
 fn rate_warning(fb: Fb, rate_hz: u32, kind: InputKind) {
-    let panel = Rectangle::new(Point::new(6, WF_Y + 8), Size::new(308, WF_H as u32 - 16));
-    rounded(fb, panel, 6, PANEL);
-    let x = panel.top_left.x + 10;
-    let mut y = panel.top_left.y + 22;
+    let (x, y) = notice_panel(fb);
     let tenths = (rate_hz + 50) / 100;
     if tenths % 10 == 0 {
         text(fb, &BODY_BOLD, format_args!("Wrong sample rate: {}kHz", tenths / 10), x, y, LEFT, TEXT);
     } else {
         text(fb, &BODY_BOLD, format_args!("Wrong sample rate: {}.{}kHz", tenths / 10, tenths % 10), x, y, LEFT, TEXT);
     }
-    let lines: &[&str] = match kind {
-        InputKind::Live => &RATE_FIX_LIVE,
-        InputKind::Playback => &RATE_FIX_PLAYBACK,
-    };
-    for line in lines {
-        y += 24;
+    notice_lines(
+        fb,
+        x,
+        y,
+        match kind {
+            InputKind::Live => &RATE_FIX_LIVE,
+            InputKind::Playback => &RATE_FIX_PLAYBACK,
+        },
+    );
+}
+
+/// Over the waterfall while no input is on: the app hears nothing.
+fn no_input_notice(fb: Fb) {
+    let (x, y) = notice_panel(fb);
+    text(fb, &BODY_BOLD, NO_INPUT_HEADING, x, y, LEFT, TEXT);
+    notice_lines(fb, x, y, &NO_INPUT_FIX);
+}
+
+/// Draw the panel over the waterfall; returns where its heading goes.
+fn notice_panel(fb: Fb) -> (i32, i32) {
+    let panel = Rectangle::new(Point::new(6, WF_Y + 8), Size::new(308, WF_H as u32 - 16));
+    rounded(fb, panel, 6, PANEL);
+    (panel.top_left.x + 10, panel.top_left.y + 22)
+}
+
+fn notice_lines(fb: Fb, x: i32, heading_y: i32, lines: &[&str]) {
+    for (line, y) in lines.iter().zip((1..).map(|row| heading_y + row * 24)) {
         text(fb, &BODY, *line, x, y, LEFT, TEXT);
     }
 }
+
+const NO_INPUT_HEADING: &str = "No inputs turned on in MANUAL";
+const NO_INPUT_FIX: [&str; 4] = [
+    "BAT DETECTOR listens to 1 or 2 inputs.",
+    "1. Press PLAY and open the INPUT screen.",
+    "2. Turn on inputs with ultrasonic mics.",
+    "3. Press PLAY to return to BAT DETECTOR.",
+];
 
 const RATE_FIX_LIVE: [&str; 6] = [
     "BAT DETECTOR needs a 192kHz sample rate.",
@@ -199,8 +227,7 @@ fn meter_x(db: f32) -> i32 {
 fn meters(app: &BatApp, fb: Fb) {
     const SEGMENT: i32 = 4;
     const GAP: i32 = 1;
-    let (first, second) = app.inputs();
-    for ((meter, &y), name) in app.meters.iter().zip(&METER_Y).zip([Some(first), second]) {
+    for ((meter, &y), name) in app.meters.iter().zip(&METER_Y).zip(app.inputs()) {
         let Some(name) = name else { continue };
         text(fb, &SMALL, name.short, 8, y + 6, LEFT, TEXT_MUTED);
         let Meter { level_db, hold_db, .. } = *meter;
@@ -552,11 +579,11 @@ fn settings(app: &BatApp, fb: Fb) {
         if *setting == Setting::LowestBatCall {
             text(fb, &VALUE, format_args!("{:.0} kHz", app.lowest_bat_call_hz() / 1000.0), x, y + 44, LEFT, TEXT);
         } else {
-            let (first, second) = app.inputs();
-            let value = match (second, app.source) {
-                (None, _) | (_, MonitorSource::First) => first.long,
-                (Some(second), MonitorSource::Second) => second.long,
-                (Some(_), MonitorSource::Mix) => match app.input_kind() {
+            let value = match (app.inputs(), app.source) {
+                ([None, _], _) => "No input",
+                ([Some(first), None], _) | ([Some(first), _], MonitorSource::First) => first.long,
+                ([_, Some(second)], MonitorSource::Second) => second.long,
+                ([Some(_), Some(_)], MonitorSource::Mix) => match app.input_kind() {
                     InputKind::Live => "Both inputs",
                     InputKind::Playback => "Left and right",
                 },
@@ -565,7 +592,7 @@ fn settings(app: &BatApp, fb: Fb) {
         }
         text(fb, &SMALL, help, x, y + 66, LEFT, TEXT_MUTED);
         // With one input, Listen to has nothing to choose.
-        if *setting == Setting::ListenTo && app.inputs().1.is_none() {
+        if *setting == Setting::ListenTo && app.inputs()[1].is_none() {
             continue;
         }
         for (b, plus) in [(setting_minus(i), false), (setting_plus(i), true)] {

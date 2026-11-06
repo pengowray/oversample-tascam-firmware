@@ -366,9 +366,10 @@ pub struct BatApp<'a> {
     /// The input's sample rate in Hz, when it is not one the app works at.
     rate_warning: Option<u32>,
     input_kind: InputKind,
-    /// The names of the two inputs; the second is `None` when both blocks
-    /// passed to `process` carry the same input.
-    inputs: (InputName, Option<InputName>),
+    /// The names of the inputs passed to `process`. The second is `None` when
+    /// both blocks carry the same input, and both are `None` when no input is
+    /// on and the blocks are silent.
+    inputs: [Option<InputName>; 2],
     /// The mode buttons, left to right.
     modes: &'static [Mode],
     clock_s: u32,
@@ -465,10 +466,10 @@ impl<'a> BatApp<'a> {
             field!((*this).external_recorder).write(None);
             field!((*this).rate_warning).write(None);
             field!((*this).input_kind).write(InputKind::Live);
-            field!((*this).inputs).write((
-                InputName { short: "3", long: "Input 3" },
+            field!((*this).inputs).write([
+                Some(InputName { short: "3", long: "Input 3" }),
                 Some(InputName { short: "4", long: "Input 4" }),
-            ));
+            ]);
             field!((*this).modes).write(&Mode::ALL);
             field!((*this).clock_s).write(0);
             fill(field!((*this).mono), 0.0);
@@ -567,7 +568,7 @@ impl<'a> BatApp<'a> {
                 self.min_bat_index = step(self.min_bat_index, MIN_BAT_KHZ.len());
                 self.apply_lowest_bat_call();
             }
-            Setting::ListenTo if self.inputs.1.is_none() => {}
+            Setting::ListenTo if self.inputs[1].is_none() => {}
             Setting::ListenTo => {
                 let i = SOURCES.iter().position(|&s| s == self.source).unwrap_or(0);
                 self.source = SOURCES[step(i, SOURCES.len())];
@@ -648,14 +649,15 @@ impl<'a> BatApp<'a> {
         self.input_kind
     }
 
-    /// Name the inputs passed to [`process`](Self::process). With `second`
+    /// Name the inputs passed to [`process`](Self::process). With the second
     /// `None`, both blocks must carry the first input: one meter shows, and
-    /// Listen to has nothing to choose.
-    pub fn set_inputs(&mut self, first: InputName, second: Option<InputName>) {
-        self.inputs = (first, second);
+    /// Listen to has nothing to choose. With both `None`, no input is on: a
+    /// notice covers the waterfall.
+    pub fn set_inputs(&mut self, inputs: [Option<InputName>; 2]) {
+        self.inputs = inputs;
     }
 
-    pub fn inputs(&self) -> (InputName, Option<InputName>) {
+    pub fn inputs(&self) -> [Option<InputName>; 2] {
         self.inputs
     }
 

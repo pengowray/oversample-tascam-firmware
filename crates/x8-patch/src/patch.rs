@@ -245,14 +245,14 @@ const TILE_TEXTS: [[&[u8]; 7]; 2] = [
         b"BAT DETECTOR",
         b"Hear and record bat calls",
         b"live, and see them on a",
-        b"spectrogram. Turn on the",
-        b"inputs for your ultrasonic",
-        b"mics in MANUAL. Set the",
-        b"sample rate to 192 kHz.",
+        b"spectrogram. In MANUAL,",
+        b"turn off inputs without",
+        b"ultrasonic mics. Set the",
+        b"sample rate to 192kHz.",
     ],
     [
         b"BAT PLAYBACK",
-        b"Hear bat calls in 192 kHz",
+        b"Hear bat calls in 192kHz",
         b"recordings. PLAY plays or",
         b"pauses the current file in",
         b"MANUAL. To choose another",
@@ -344,8 +344,8 @@ const ACTION_WHEEL: u32 = 4;
 /// switched to the app the tile asked for.
 static LAUNCHING: AtomicBool = AtomicBool::new(false);
 /// The last bat tile tapped was BAT PLAYBACK: the app hears the X8's
-/// playback (the stock output) instead of inputs 3 and 4, and PLAY and a
-/// short HOME press go on to MANUAL's player.
+/// playback (the stock output) instead of the inputs turned on in MANUAL, and
+/// PLAY and a short HOME press go on to MANUAL's player.
 static PLAYBACK: AtomicBool = AtomicBool::new(false);
 static LAUNCH_FROM: AtomicU32 = AtomicU32::new(0);
 static LAUNCH_AT: AtomicU32 = AtomicU32::new(0);
@@ -383,8 +383,10 @@ static WORD_PEAKS: [AtomicU32; 12] = [const { AtomicU32::new(0) }; 12];
 /// PLAYBACK.
 static SOURCE_PEAK: AtomicU32 = AtomicU32::new(0);
 /// The words of an input frame the interrupt passes to the app, first | second
-/// << 8: inputs 3 and 4 until `update_status` first runs.
+/// << 8, or `NO_INPUT_WORDS` to pass silence. Inputs 3 and 4 until
+/// `update_status` first runs.
 static HEARD_WORDS: AtomicU32 = AtomicU32::new(stock::INPUT_WORDS[2] | stock::INPUT_WORDS[3] << 8);
+const NO_INPUT_WORDS: u32 = u32::MAX;
 /// Core cycles in the last second: in all, in the stock audio callback, and in
 /// the rest of the audio hook (interrupt; read by the drawing context).
 static CYCLES_PER_S: AtomicU32 = AtomicU32::new(0);
@@ -1209,7 +1211,8 @@ extern "C" fn tick_work() {
 
 /// Process up to `budget` frames from the input ring, stopping after
 /// `time_blocks` audio blocks of wall time, and queue the output. Returns the
-/// frames processed.
+/// frames processed. Not inlined, so x8patch.ld can put it in ITCM.
+#[inline(never)]
 fn process_input(app: &mut BatApp<'static>, budget: u32, time_blocks: u32) -> u32 {
     let start = BLOCKS.load(Relaxed);
     let mut first = [0.0f32; CHUNK];
@@ -1298,10 +1301,10 @@ fn render() {
     let mut peaks = Line::new();
     let words = HEARD_WORDS.load(Relaxed);
     let _ = write!(peaks, "on {:02x} w{},{} dB", tracks_on(), words & 0xff, words >> 8 & 0xff);
-    for (i, peak) in WORD_PEAKS.iter().enumerate() {
+    for peak in &WORD_PEAKS {
         let p = peak.swap(0, Relaxed);
         let db = if p == 0 { 99 } else { (-20.0 * libm::log10f(p as f32 / 2_147_483_648.0)) as u32 };
-        let _ = write!(peaks, " {i}:{}", db.min(99));
+        let _ = write!(peaks, " {}", db.min(99));
     }
     if PLAYBACK.load(Relaxed) {
         // BAT PLAYBACK: the player's state and rate, and the level the app
@@ -1374,9 +1377,10 @@ fn tracks_on() -> u32 {
 
 /// The inputs the app hears: the first two different inputs among the tracks
 /// turned on in MANUAL, taking inputs 3 to 6 and EXT IN before inputs 1 and 2
-/// (the included mics' jacks, which are on by default). With no track on, inputs
-/// 3 and 4.
-fn selected_inputs() -> (Input, Option<Input>) {
+/// (the included mics' jacks). All six tracks are on by default, so with the
+/// default assignment that means inputs 3 and 4. With none on, the X8 powers
+/// the inputs down.
+fn selected_inputs() -> [Option<Input>; 2] {
     let on = tracks_on();
     let mut picked: [Option<Input>; 2] = [None; 2];
     for wanted_jacks_1_2 in [false, true] {
@@ -1391,14 +1395,7 @@ fn selected_inputs() -> (Input, Option<Input>) {
             }
         }
     }
-    let [first, second] = picked;
-    first.map_or(
-        (
-            Input { word: stock::INPUT_WORDS[2], name: INPUT_NAMES[2] },
-            Some(Input { word: stock::INPUT_WORDS[3], name: INPUT_NAMES[3] }),
-        ),
-        |first| (first, second),
-    )
+    picked
 }
 
 /// The X8 recorder's state and take length, and the record rate, for the
@@ -1442,18 +1439,19 @@ fn update_status(app: &mut BatApp<'static>) {
     app.set_input_rate(rate);
     if PLAYBACK.load(Relaxed) {
         app.set_input_kind(InputKind::Playback);
-        app.set_inputs(PLAYBACK_LEFT, Some(PLAYBACK_RIGHT));
+        app.set_inputs([Some(PLAYBACK_LEFT), Some(PLAYBACK_RIGHT)]);
     } else {
         app.set_input_kind(InputKind::Live);
-        let (first, second) = selected_inputs();
-        let word = |input: Input| input.word;
-        HEARD_WORDS.store(word(first) | word(second.unwrap_or(first)) << 8, Relaxed);
-        app.set_inputs(first.name, second.map(|input| input.name));
+        let [first, second] = selected_inputs();
+        let words = first.map_or(NO_INPUT_WORDS, |first| first.word | second.unwrap_or(first).word << 8);
+        HEARD_WORDS.store(words, Relaxed);
+        app.set_inputs([first, second].map(|input| input.map(|input| input.name)));
     }
 }
 
 /// The audio DMA callback: runs the stock one, then, with the bat screen up at
-/// 192 kHz, passes inputs 3 and 4 to the app and plays the app's output.
+/// 192 kHz, passes the inputs chosen by `selected_inputs` to the app and plays
+/// the app's output.
 unsafe extern "C" fn audio_hook(a: usize, b: usize, c: usize, d: usize) -> usize {
     if !CYCLE_COUNTER_ON.load(Relaxed) {
         // SAFETY: turning on the Cortex-M7 cycle counter (trace enable, then
@@ -1513,6 +1511,7 @@ unsafe extern "C" fn audio_hook(a: usize, b: usize, c: usize, d: usize) -> usize
     let file_playing = playback && unsafe { ptr::read_volatile(stock::DSP_PLAYING) } == 1;
     let words = HEARD_WORDS.load(Relaxed);
     let (first_word, second_word) = ((words & 0xff) as usize, (words >> 8 & 0xff) as usize);
+    let no_input = words == NO_INPUT_WORDS;
     let write = IN_WRITE.load(Relaxed);
     if spare::IN_FRAMES - write.wrapping_sub(IN_READ.load(Acquire)) >= 4 {
         let ring = IN_RING.0.get().cast::<[i32; 2]>();
@@ -1521,7 +1520,7 @@ unsafe extern "C" fn audio_hook(a: usize, b: usize, c: usize, d: usize) -> usize
             // SAFETY: words of this frame in the input and output blocks, and
             // the ring.
             unsafe {
-                let pair = if !playback {
+                let pair = if !playback && !no_input {
                     [ptr::read_volatile(input.add(12 * k + first_word)), ptr::read_volatile(input.add(12 * k + second_word))]
                 } else if file_playing && gain != 0.0 {
                     let unscale = |word: i32| (word as f32 / gain) as i32;

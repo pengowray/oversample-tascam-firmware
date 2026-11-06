@@ -174,17 +174,29 @@ fn listen_to_has_nothing_to_choose_with_one_input() {
     let mut storage = vec![0.0f32; 1024];
     let mut app = BatApp::new(FS, &mut storage, buffers());
     let name = InputName { short: "5", long: "Input 5" };
-    app.set_inputs(name, None);
-    assert_eq!(app.inputs(), (name, None));
+    app.set_inputs([Some(name), None]);
+    assert_eq!(app.inputs(), [Some(name), None]);
     let before = app.source();
     app.change_setting(Setting::ListenTo, 1);
     assert_eq!(app.source(), before);
     assert!(draw(&app).iter().any(|&p| p != 0));
     app.open_settings();
     assert!(draw(&app).iter().any(|&p| p != 0));
-    app.set_inputs(name, Some(InputName { short: "6", long: "Input 6" }));
+    app.set_inputs([Some(name), Some(InputName { short: "6", long: "Input 6" })]);
     app.change_setting(Setting::ListenTo, 1);
     assert_ne!(app.source(), before);
+}
+
+#[test]
+fn no_input_draws_a_notice_and_no_meters() {
+    let mut storage = vec![0.0f32; 1024];
+    let mut app = BatApp::new(FS, &mut storage, buffers());
+    let with_inputs = draw(&app);
+    app.set_inputs([None, None]);
+    assert_ne!(draw(&app), with_inputs);
+    app.change_setting(Setting::ListenTo, 1);
+    app.open_settings();
+    assert!(draw(&app).iter().any(|&p| p != 0));
 }
 
 #[test]
