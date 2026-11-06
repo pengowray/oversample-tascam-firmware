@@ -16,8 +16,15 @@
 //! `PLAYBACK=1` shows the screen as BAT PLAYBACK shows it on the X8.
 //! `INPUTS=5,6` or `INPUTS=5` names the inputs for the meters and settings;
 //! `INPUTS=none` shows the notice for no input.
+//! `MIX=1` offers the host's mix in Listen to and chooses it; `MIX=muted` also
+//! shows its notice. `DEBUG=1` offers the debug switch and draws the X8 patch's
+//! longest debug lines over the last-call panel, to check that they fit.
 
-use bat_app::{BatApp, Buffers, CallKind, HEIGHT, InputKind, InputName, Mode, Recorder, Rgb565Buffer, WIDTH};
+use bat_app::{BatApp, Buffers, CallKind, Feed, HEIGHT, InputKind, InputName, Mode, Recorder, Rgb565Buffer, WIDTH};
+use embedded_graphics::prelude::*;
+use embedded_graphics::primitives::Rectangle;
+use u8g2_fonts::types::{FontColor, VerticalPosition};
+use u8g2_fonts::{FontRenderer, fonts};
 
 fn main() {
     let args: Vec<String> = std::env::args().collect();
@@ -85,6 +92,13 @@ fn main() {
         app.set_input_kind(InputKind::Playback);
         app.set_inputs([Some(InputName { short: "L", long: "Left" }), Some(InputName { short: "R", long: "Right" })]);
     }
+    if let Ok(mix) = std::env::var("MIX") {
+        app.set_mix_available(true);
+        app.set_feed(Feed::Mix);
+        app.set_mix_muted(mix == "muted");
+    }
+    let debug = std::env::var("DEBUG").is_ok();
+    app.set_debug_available(debug);
     if let Ok(inputs) = std::env::var("INPUTS") {
         let name = |n: &str| {
             let short: &'static str = String::leak(n.to_string());
@@ -106,7 +120,26 @@ fn main() {
         app.open_settings();
     }
     let mut pixels = vec![0u16; WIDTH * HEIGHT];
-    app.render(&mut Rgb565Buffer::new(&mut pixels, WIDTH, HEIGHT));
+    let mut fb = Rgb565Buffer::new(&mut pixels, WIDTH, HEIGHT);
+    app.render(&mut fb);
+    if debug && args.get(4).map(String::as_str) != Some("settings") {
+        // The longest lines of the patch's draw_debug, in its font and strips.
+        const LINES: [&str; 4] = [
+            "HET | in 5+6 | leaving standby | 192 kHz | auto",
+            "CPU % irq 100 hook 100 dsp 100 (max 100) draw 100",
+            "dry 12345 lost 123456 in 3600 s | ring in 8192 out 16384",
+            "on 3f mix -99 dB: 99 99 99 99 99 99 99 99 99 99 99 99",
+        ];
+        let font = FontRenderer::new::<fonts::u8g2_font_helvR08_tf>();
+        let (top, height) = app.last_call_area();
+        let _ = fb.fill_solid(&Rectangle::new(Point::new(0, top), Size::new(WIDTH as u32, height)), embedded_graphics::pixelcolor::Rgb565::new(4, 8, 4));
+        for (i, line) in LINES.iter().enumerate() {
+            let y = top + i as i32 * 13;
+            let _ = fb.fill_solid(&Rectangle::new(Point::new(0, y), Size::new(WIDTH as u32, 13)), embedded_graphics::pixelcolor::Rgb565::new(4, 8, 4));
+            let _ = font.render(*line, Point::new(2, y + 10), VerticalPosition::Baseline, FontColor::Transparent(embedded_graphics::pixelcolor::Rgb565::WHITE), &mut fb);
+        }
+    }
+    drop(fb);
     let (w, h) = (WIDTH * scale, HEIGHT * scale);
     let mut rgb = vec![0u8; w * h * 3];
     for y in 0..h {

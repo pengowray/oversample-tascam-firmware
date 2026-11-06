@@ -3,7 +3,7 @@ use core::ptr;
 use core::sync::atomic::{Ordering::Acquire, Ordering::Relaxed, Ordering::Release};
 
 use bat_app::fb::Rgb565Buffer;
-use bat_app::{BatApp, InputKind, Mode, Recorder};
+use bat_app::{BatApp, Feed, InputKind, Mode, MonitorSource, Recorder, Screen};
 use embedded_graphics::pixelcolor::Rgb565;
 use embedded_graphics::prelude::*;
 use embedded_graphics::primitives::Rectangle;
@@ -11,14 +11,16 @@ use u8g2_fonts::types::{FontColor, VerticalPosition};
 use u8g2_fonts::{FontRenderer, fonts};
 
 use super::inputs::{PLAYBACK_LEFT, PLAYBACK_RIGHT, selected_inputs, tracks_on};
+use super::audio::OUTPUT_GAIN;
 use super::itcm::load_itcm;
 use super::state::{
     APP, APP_READY, AUDIO_INSTALLED, AUDIO_SLOT_UNEXPECTED, AUDIO_STATE, BACKLOG_DROPPED,
-    BAT_ACTIVE, BLOCKS, BUFFERS, CALLS_PER_S, CYCLES_PER_S, DRAW_PERMILLE, DSP_PERMILLE,
-    DUMMY_LCDIF, FRAME, HEARD_WORDS, HOOK_CYCLES_PER_S, IN_DROPPED, IN_READ, IN_WRITE, ITCM_OK,
-    LAST_EVENT, LAST_TOUCH, LAUNCH_AT, LAUNCH_FROM, LAUNCHING, NO_APP, NO_INPUT_WORDS, OUT_READ,
+    BAT_ACTIVE, BLOCKS, BUFFERS, CALLS_PER_S, CYCLES_PER_S, DEBUG_SHOWN, DRAW_PERMILLE, DSP_PERMILLE,
+    DUMMY_LCDIF, FRAME, HEAR_MIX, HEARD_WORDS, HOOK_CYCLES_PER_S, IN_DROPPED, IN_READ, IN_WRITE, ITCM_OK,
+    LAST_EVENT, LAUNCH_AT, LAUNCH_FROM, LAUNCHING, NO_APP, NO_INPUT_WORDS, OUT_READ,
     OUT_WRITE, PENDING, PLAYBACK, POPUP_HIDDEN, SAVED_BUFFER, SAVED_LITERAL, SCREEN_APP, SESSION,
-    SOURCE_PEAK, STOCK_CYCLES_PER_S, TASK, UNDERRUNS, WORD_PEAKS, WORK_ENTER,
+    SOURCE_PEAK, STOCK_CYCLES_PER_S, TASK, TEST_DSP_MAX, TEST_SETTINGS, TEST_START_BLOCKS, TEST_START_DRY,
+    TEST_START_LOST, UNDERRUNS, WORD_PEAKS, WORK_ENTER,
 };
 use super::task::{app, start_task, task_running};
 use super::{app_byte, blocks_per_second, rate_class, read_byte, spare, stock, system_state};
@@ -87,6 +89,10 @@ pub(super) extern "C" fn enter_work() {
         let app = unsafe { app() };
         app.set_modes(&Mode::WITHOUT_PITCH);
         app.set_recorder(Recorder::Stopped, 0);
+        app.set_debug_available(true);
+        app.set_auto_level_target(AUTO_LEVEL_OUTPUT / OUTPUT_GAIN);
+        app.set_mix_available(true);
+        app.set_feed(Feed::Mix);
         APP_READY.store(true, Relaxed);
         start_task();
     }
@@ -152,8 +158,12 @@ pub(super) fn hide_for_popup() {
     POPUP_HIDDEN.store(true, Release);
 }
 
-/// Draw the app off-screen, with a line of figures across the top for
-/// testing, then copy the frame to the display buffer.
+/// Where automatic headphone level aims, as the output after `OUTPUT_GAIN`:
+/// half of its ceiling, -12 dBFS at the stock headphone gain.
+const AUTO_LEVEL_OUTPUT: f32 = 0.25;
+
+/// Draw the app off-screen, with the debug figures if they are on, then copy
+/// the frame to the display buffer.
 pub(super) fn render() {
     // SAFETY: the off-screen frame, used only by the context running the app.
     let pixels = unsafe { &mut *(*FRAME.0.get()).as_mut_ptr() };
@@ -162,72 +172,131 @@ pub(super) fn render() {
     let app = unsafe { app() };
     update_status(app);
     app.render(&mut fb);
-    let task = TASK.load(Relaxed) as i32;
-    let percent = |part: u32, all: u32| if all == 0 { 0 } else { (part as u64 * 100 / all as u64) as u32 };
-    let all = CYCLES_PER_S.load(Relaxed);
-    let mut line = Line::new();
-    let _ = write!(
-        line,
-        "{}{} | key {}/s | app {} st {} rec {} | dsp {}% draw {}%",
-        if task > 0 { "task" } else { "no task" },
-        if ITCM_OK.load(Relaxed) { "" } else { " ITCM CHANGED" },
-        CALLS_PER_S.load(Relaxed),
-        app_byte(),
-        system_state(),
-        read_byte(stock::TRANSPORT),
-        DSP_PERMILLE.load(Relaxed) / 10,
-        DRAW_PERMILLE.load(Relaxed) / 10,
-    );
-    if task <= 0 {
-        let _ = write!(line, " | cre_tsk {task}");
+    DEBUG_SHOWN.store(app.debug_info(), Relaxed);
+    if app.debug_info() && app.screen() == Screen::Main {
+        draw_debug(&mut fb, app);
     }
-    draw_strip(&mut fb, 0, &line, Rgb565::new(4, 8, 4));
-    let mut line = Line::new();
-    let _ = write!(
-        line,
-        "irq {}% hook {}% | in {} out {} | dry {} lost {} | touch {} {},{}",
-        percent(STOCK_CYCLES_PER_S.load(Relaxed), all),
-        percent(HOOK_CYCLES_PER_S.load(Relaxed), all),
-        IN_WRITE.load(Relaxed).wrapping_sub(IN_READ.load(Relaxed)),
-        OUT_WRITE.load(Relaxed).wrapping_sub(OUT_READ.load(Relaxed)),
-        UNDERRUNS.load(Relaxed),
-        IN_DROPPED.load(Relaxed).wrapping_add(BACKLOG_DROPPED.load(Relaxed)),
-        if LAST_TOUCH.load(Relaxed) >> 31 != 0 { "down" } else { "up" },
-        LAST_TOUCH.load(Relaxed) >> 16 & 0x7fff,
-        LAST_TOUCH.load(Relaxed) & 0xffff,
-    );
-    draw_strip(&mut fb, STRIP_ROWS as i32, &line, Rgb565::new(4, 8, 4));
-    // Peak level of each input word since the last redraw, in dB below full
-    // scale, to check which word carries which input.
-    let mut peaks = Line::new();
-    let words = HEARD_WORDS.load(Relaxed);
-    let _ = write!(peaks, "on {:02x} w{},{} dB", tracks_on(), words & 0xff, words >> 8 & 0xff);
-    for peak in &WORD_PEAKS {
-        let p = peak.swap(0, Relaxed);
-        let db = if p == 0 { 99 } else { (-20.0 * libm::log10f(p as f32 / 2_147_483_648.0)) as u32 };
-        let _ = write!(peaks, " {}", db.min(99));
-    }
-    if PLAYBACK.load(Relaxed) {
-        // BAT PLAYBACK: the player's state and rate, and the level the app
-        // hears, instead of the input words.
-        let p = SOURCE_PEAK.swap(0, Relaxed);
-        let db = if p == 0 { 99 } else { (-20.0 * libm::log10f(p as f32 / 2_147_483_648.0)) as u32 };
-        // SAFETY: words in the stock audio engine, recorder and DSP blocks.
-        let (engine, playing, rate) = unsafe {
-            (
-                ptr::read_volatile(stock::ENGINE_STATE),
-                ptr::read_volatile(stock::DSP_PLAYING),
-                ptr::read_volatile(stock::CONVERTER_RATE),
-            )
-        };
-        peaks = Line::new();
-        let _ = write!(peaks, "playback | engine {engine} play {playing} | rate {rate} | source -{}dBFS", db.min(99));
-    }
-    draw_strip(&mut fb, 2 * STRIP_ROWS as i32, &peaks, Rgb565::new(8, 4, 4));
     // One block copy, so the writes to the uncached display buffer go out in
     // bursts.
     // SAFETY: both buffers hold 320 x 480 pixels and do not overlap.
     unsafe { ptr::copy_nonoverlapping(pixels.as_ptr(), spare::DISPLAY as *mut u16, stock::WIDTH * stock::HEIGHT) };
+}
+
+/// A peak word as dB below full scale, for the debug figures.
+fn db_below_full_scale(peak: u32) -> u32 {
+    if peak == 0 { 99 } else { ((-20.0 * libm::log10f(peak as f32 / 2_147_483_648.0)) as u32).min(99) }
+}
+
+/// Figures for performance tests, over the last-call panel: what is running,
+/// the CPU load, and the dropouts since any of those settings last changed.
+/// The second debug line's max and counts restart at each change, so one mode's
+/// figures can be read without another's in them.
+fn draw_debug(fb: &mut Rgb565Buffer<'_>, app: &BatApp<'static>) {
+    let transport = read_byte(stock::TRANSPORT);
+    let settings = app.mode() as u32
+        | (app.feed() as u32) << 8
+        | (app.source() as u32) << 10
+        | (app.auto_level() as u32) << 12
+        | (transport as u32) << 16;
+    let now = BLOCKS.load(Relaxed);
+    let dry = UNDERRUNS.load(Relaxed);
+    let lost = IN_DROPPED.load(Relaxed).wrapping_add(BACKLOG_DROPPED.load(Relaxed));
+    let dsp = DSP_PERMILLE.load(Relaxed) / 10;
+    if TEST_SETTINGS.swap(settings, Relaxed) != settings {
+        TEST_START_BLOCKS.store(now, Relaxed);
+        TEST_START_DRY.store(dry, Relaxed);
+        TEST_START_LOST.store(lost, Relaxed);
+        TEST_DSP_MAX.store(0, Relaxed);
+    }
+    let dsp_max = TEST_DSP_MAX.load(Relaxed).max(dsp);
+    TEST_DSP_MAX.store(dsp_max, Relaxed);
+    let percent = |part: u32, all: u32| if all == 0 { 0 } else { (part as u64 * 100 / all as u64) as u32 };
+    let all = CYCLES_PER_S.load(Relaxed);
+    // SAFETY: a word in the stock recorder block.
+    let rate = unsafe { ptr::read_volatile(stock::CONVERTER_RATE) };
+    let (top, height) = app.last_call_area();
+    let background = Rgb565::new(4, 8, 4);
+    // The lines replace the whole panel.
+    let _ = fb.fill_solid(&Rectangle::new(Point::new(0, top), Size::new(stock::WIDTH as u32, height)), background);
+
+    let mut line = Line::new();
+    let _ = write!(line, "{} | ", app.mode().label());
+    let [first, second] = app.inputs().map(|input| input.map_or("-", |input| input.short));
+    let _ = match (app.feed(), app.source(), app.inputs()[1].is_some()) {
+        (Feed::Mix, MonitorSource::Both, _) => write!(line, "mix"),
+        (Feed::Mix, MonitorSource::First, _) => write!(line, "mix L"),
+        (Feed::Mix, MonitorSource::Second, _) => write!(line, "mix R"),
+        (Feed::Inputs, MonitorSource::Both, true) => write!(line, "in {first}+{second}"),
+        (Feed::Inputs, MonitorSource::Second, true) => write!(line, "in {second}"),
+        (Feed::Inputs, ..) => write!(line, "in {first}"),
+    };
+    let state = match transport {
+        0 => "stopped",
+        1 | 2 | 8 => "standby",
+        3 => "RECORDING",
+        4 | 6 => "paused",
+        5 => "closing file",
+        7 => "leaving standby",
+        _ => "transport ?",
+    };
+    let _ = write!(line, " | {state} | {} kHz", rate / 1000);
+    if app.auto_level() {
+        let _ = write!(line, " | auto");
+    }
+    draw_strip(fb, top, &line, background);
+
+    let mut line = Line::new();
+    let _ = write!(
+        line,
+        "CPU % irq {} hook {} dsp {} (max {}) draw {}",
+        percent(STOCK_CYCLES_PER_S.load(Relaxed), all),
+        percent(HOOK_CYCLES_PER_S.load(Relaxed), all),
+        dsp,
+        dsp_max,
+        DRAW_PERMILLE.load(Relaxed) / 10,
+    );
+    draw_strip(fb, top + STRIP_ROWS as i32, &line, background);
+
+    let mut line = Line::new();
+    let _ = write!(
+        line,
+        "dry {} lost {} in {} s | ring in {} out {}",
+        dry.wrapping_sub(TEST_START_DRY.load(Relaxed)),
+        lost.wrapping_sub(TEST_START_LOST.load(Relaxed)),
+        now.wrapping_sub(TEST_START_BLOCKS.load(Relaxed)) / blocks_per_second(),
+        IN_WRITE.load(Relaxed).wrapping_sub(IN_READ.load(Relaxed)),
+        OUT_WRITE.load(Relaxed).wrapping_sub(OUT_READ.load(Relaxed)),
+    );
+    // Faults that would make these figures meaningless.
+    if !ITCM_OK.load(Relaxed) {
+        let _ = write!(line, " | ITCM CHANGED");
+    }
+    let task = TASK.load(Relaxed) as i32;
+    if task <= 0 {
+        let _ = write!(line, " | no task {task}");
+    }
+    draw_strip(fb, top + 2 * STRIP_ROWS as i32, &line, background);
+
+    // Peak level of each input word since the last redraw, in dB below full
+    // scale, to check which word carries which input, and of what the app gets.
+    let mut line = Line::new();
+    let source = db_below_full_scale(SOURCE_PEAK.swap(0, Relaxed));
+    if PLAYBACK.load(Relaxed) {
+        // SAFETY: words in the stock audio engine and DSP blocks.
+        let (engine, playing) = unsafe { (ptr::read_volatile(stock::ENGINE_STATE), ptr::read_volatile(stock::DSP_PLAYING)) };
+        let _ = write!(line, "engine {engine} play {playing} | file -{source} dB");
+    } else {
+        if app.feed() == Feed::Mix {
+            let _ = write!(line, "on {:02x} mix -{source} dB:", tracks_on());
+        } else {
+            let words = HEARD_WORDS.load(Relaxed);
+            let _ = write!(line, "on {:02x} w{},{} dB:", tracks_on(), words & 0xff, words >> 8 & 0xff);
+        }
+        for peak in &WORD_PEAKS {
+            let _ = write!(line, " {}", db_below_full_scale(peak.swap(0, Relaxed)));
+        }
+    }
+    draw_strip(fb, top + 3 * STRIP_ROWS as i32, &line, background);
 }
 
 /// The X8 recorder's state and take length, and the record rate, for the
@@ -271,14 +340,19 @@ fn update_status(app: &mut BatApp<'static>) {
     app.set_input_rate(rate);
     if PLAYBACK.load(Relaxed) {
         app.set_input_kind(InputKind::Playback);
+        app.set_mix_available(false);
         app.set_inputs([Some(PLAYBACK_LEFT), Some(PLAYBACK_RIGHT)]);
     } else {
         app.set_input_kind(InputKind::Live);
+        app.set_mix_available(true);
         let [first, second] = selected_inputs();
         let words = first.map_or(NO_INPUT_WORDS, |first| first.word | second.unwrap_or(first).word << 8);
         HEARD_WORDS.store(words, Relaxed);
         app.set_inputs([first, second].map(|input| input.map(|input| input.name)));
     }
+    let hear_mix = !PLAYBACK.load(Relaxed) && app.feed() == Feed::Mix;
+    HEAR_MIX.store(hear_mix, Relaxed);
+    app.set_mix_muted(hear_mix && transport <= 1 && read_byte(stock::MONITOR_WHEN_STOPPED) == 0);
 }
 
 /// Text in a fixed buffer, for formatting without an allocator.
@@ -316,6 +390,9 @@ fn draw_strip(target: &mut Rgb565Buffer<'_>, top: i32, line: &Line, background: 
 
 /// While the bat screen is closed: a strip across the top of Qt's framebuffers.
 pub(super) fn draw_status_strip() {
+    if !DEBUG_SHOWN.load(Relaxed) {
+        return;
+    }
     let mut line = Line::new();
     let audio = match AUDIO_STATE.load(Relaxed) {
         AUDIO_INSTALLED => "audio hooked",

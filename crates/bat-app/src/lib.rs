@@ -17,6 +17,7 @@ extern crate std;
 
 pub mod fb;
 mod layout;
+mod level;
 pub mod palette;
 mod screen;
 
@@ -82,7 +83,6 @@ const PITCH_FACTORS: [f32; 6] = [4.0, 8.0, 10.0, 16.0, 20.0, 32.0];
 /// Choices for the lowest bat call frequency, in kHz; 16 kHz is the default.
 const MIN_BAT_KHZ: [f32; 5] = [14.0, 16.0, 18.0, 20.0, 25.0];
 const MIN_BAT_DEFAULT: usize = 1;
-const SOURCES: [MonitorSource; 3] = [MonitorSource::Mix, MonitorSource::First, MonitorSource::Second];
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum Mode {
@@ -153,17 +153,23 @@ pub enum Screen {
 pub enum Setting {
     /// Sounds peaking below this are not counted as bat calls.
     LowestBatCall,
-    /// The input heard in the headphones and analysed.
+    /// The sound heard in the headphones and analysed.
     ListenTo,
+    /// Whether the headphone level follows the sound automatically.
+    AutoLevel,
+    /// Whether the host shows its figures for testing.
+    DebugInfo,
     /// Whether detections of this kind are marked: a tick under the
     /// waterfall, the last-call panel, and time expansion. On or off.
     Mark(CallKind),
 }
 
 impl Setting {
-    pub const ALL: [Setting; 6] = [
+    pub const ALL: [Setting; 8] = [
         Setting::LowestBatCall,
         Setting::ListenTo,
+        Setting::AutoLevel,
+        Setting::DebugInfo,
         Setting::Mark(CallKind::Bat),
         Setting::Mark(CallKind::Tone),
         Setting::Mark(CallKind::Audible),
@@ -180,12 +186,21 @@ const fn kind_bit(kind: CallKind) -> u8 {
     1 << kind as u8
 }
 
-/// Which input feeds the headphones and the detector.
+/// Which of the two blocks passed to `process` feeds the headphones and the
+/// detector.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum MonitorSource {
     First,
     Second,
-    /// The average of the two inputs.
+    /// The average of the two.
+    Both,
+}
+
+/// What the host passes to `process`: two inputs, or the left and right of its
+/// own stereo mix.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum Feed {
+    Inputs,
     Mix,
 }
 
@@ -370,6 +385,16 @@ pub struct BatApp<'a> {
     /// both blocks carry the same input, and both are `None` when no input is
     /// on and the blocks are silent.
     inputs: [Option<InputName>; 2],
+    /// Whether the host offers its stereo mix, and whether Listen to has it
+    /// chosen.
+    mix_available: bool,
+    feed: Feed,
+    /// The host's mix is silent until the recorder leaves stop.
+    mix_muted: bool,
+    level: level::AutoLevel,
+    /// Whether the host draws figures for testing, and whether it has any.
+    debug_available: bool,
+    debug_info: bool,
     /// The mode buttons, left to right.
     modes: &'static [Mode],
     clock_s: u32,
@@ -417,7 +442,7 @@ impl<'a> BatApp<'a> {
         unsafe {
             field!((*this).sample_rate).write(sample_rate);
             field!((*this).mode).write(Mode::Het);
-            field!((*this).source).write(MonitorSource::Mix);
+            field!((*this).source).write(MonitorSource::Both);
             field!((*this).screen).write(Screen::Main);
             field!((*this).setting).write(0);
             field!((*this).min_bat_index).write(MIN_BAT_DEFAULT);
@@ -470,6 +495,12 @@ impl<'a> BatApp<'a> {
                 Some(InputName { short: "3", long: "Input 3" }),
                 Some(InputName { short: "4", long: "Input 4" }),
             ]);
+            field!((*this).mix_available).write(false);
+            field!((*this).feed).write(Feed::Inputs);
+            field!((*this).mix_muted).write(false);
+            field!((*this).level).write(level::AutoLevel::new(sample_rate));
+            field!((*this).debug_available).write(false);
+            field!((*this).debug_info).write(false);
             field!((*this).modes).write(&Mode::ALL);
             field!((*this).clock_s).write(0);
             fill(field!((*this).mono), 0.0);
@@ -568,11 +599,18 @@ impl<'a> BatApp<'a> {
                 self.min_bat_index = step(self.min_bat_index, MIN_BAT_KHZ.len());
                 self.apply_lowest_bat_call();
             }
-            Setting::ListenTo if self.inputs[1].is_none() => {}
             Setting::ListenTo => {
-                let i = SOURCES.iter().position(|&s| s == self.source).unwrap_or(0);
-                self.source = SOURCES[step(i, SOURCES.len())];
+                let (choices, n) = self.listen_choices();
+                if n > 1 {
+                    let choices = &choices[..n];
+                    let i = choices.iter().position(|&c| c == (self.feed(), self.source)).unwrap_or(0);
+                    (self.feed, self.source) = choices[step(i, n)];
+                }
             }
+            // Turning the wheel up switches on, down switches off.
+            Setting::AutoLevel if steps != 0 => self.level.set_on(steps > 0),
+            Setting::DebugInfo if steps != 0 => self.debug_info = steps > 0,
+            Setting::AutoLevel | Setting::DebugInfo => {}
             // Turning the wheel up switches on, down switches off.
             Setting::Mark(kind) if steps != 0 => self.set_marked(kind, steps > 0),
             Setting::Mark(_) => {}
@@ -661,6 +699,87 @@ impl<'a> BatApp<'a> {
         self.inputs
     }
 
+    /// Offer the host's stereo mix in Listen to. The host reads the choice with
+    /// [`feed`](Self::feed) and passes the mix's left and right to `process`.
+    pub fn set_mix_available(&mut self, available: bool) {
+        self.mix_available = available;
+    }
+
+    pub fn set_feed(&mut self, feed: Feed) {
+        self.feed = feed;
+    }
+
+    pub fn feed(&self) -> Feed {
+        if self.mix_available { self.feed } else { Feed::Inputs }
+    }
+
+    /// The host's mix is silent until the recorder leaves stop: a notice covers
+    /// the waterfall.
+    pub fn set_mix_muted(&mut self, muted: bool) {
+        self.mix_muted = muted;
+    }
+
+    pub fn mix_muted(&self) -> bool {
+        self.mix_muted
+    }
+
+    /// The level automatic headphone level aims for, in the units of
+    /// `process`'s output (0.25 unless set).
+    pub fn set_auto_level_target(&mut self, target: f32) {
+        self.level.set_target(target);
+    }
+
+    pub fn auto_level(&self) -> bool {
+        self.level.is_on()
+    }
+
+    /// The host has figures for testing to show: offer the switch for them.
+    pub fn set_debug_available(&mut self, available: bool) {
+        self.debug_available = available;
+    }
+
+    pub fn debug_available(&self) -> bool {
+        self.debug_available
+    }
+
+    pub fn debug_info(&self) -> bool {
+        self.debug_info
+    }
+
+    /// The choices for Listen to, in order: the whole mix, its left and right,
+    /// then the inputs.
+    fn listen_choices(&self) -> ([(Feed, MonitorSource); 6], usize) {
+        let mut choices = [(Feed::Inputs, MonitorSource::Both); 6];
+        let mut n = 0;
+        let mut add = |sources: &[MonitorSource], feed: Feed| {
+            for &source in sources {
+                choices[n] = (feed, source);
+                n += 1;
+            }
+        };
+        const ALL: [MonitorSource; 3] = [MonitorSource::Both, MonitorSource::First, MonitorSource::Second];
+        if self.mix_available {
+            add(&ALL, Feed::Mix);
+        }
+        match self.inputs {
+            [Some(_), Some(_)] => add(&ALL, Feed::Inputs),
+            [Some(_), None] => add(&ALL[1..2], Feed::Inputs),
+            _ => {}
+        }
+        (choices, n)
+    }
+
+    /// Whether Listen to has more than one choice.
+    pub fn listen_has_choices(&self) -> bool {
+        self.listen_choices().1 > 1
+    }
+
+    /// The panel the last call is shown in, which the host's figures replace:
+    /// its top row and height.
+    pub fn last_call_area(&self) -> (i32, u32) {
+        (layout::SNAP_PANEL.top_left.y, layout::SNAP_PANEL.size.height)
+    }
+
     /// The latest marked detection.
     pub fn last_call(&self) -> Option<CallEvent> {
         self.last_call.map(|(e, _)| e)
@@ -723,10 +842,14 @@ impl<'a> BatApp<'a> {
         if self.screen == Screen::Settings {
             match layout::settings_hit(x, y, Setting::STEPPED, Setting::ALL.len()) {
                 Some(layout::SettingsHit::Row(i)) => self.setting = i,
+                Some(layout::SettingsHit::Switch(i)) if Setting::ALL[i] == Setting::DebugInfo && !self.debug_available => {}
                 Some(layout::SettingsHit::Switch(i)) => {
                     self.setting = i;
-                    if let Setting::Mark(kind) = Setting::ALL[i] {
-                        self.set_marked(kind, !self.is_marked(kind));
+                    match Setting::ALL[i] {
+                        Setting::Mark(kind) => self.set_marked(kind, !self.is_marked(kind)),
+                        Setting::AutoLevel => self.level.set_on(!self.level.is_on()),
+                        Setting::DebugInfo => self.debug_info = !self.debug_info,
+                        _ => {}
                     }
                 }
                 Some(layout::SettingsHit::Minus(i)) => {
@@ -835,7 +958,7 @@ impl<'a> BatApp<'a> {
             *m = match self.source {
                 MonitorSource::First => a,
                 MonitorSource::Second => b,
-                MonitorSource::Mix => 0.5 * (a + b),
+                MonitorSource::Both => 0.5 * (a + b),
             };
         }
 
@@ -860,6 +983,7 @@ impl<'a> BatApp<'a> {
             Mode::Pitch => self.pitch.process(mono, out),
             Mode::Thru => out.copy_from_slice(mono),
         }
+        self.level.apply(out);
         out_l.copy_from_slice(out);
         out_r.copy_from_slice(out);
 

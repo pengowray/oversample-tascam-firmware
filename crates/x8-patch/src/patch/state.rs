@@ -83,6 +83,19 @@ pub(super) static SOURCE_PEAK: AtomicU32 = AtomicU32::new(0);
 /// `update_status` first runs.
 pub(super) static HEARD_WORDS: AtomicU32 = AtomicU32::new(stock::INPUT_WORDS[2] | stock::INPUT_WORDS[3] << 8);
 pub(super) const NO_INPUT_WORDS: u32 = u32::MAX;
+/// Listen to has MANUAL's mix chosen: the interrupt passes the stock output to
+/// the app instead of those words.
+pub(super) static HEAR_MIX: AtomicBool = AtomicBool::new(false);
+/// The debug figures are on (settings screen); only then does the interrupt
+/// measure the input words.
+pub(super) static DEBUG_SHOWN: AtomicBool = AtomicBool::new(false);
+/// What the debug figures count since: a value for the settings being tested,
+/// and the counters at the time they last changed.
+pub(super) static TEST_SETTINGS: AtomicU32 = AtomicU32::new(u32::MAX);
+pub(super) static TEST_START_BLOCKS: AtomicU32 = AtomicU32::new(0);
+pub(super) static TEST_START_DRY: AtomicU32 = AtomicU32::new(0);
+pub(super) static TEST_START_LOST: AtomicU32 = AtomicU32::new(0);
+pub(super) static TEST_DSP_MAX: AtomicU32 = AtomicU32::new(0);
 /// Core cycles in the last second: in all, in the stock audio callback, and in
 /// the rest of the audio hook (interrupt; read by the drawing context).
 pub(super) static CYCLES_PER_S: AtomicU32 = AtomicU32::new(0);
@@ -139,8 +152,6 @@ pub(super) static STACK: Slot<Stack> = Slot(UnsafeCell::new(MaybeUninit::uninit(
 pub(super) static TOUCHES: [AtomicU32; 16] = [const { AtomicU32::new(0) }; 16];
 pub(super) static TOUCH_WRITE: AtomicU32 = AtomicU32::new(0);
 pub(super) static TOUCH_READ: AtomicU32 = AtomicU32::new(0);
-/// The last touch seen, for the debug strip.
-pub(super) static LAST_TOUCH: AtomicU32 = AtomicU32::new(0);
 /// Qt has been sent a press without its release (task 9).
 pub(super) static QT_PRESSED: AtomicBool = AtomicBool::new(false);
 /// The context running the app: a finger is down, and it went down where a

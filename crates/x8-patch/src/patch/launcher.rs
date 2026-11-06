@@ -2,7 +2,7 @@ use core::ptr;
 use core::sync::atomic::{Ordering::Relaxed, Ordering::Release};
 
 use super::state::{BLOCKS, LAUNCH_AT, LAUNCH_FROM, LAUNCHING, PLAYBACK};
-use super::{Handler, app_byte, stock, system_mode};
+use super::{Handler, app_byte, bat_glyph, stock, system_mode};
 
 /// The bat tiles, in USER SETTINGS slots 2 and 3 (slots 0 to 2 in the
 /// firmware's numbering). Slot 1 stays a USER SETTINGS preset.
@@ -204,5 +204,75 @@ pub(super) unsafe extern "C" fn icon_hook<const TILE: usize>(binding: usize, roo
     }
     // SAFETY: the stock binding the launcher called, with its arguments.
     let binding_fn: Handler = unsafe { core::mem::transmute(stock::ICONS_SHOWN[TILE]) };
+    unsafe { binding_fn(binding, root, c, d) }
+}
+
+/// A Qt for MCUs image as the launcher's icons are stored (for example
+/// lc_manual.png, whose descriptor is at 0x819a188c). An image pointer with no
+/// flag bits set is not reference counted, so these are never written.
+#[repr(C, align(4))]
+struct QtImage {
+    unused: u32,
+    width: u32,
+    height: u32,
+    tile_count: u32,
+    tiles: *const QtTile,
+}
+
+/// One tile of an image: an alpha mask, with its height and width packed, and
+/// no offset within the image.
+#[repr(C)]
+struct QtTile {
+    pixels: *const u8,
+    unused_before: [u32; 3],
+    height_width: u32,
+    stride: u32,
+    unused_after: [u32; 3],
+}
+
+// SAFETY: read only, and the pointers are to statics.
+unsafe impl Sync for QtImage {}
+unsafe impl Sync for QtTile {}
+
+static BAT_TILE: QtTile = QtTile {
+    pixels: bat_glyph::PIXELS.as_ptr(),
+    unused_before: [0; 3],
+    height_width: bat_glyph::HEIGHT << 16 | bat_glyph::WIDTH,
+    stride: bat_glyph::WIDTH,
+    unused_after: [0; 3],
+};
+static BAT_IMAGE: QtImage =
+    QtImage { unused: 0, width: bat_glyph::WIDTH, height: bat_glyph::HEIGHT, tile_count: 1, tiles: &raw const BAT_TILE };
+
+/// Replaces the icon binding of USER SETTINGS 2 (`TILE` 0) or 3 (1): the bat
+/// tiles show the bat glyph.
+pub(super) unsafe extern "C" fn icon_image_hook<const TILE: usize>(out: usize, binding: usize, root: usize, d: usize) -> usize {
+    if system_mode() <= 1 {
+        // SAFETY: `out` is where the stock binding writes the image pointer.
+        unsafe { ptr::write(out as *mut *const QtImage, &raw const BAT_IMAGE) };
+        return 0;
+    }
+    // SAFETY: the stock binding the launcher called, with its arguments.
+    let binding_fn: Handler = unsafe { core::mem::transmute(stock::ICON_IMAGES[TILE]) };
+    unsafe { binding_fn(out, binding, root, d) }
+}
+
+/// Replaces those tiles' icon height binding.
+pub(super) unsafe extern "C" fn icon_height_hook<const TILE: usize>(binding: usize, root: usize, c: usize, d: usize) -> usize {
+    if system_mode() <= 1 {
+        return bat_glyph::HEIGHT as usize;
+    }
+    // SAFETY: as above.
+    let binding_fn: Handler = unsafe { core::mem::transmute(stock::ICON_HEIGHTS[TILE]) };
+    unsafe { binding_fn(binding, root, c, d) }
+}
+
+/// Replaces those tiles' icon width binding.
+pub(super) unsafe extern "C" fn icon_width_hook<const TILE: usize>(binding: usize, root: usize, c: usize, d: usize) -> usize {
+    if system_mode() <= 1 {
+        return bat_glyph::WIDTH as usize;
+    }
+    // SAFETY: as above.
+    let binding_fn: Handler = unsafe { core::mem::transmute(stock::ICON_WIDTHS[TILE]) };
     unsafe { binding_fn(binding, root, c, d) }
 }

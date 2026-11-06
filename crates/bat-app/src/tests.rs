@@ -188,6 +188,90 @@ fn listen_to_has_nothing_to_choose_with_one_input() {
 }
 
 #[test]
+fn listen_to_steps_through_the_mix_and_then_the_inputs() {
+    let mut storage = vec![0.0f32; 1024];
+    let mut app = BatApp::new(FS, &mut storage, buffers());
+    assert_eq!(app.feed(), Feed::Inputs);
+    app.set_mix_available(true);
+    app.set_feed(Feed::Mix);
+    let mut seen = vec![(app.feed(), app.source())];
+    for _ in 0..7 {
+        app.change_setting(Setting::ListenTo, 1);
+        assert!(draw(&app).iter().any(|&p| p != 0));
+        seen.push((app.feed(), app.source()));
+    }
+    use MonitorSource::{Both, First, Second};
+    assert_eq!(
+        seen,
+        [
+            (Feed::Mix, Both),
+            (Feed::Mix, First),
+            (Feed::Mix, Second),
+            (Feed::Inputs, Both),
+            (Feed::Inputs, First),
+            (Feed::Inputs, Second),
+            (Feed::Inputs, Second),
+            (Feed::Inputs, Second),
+        ]
+    );
+    // Without the mix, as in BAT PLAYBACK, only the inputs remain.
+    app.set_mix_available(false);
+    assert_eq!(app.feed(), Feed::Inputs);
+    app.change_setting(Setting::ListenTo, -5);
+    assert_eq!((app.feed(), app.source()), (Feed::Inputs, Both));
+}
+
+#[test]
+fn auto_level_changes_the_output_only_when_on_and_within_limits() {
+    let mut storage = vec![0.0f32; 1024];
+    let mut app = BatApp::new(FS, &mut storage, buffers());
+    app.set_mode(Mode::Thru);
+    let tone = |amplitude: f32, n: usize| -> Vec<f32> {
+        (0..n).map(|i| amplitude * (i as f32 * 2.0 * core::f32::consts::PI * 1000.0 / FS).sin()).collect()
+    };
+    let peak_after = |app: &mut BatApp, input: &[f32]| {
+        let (mut l, mut r) = (vec![0.0; input.len()], vec![0.0; input.len()]);
+        app.process(input, input, &mut l, &mut r);
+        l[l.len() / 2..].iter().fold(0.0f32, |m, v| m.max(v.abs()))
+    };
+    let second = FS as usize;
+    // Off: the output is the input.
+    assert!((peak_after(&mut app, &tone(0.1, second)) - 0.1).abs() < 0.001);
+    app.change_setting(Setting::AutoLevel, 1);
+    assert!(app.auto_level());
+    // A moderate level settles on the target; the limits hold very quiet and
+    // very loud sounds.
+    for _ in 0..3 {
+        peak_after(&mut app, &tone(0.05, second));
+    }
+    assert!((peak_after(&mut app, &tone(0.05, second)) - 0.25).abs() < 0.03);
+    for _ in 0..4 {
+        peak_after(&mut app, &tone(0.001, second));
+    }
+    let quiet = peak_after(&mut app, &tone(0.001, second));
+    assert!(quiet > 0.012 && quiet < 0.018, "{quiet}");
+    let loud = peak_after(&mut app, &tone(1.0, second));
+    assert!(loud < 0.3, "{loud}");
+    app.change_setting(Setting::AutoLevel, -1);
+    assert!((peak_after(&mut app, &tone(0.1, second)) - 0.1).abs() < 0.001);
+}
+
+#[test]
+fn the_debug_switch_only_works_when_the_host_has_figures() {
+    let mut storage = vec![0.0f32; 1024];
+    let mut app = BatApp::new(FS, &mut storage, buffers());
+    app.open_settings();
+    let index = Setting::ALL.iter().position(|&s| s == Setting::DebugInfo).unwrap();
+    let row = layout::switch_row(index - Setting::STEPPED).center();
+    app.touch(row.x, row.y);
+    assert!(!app.debug_info());
+    app.set_debug_available(true);
+    app.touch(row.x, row.y);
+    assert!(app.debug_info());
+    assert!(draw(&app).iter().any(|&p| p != 0));
+}
+
+#[test]
 fn no_input_draws_a_notice_and_no_meters() {
     let mut storage = vec![0.0f32; 1024];
     let mut app = BatApp::new(FS, &mut storage, buffers());
@@ -339,12 +423,13 @@ fn switches_flip_on_a_tap_and_follow_the_wheel() {
     assert!(app.is_marked(CallKind::Bat));
     assert!(!app.is_marked(CallKind::Tone) && !app.is_marked(CallKind::Audible) && !app.is_marked(CallKind::Broadband));
     app.open_settings();
-    // Steady tones are the second switch: tapping its row anywhere flips it.
-    let row = layout::switch_row(1);
+    // Steady tones are the second marking switch, after the row of two other
+    // switches: tapping its row anywhere flips it.
+    let row = layout::switch_row(3);
     app.touch(row.top_left.x + 20, row.center().y);
     assert!(app.is_marked(CallKind::Tone));
     assert_eq!(app.selected_setting(), Setting::Mark(CallKind::Tone));
-    let sw = layout::switch(1).center();
+    let sw = layout::switch(3).center();
     assert!(app.is_tappable(sw.x, sw.y));
     app.touch(sw.x, sw.y);
     assert!(!app.is_marked(CallKind::Tone));
@@ -356,7 +441,7 @@ fn switches_flip_on_a_tap_and_follow_the_wheel() {
     app.wheel(-2);
     assert!(!app.is_marked(CallKind::Tone));
     // Bat calls can be switched off too.
-    let bats = layout::switch(0).center();
+    let bats = layout::switch(2).center();
     app.touch(bats.x, bats.y);
     assert!(!app.is_marked(CallKind::Bat));
     run(&mut app, &signal(), 4096);

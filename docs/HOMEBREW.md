@@ -814,6 +814,58 @@ mic on input 1 or 2 alone, does it work at 192 kHz, and how far up does it reach
 With every track off: does the notice show, and what do words 0 and 6 read on the
 debug line? Is the stutter during a take better?
 
+## Step 13 test file: MANUAL's mix, debug figures on a switch, auto level, bat glyph (built 2026-11-06, not yet installed)
+
+`work/patch13/#PortaX8_0231.203` (B231, SHA-256 `a66bdc5d…0a3637b9`). Includes steps 11
+and 12.
+
+- **Listen to** now chooses between MANUAL's mix and the raw inputs: MANUAL's
+  mix (the default), Mix, left side, Mix, right side, then the two inputs from step
+  12 (both, or either). The mix is the headphone signal, after MANUAL's faders, pans and
+  dual-gain merge; the audio hook reads it from the output block as BAT PLAYBACK
+  does. The meters say L and R for the mix. The raw inputs are read before the
+  mixer, so faders do nothing to them. Which is better, and whether ultrasound
+  survives the mix path, is what this build is for.
+- **Formats.** Both reach the app as a 32-bit integer and then a 32-bit float. A
+  raw input is the high gain path's word, and clips at that path's full scale.
+  The mix comes from the merged 32-bit float tracks (which can exceed 1.0, as the
+  recorded files do) through the faders and pans, and is then clamped to full
+  scale before the output, so at a fader of 0 dB it clips at about the same
+  level; pulling a fader down gains headroom in the mix, and the merge means it
+  does not distort before that point.
+- **REC PAUSE.** With REC PAUSE on (settings+0x194 is 0) and the recorder stopped,
+  the firmware mutes every track in the mix, so a notice covers the waterfall
+  until REC is pressed. Whether the raw inputs are also off then is not known.
+- **Debug figures** are off by default, with a switch on the settings screen, and
+  replace the last-call panel, so the menu button stays visible. The strip on
+  MANUAL's and the LAUNCHER's screens follows the same switch. While they are off
+  the interrupt does not measure the input words. Line 1: mode, what is heard, the
+  recorder's state, the converter rate, and `auto` if Auto volume is on. Line 2: CPU
+  % for the stock callback, the rest of the hook, the DSP task (and its highest
+  since the settings changed) and drawing. Line 3: output underruns and lost input
+  frames since those settings changed, with the seconds, and the ring levels. Line
+  4: on-track bits, the mix's level or the two words heard, then words 0 to 11 in
+  dB. Mode, what is heard, Auto volume and the recorder's state count as settings:
+  changing one restarts the counts.
+- **Auto volume** (off by default, settings screen) changes the headphones only: a
+  gain at the end of the app's processing, +24 to -24 dB, aiming for -12 dBFS. The
+  level of a call holds for 1.5 s; the gain falls in 1 ms and rises in 0.5 s.
+- **Tile icon.** Both bat tiles show a bat from the Oversample logo. The launcher's
+  icons are alpha masks drawn in white, so it is one colour, 38 x 34 px
+  (`tools/make_glyph.py` writes `bat_glyph.rs`). The patch replaces the two tiles'
+  image, height and width bindings.
+- **Settings screen.** The two stepped panels are 10 px shorter to fit the row of
+  two switches.
+
+**What to check.** Both tiles show the bat, centred. In BAT DETECTOR with mics on
+inputs 3 and 4 and MIC off: step Listen to through the mix and the inputs and
+compare the waterfall above 20 kHz, the noise and the sound. Does ultrasound
+survive the mix? Pull a fader down and pan a track: does the mix follow? With REC
+PAUSE on and stopped: does the notice show, and is there level on the raw inputs?
+Turn on Debug info: do the lines update and fit? Record in each mode and note CPU,
+dry and lost. Turn on Auto volume: are quiet calls lifted without too much hiss
+between them?
+
 ## Firmware map (V2.03, in progress)
 
 Found with `tools/x8ram.py` (unpacks the RAM runs) and a headless Ghidra 10.4
@@ -1023,6 +1075,14 @@ a track hears is the byte at settings+0x30 + 0x20 x track (copied from the app's
 preset when the app opens): 0 none, 1 INPUT 1-2, 2 INPUT 3-4, 3 INPUT 5-6, 4 EXT
 IN, 5 probably USB. Tracks 1, 3 and 5 hear the left input of the pair, and tracks
 2, 4 and 6 the right.
+
+**Launcher icons.** A tile's image binding writes a plain image pointer to its
+result; pointers with flag bits clear are not reference counted. The descriptors
+are in the SDRAM data (lc_manual.png at 0x819a188c: unused word, width, height,
+tile count, tile pointer; its tile: pixels, 3 words of offsets, height << 16 |
+width, stride, 3 unused words). The pixels are 8-bit alpha. Height and width are
+separate bindings, and x and y centre the item from them: (parent + 1) / 2 -
+size / 2 (`FUN_813e0120`).
 
 **USER SETTINGS tiles** (cursor 11 to 13). Each is shown only while its slot
 holds a preset. The slots are three words at 0x81e9da60, each the Qt number of

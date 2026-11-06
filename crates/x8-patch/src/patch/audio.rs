@@ -5,7 +5,7 @@ use bat_app::BatApp;
 
 use super::state::{
     AUDIO_INSTALLED, AUDIO_SLOT_UNEXPECTED, AUDIO_STATE, BAT_ACTIVE, BLOCKS, BLOCKS_AT_SECOND,
-    CYCLE_COUNTER_ON, CYCLES_AT_SECOND, CYCLES_PER_S, HEARD_WORDS, HOOK_CYCLES, HOOK_CYCLES_PER_S,
+    CYCLE_COUNTER_ON, CYCLES_AT_SECOND, CYCLES_PER_S, DEBUG_SHOWN, HEAR_MIX, HEARD_WORDS, HOOK_CYCLES, HOOK_CYCLES_PER_S,
     IN_DROPPED, IN_READ, IN_RING, IN_WRITE, NO_INPUT_WORDS, OUT_READ, OUT_WRITE, PLAYBACK, PRIMED,
     SOURCE_PEAK, STOCK_CYCLES, STOCK_CYCLES_PER_S, UNDERRUNS, WORD_PEAKS,
 };
@@ -19,7 +19,7 @@ const CHUNK: usize = 1_024;
 
 /// Gain on the app's output before the stock headphone gain (+18 dB), with a
 /// ceiling of -6 dBFS: bat calls are often 40 to 60 dB below full scale.
-const OUTPUT_GAIN: f32 = 8.0;
+pub(super) const OUTPUT_GAIN: f32 = 8.0;
 const OUTPUT_CEILING: f32 = 0.5;
 
 const SCALE: f32 = 1.0 / 2_147_483_648.0;
@@ -136,25 +136,28 @@ unsafe extern "C" fn audio_hook(a: usize, b: usize, c: usize, d: usize) -> usize
     let input = (stock::INPUT_BLOCKS + index * 0x180) as *const i32;
     let output = (stock::OUTPUT_BLOCKS + (index + 2) % 3 * 0x40) as *mut i32;
 
-    for (w, peak) in WORD_PEAKS.iter().enumerate() {
-        let mut p = peak.load(Relaxed);
-        for k in 0..4 {
-            // SAFETY: a word of this frame in the input block.
-            p = p.max(unsafe { ptr::read_volatile(input.add(12 * k + w)) }.unsigned_abs());
+    if DEBUG_SHOWN.load(Relaxed) {
+        for (w, peak) in WORD_PEAKS.iter().enumerate() {
+            let mut p = peak.load(Relaxed);
+            for k in 0..4 {
+                // SAFETY: a word of this frame in the input block.
+                p = p.max(unsafe { ptr::read_volatile(input.add(12 * k + w)) }.unsigned_abs());
+            }
+            peak.store(p, Relaxed);
         }
-        peak.store(p, Relaxed);
     }
 
     // SAFETY: the stock output gain, an f32 in ITCM.
     let stock_gain = unsafe { ptr::read_volatile(stock::OUTPUT_GAIN) };
     let playback = PLAYBACK.load(Relaxed);
     // The block's 4 frames into the input ring: the two inputs chosen by
-    // `selected_inputs`, or for BAT PLAYBACK the stock output (left, right),
-    // which the stock callback has just written as clamp(mix) x (2^31 - 1) x
-    // the output gain. Until a file plays, MANUAL's output is the live input
-    // mix, so BAT PLAYBACK hears silence then.
+    // `selected_inputs`, or MANUAL's mix, which is the stock output (left,
+    // right) that the stock callback has just written as clamp(mix) x
+    // (2^31 - 1) x the output gain. Until a file plays, that mix is the live
+    // inputs, so BAT PLAYBACK hears silence then.
+    let from_output = playback || HEAR_MIX.load(Relaxed);
     // SAFETY: a byte in the stock DSP state.
-    let file_playing = playback && unsafe { ptr::read_volatile(stock::DSP_PLAYING) } == 1;
+    let output_usable = !playback || unsafe { ptr::read_volatile(stock::DSP_PLAYING) } == 1;
     let words = HEARD_WORDS.load(Relaxed);
     let (first_word, second_word) = ((words & 0xff) as usize, (words >> 8 & 0xff) as usize);
     let no_input = words == NO_INPUT_WORDS;
@@ -166,15 +169,15 @@ unsafe extern "C" fn audio_hook(a: usize, b: usize, c: usize, d: usize) -> usize
             // SAFETY: words of this frame in the input and output blocks, and
             // the ring.
             unsafe {
-                let pair = if !playback && !no_input {
+                let pair = if !from_output && !no_input {
                     [ptr::read_volatile(input.add(12 * k + first_word)), ptr::read_volatile(input.add(12 * k + second_word))]
-                } else if file_playing && gain != 0.0 {
+                } else if from_output && output_usable && gain != 0.0 {
                     let unscale = |word: i32| (word as f32 / gain) as i32;
                     [unscale(ptr::read_volatile(output.add(2 * k))), unscale(ptr::read_volatile(output.add(2 * k + 1)))]
                 } else {
                     [0, 0]
                 };
-                if playback {
+                if from_output {
                     SOURCE_PEAK.store(SOURCE_PEAK.load(Relaxed).max(pair[0].unsigned_abs()), Relaxed);
                 }
                 ptr::write_volatile(ring.add((write.wrapping_add(k as u32) % spare::IN_FRAMES) as usize), pair);

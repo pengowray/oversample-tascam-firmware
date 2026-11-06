@@ -13,7 +13,7 @@ use crate::fb::Rgb565Buffer;
 use crate::layout::*;
 use crate::palette::*;
 use crate::{
-    BatApp, CallKind, DEFAULT_CUTOFF_HZ, InputKind, Meter, Mode, MonitorSource, Recorder, Screen, Setting, TeStatus,
+    BatApp, CallKind, DEFAULT_CUTOFF_HZ, Feed, InputKind, Meter, Mode, MonitorSource, Recorder, Screen, Setting, TeStatus,
     VIEW_HI_HZ, VIEW_LO_HZ, WF_COLUMN_MS,
 };
 use bat_dsp::heterodyne::DEFAULT_COMB_SPACING_HZ;
@@ -85,6 +85,8 @@ pub fn draw(app: &BatApp, fb: Fb) {
         rate_warning(fb, rate, app.input_kind());
     } else if app.inputs()[0].is_none() {
         no_input_notice(fb);
+    } else if app.mix_muted() {
+        mix_muted_notice(fb);
     }
     snapshot(app, fb);
     value_line(app, fb);
@@ -195,9 +197,23 @@ fn notice_lines(fb: Fb, x: i32, heading_y: i32, lines: &[&str]) {
     }
 }
 
+/// Over the waterfall while the mix is silent until REC is pressed.
+fn mix_muted_notice(fb: Fb) {
+    let (x, y) = notice_panel(fb);
+    text(fb, &BODY_BOLD, MIX_MUTED_HEADING, x, y, LEFT, TEXT);
+    notice_lines(fb, x, y, &MIX_MUTED_FIX);
+}
+
+const MIX_MUTED_HEADING: &str = "MANUAL's mix is silent";
+const MIX_MUTED_FIX: [&str; 4] = [
+    "REC PAUSE is on. To hear the mix:",
+    "Press REC once for recording standby.",
+    "Or turn off REC PAUSE:",
+    "GENERAL SETTINGS, REC SETTINGS page.",
+];
+
 const NO_INPUT_HEADING: &str = "No inputs turned on in MANUAL";
-const NO_INPUT_FIX: [&str; 4] = [
-    "BAT DETECTOR listens to 1 or 2 inputs.",
+const NO_INPUT_FIX: [&str; 3] = [
     "1. Press PLAY and open the INPUT screen.",
     "2. Turn on inputs with ultrasonic mics.",
     "3. Press PLAY to return to BAT DETECTOR.",
@@ -227,9 +243,14 @@ fn meter_x(db: f32) -> i32 {
 fn meters(app: &BatApp, fb: Fb) {
     const SEGMENT: i32 = 4;
     const GAP: i32 = 1;
-    for ((meter, &y), name) in app.meters.iter().zip(&METER_Y).zip(app.inputs()) {
+    let names = match (app.feed(), app.inputs()) {
+        (_, [None, _]) => [None, None],
+        (Feed::Mix, _) => [Some("L"), Some("R")],
+        (Feed::Inputs, inputs) => inputs.map(|input| input.map(|input| input.short)),
+    };
+    for ((meter, &y), name) in app.meters.iter().zip(&METER_Y).zip(names) {
         let Some(name) = name else { continue };
-        text(fb, &SMALL, name.short, 8, y + 6, LEFT, TEXT_MUTED);
+        text(fb, &SMALL, name, 8, y + 6, LEFT, TEXT_MUTED);
         let Meter { level_db, hold_db, .. } = *meter;
         let mut x = METER_X;
         while x + SEGMENT <= METER_X + METER_W {
@@ -526,33 +547,51 @@ fn outline_selected(fb: Fb, r: Rectangle) {
 fn settings(app: &BatApp, fb: Fb) {
     for (i, setting) in Setting::ALL.iter().enumerate() {
         let selected = app.selected_setting() == *setting;
-        if let Setting::Mark(kind) = *setting {
+        if i >= Setting::STEPPED {
+            // The hosts without figures to show get no switch for them.
+            if *setting == Setting::DebugInfo && !app.debug_available() {
+                continue;
+            }
             let r = switch_row(i - Setting::STEPPED);
             rounded(fb, r, 6, PANEL);
             if selected {
                 outline_selected(fb, r);
             }
             let (x, y) = (r.top_left.x, r.top_left.y);
-            fill(fb, Rectangle::new(Point::new(x + 8, y + 7), Size::new(4, 24)), tick_colour(kind));
-            text(fb, &BODY, mark_name(kind), x + 18, y + 16, LEFT, TEXT);
-            let (hx, hy) = (x + 18, y + 31);
-            match kind {
-                CallKind::Bat => text(fb, &SMALL, "Similar calls repeated several times a second.", hx, hy, LEFT, TEXT_MUTED),
-                CallKind::Tone => text(fb, &SMALL, "150 ms or longer, like a rat's 22 kHz alarm call.", hx, hy, LEFT, TEXT_MUTED),
-                CallKind::Audible => text(fb, &SMALL, "Also loud at 2 to 12 kHz, like birds and voices.", hx, hy, LEFT, TEXT_MUTED),
-                _ => text(
-                    fb,
-                    &SMALL,
-                    format_args!("Reaching down to {:.0} kHz, like handling noise.", app.detector.band().0 / 1000.0),
-                    hx,
-                    hy,
-                    LEFT,
-                    TEXT_MUTED,
-                ),
+            let on = match *setting {
+                Setting::Mark(kind) => {
+                    fill(fb, Rectangle::new(Point::new(x + 8, y + 7), Size::new(4, 24)), tick_colour(kind));
+                    text(fb, &BODY, mark_name(kind), x + 18, y + 16, LEFT, TEXT);
+                    let (hx, hy) = (x + 18, y + 31);
+                    match kind {
+                        CallKind::Bat => text(fb, &SMALL, "Similar calls repeated several times a second.", hx, hy, LEFT, TEXT_MUTED),
+                        CallKind::Tone => text(fb, &SMALL, "150 ms or longer, like a rat's 22 kHz alarm call.", hx, hy, LEFT, TEXT_MUTED),
+                        CallKind::Audible => text(fb, &SMALL, "Also loud at 2 to 12 kHz, like birds and voices.", hx, hy, LEFT, TEXT_MUTED),
+                        _ => text(
+                            fb,
+                            &SMALL,
+                            format_args!("Reaching down to {:.0} kHz, like handling noise.", app.detector.band().0 / 1000.0),
+                            hx,
+                            hy,
+                            LEFT,
+                            TEXT_MUTED,
+                        ),
+                    };
+                    app.is_marked(kind)
+                }
+                _ => {
+                    let (name, help, on) = if *setting == Setting::AutoLevel {
+                        ("Auto volume", "Headphones only", app.auto_level())
+                    } else {
+                        ("Debug info", "Hides last call", app.debug_info())
+                    };
+                    text(fb, &BODY, name, x + 10, y + 16, LEFT, TEXT);
+                    text(fb, &SMALL, help, x + 10, y + 31, LEFT, TEXT_MUTED);
+                    on
+                }
             };
             // On: blue track, knob at the right. Off: grey track, knob at
             // the left. The white knob's position shows the state.
-            let on = app.is_marked(kind);
             let sw = switch(i - Setting::STEPPED);
             let h = sw.size.height;
             let _ = RoundedRectangle::new(sw, CornerRadii::new(Size::new(h / 2, h / 2)))
@@ -575,24 +614,34 @@ fn settings(app: &BatApp, fb: Fb) {
             Setting::LowestBatCall => ("Lowest bat call", "Sounds peaking below this are not counted as bat calls."),
             _ => ("Listen to", "Heard in the headphones and shown on the waterfall."),
         };
-        text(fb, &BODY, label, x, y + 20, LEFT, TEXT_MUTED);
+        text(fb, &BODY, label, x, y + 18, LEFT, TEXT_MUTED);
         if *setting == Setting::LowestBatCall {
-            text(fb, &VALUE, format_args!("{:.0} kHz", app.lowest_bat_call_hz() / 1000.0), x, y + 44, LEFT, TEXT);
+            text(fb, &VALUE, format_args!("{:.0} kHz", app.lowest_bat_call_hz() / 1000.0), x, y + 38, LEFT, TEXT);
         } else {
-            let value = match (app.inputs(), app.source) {
-                ([None, _], _) => "No input",
-                ([Some(first), None], _) | ([Some(first), _], MonitorSource::First) => first.long,
-                ([_, Some(second)], MonitorSource::Second) => second.long,
-                ([Some(_), Some(_)], MonitorSource::Mix) => match app.input_kind() {
-                    InputKind::Live => "Both inputs",
+            let value = match (app.feed(), app.inputs(), app.source) {
+                (Feed::Mix, _, MonitorSource::Both) => "MANUAL's mix",
+                (Feed::Mix, _, MonitorSource::First) => "Mix, left side",
+                (Feed::Mix, _, MonitorSource::Second) => "Mix, right side",
+                (Feed::Inputs, [None, _], _) => "No input",
+                (Feed::Inputs, [Some(first), None], _) | (Feed::Inputs, [Some(first), _], MonitorSource::First) => first.long,
+                (Feed::Inputs, [_, Some(second)], MonitorSource::Second) => second.long,
+                (Feed::Inputs, [Some(first), Some(second)], MonitorSource::Both) => match app.input_kind() {
                     InputKind::Playback => "Left and right",
+                    // EXT IN's short names are not numbers.
+                    InputKind::Live if first.short.len() == 1 && second.short.len() == 1 => "",
+                    InputKind::Live => "Both inputs",
                 },
             };
-            text(fb, &VALUE, value, x, y + 44, LEFT, TEXT);
+            if value.is_empty() {
+                let [first, second] = app.inputs().map(|input| input.map_or("", |input| input.short));
+                text(fb, &VALUE, format_args!("Inputs {first} and {second}"), x, y + 38, LEFT, TEXT);
+            } else {
+                text(fb, &VALUE, value, x, y + 38, LEFT, TEXT);
+            }
         }
-        text(fb, &SMALL, help, x, y + 66, LEFT, TEXT_MUTED);
-        // With one input, Listen to has nothing to choose.
-        if *setting == Setting::ListenTo && app.inputs()[1].is_none() {
+        text(fb, &SMALL, help, x, y + 58, LEFT, TEXT_MUTED);
+        // With one choice, Listen to has nothing to change.
+        if *setting == Setting::ListenTo && !app.listen_has_choices() {
             continue;
         }
         for (b, plus) in [(setting_minus(i), false), (setting_plus(i), true)] {

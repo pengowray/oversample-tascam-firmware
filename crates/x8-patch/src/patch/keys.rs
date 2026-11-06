@@ -8,7 +8,7 @@ use super::screen::{draw_status_strip, enter_work, follow_app, leave_bat_screen,
 use super::state::{
     ACTION_MARK, ACTION_WHEEL, ACTIONS, ACTIONS_READ, ACTIONS_WRITE, AUDIO_INSTALLED,
     AUDIO_NOT_TRIED, AUDIO_STATE, BAT_ACTIVE, BLOCKS, CALLS, CALLS_AT_SECOND, CALLS_PER_S,
-    DRAGGING, LAST_EVENT, LAST_SECOND, LAST_TOUCH, PENDING, PLAYBACK, QT_PRESSED, SCREEN_APP,
+    DRAGGING, LAST_EVENT, LAST_SECOND, PENDING, PLAYBACK, QT_PRESSED, SCREEN_APP,
     TOUCH_DOWN, TOUCH_READ, TOUCH_WRITE, TOUCHES, WORK_ENTER,
 };
 use super::task::{on_patch_stack, task_running, tick_work};
@@ -49,7 +49,6 @@ pub(super) unsafe extern "C" fn touch_hook(x: usize, y: usize, pressed: usize, d
     // SAFETY: the stock function the poll called, with its arguments.
     let qt: Handler = unsafe { core::mem::transmute(stock::QT_TOUCH) };
     let event = ((pressed != 0) as u32) << 31 | (x as u32 & 0x7fff) << 16 | (y as u32 & 0xffff);
-    LAST_TOUCH.store(event, Relaxed);
     if system_mode() > 1 || !BAT_ACTIVE.load(Acquire) {
         QT_PRESSED.store(pressed != 0, Relaxed);
         return unsafe { qt(x, y, pressed, d) };

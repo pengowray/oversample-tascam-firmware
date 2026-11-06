@@ -3,6 +3,8 @@ use core::mem::MaybeUninit;
 use core::panic::PanicInfo;
 use core::ptr;
 
+/// The launcher glyph for the bat tiles.
+mod bat_glyph;
 /// The audio hook, the cycle counter and `process_input`, which feeds the app from the input ring.
 mod audio;
 /// Which inputs the app hears, from the track settings.
@@ -31,8 +33,8 @@ mod task;
 
 use keys::{key_hook, rec_key_hook, touch_hook};
 use launcher::{
-    badge_hook, delete_hook, delete_mode_hook, free_slot_hook, icon_hook, slot_hook, text_hook, tile_hook,
-    title_y_hook,
+    badge_hook, delete_hook, delete_mode_hook, free_slot_hook, icon_height_hook, icon_hook, icon_image_hook,
+    icon_width_hook, slot_hook, text_hook, tile_hook, title_y_hook,
 };
 
 type Handler = unsafe extern "C" fn(usize, usize, usize, usize) -> usize;
@@ -70,13 +72,17 @@ pub struct Header {
     badge_hooks: [Handler; 2],
     /// Wrap the USER SETTINGS 2 and 3 tiles' icon visibility bindings.
     icon_hooks: [Handler; 2],
+    /// Replace those tiles' icon image, height and width bindings.
+    icon_image_hooks: [Handler; 2],
+    icon_height_hooks: [Handler; 2],
+    icon_width_hooks: [Handler; 2],
 }
 
 #[unsafe(no_mangle)]
 #[unsafe(link_section = ".header")]
 pub static X8_PATCH_HEADER: Header = Header {
     magic: *b"BATX",
-    version: 12,
+    version: 14,
     key_hook,
     rec_key_hook,
     touch_hook,
@@ -91,6 +97,9 @@ pub static X8_PATCH_HEADER: Header = Header {
     delete_hook,
     badge_hooks: [badge_hook::<0>, badge_hook::<1>],
     icon_hooks: [icon_hook::<0>, icon_hook::<1>],
+    icon_image_hooks: [icon_image_hook::<0>, icon_image_hook::<1>],
+    icon_height_hooks: [icon_height_hook::<0>, icon_height_hook::<1>],
+    icon_width_hooks: [icon_width_hook::<0>, icon_width_hook::<1>],
 };
 
 /// Statics written by one context at a time, as the comments on each use say.

@@ -78,23 +78,28 @@ pub const MENU: Rectangle = Rectangle::new(Point::new(0, 0), Size::new(40, TITLE
 /// name and value on the left, - and + buttons on the right, and a line
 /// saying what the setting does. Below them, under a heading, come the
 /// switches: one compact row each, with a colour swatch, a name and a line of
-/// help on the left and the switch on the right.
+/// help on the left and the switch on the right. Between them, two switches
+/// that are not about marking share one row, half the width each.
 pub const SETTINGS_TOP: i32 = 34;
-pub const SETTING_H: i32 = 76;
+pub const SETTING_H: i32 = 66;
 const SETTING_GAP: i32 = 8;
 const STEP_W: u32 = 48;
 const STEP_H: u32 = 40;
-/// Baselines of the switches' heading and its help line, below two stepped
-/// settings.
-pub const SWITCHES_HEADING: i32 = 218;
-pub const SWITCHES_HELP: i32 = 232;
-const SWITCHES_TOP: i32 = 240;
+/// The row of two half-width switches, below the two stepped settings.
+const HALF_ROW_TOP: i32 = 180;
+const HALF_ROW_W: i32 = 150;
+const HALF_ROW_GAP: i32 = 8;
+const HALF_ROWS: usize = 2;
+/// Baselines of the switches' heading and its help line.
+pub const SWITCHES_HEADING: i32 = 233;
+pub const SWITCHES_HELP: i32 = 246;
+const SWITCHES_TOP: i32 = 252;
 pub const SWITCH_ROW_H: i32 = 38;
-const SWITCH_ROW_GAP: i32 = 4;
+const SWITCH_ROW_GAP: i32 = 3;
 const SWITCH_W: u32 = 44;
 const SWITCH_H: u32 = 24;
 /// Baseline of the note under the last switch.
-pub const SETTINGS_NOTE: i32 = 420;
+pub const SETTINGS_NOTE: i32 = 425;
 /// Closes the settings screen, where the mode buttons are on the main screen.
 pub const DONE: Rectangle = Rectangle::new(Point::new(6, BUTTONS_Y), Size::new(308, BUTTON_H as u32));
 
@@ -105,18 +110,22 @@ pub fn setting_row(i: usize) -> Rectangle {
 
 pub fn setting_minus(i: usize) -> Rectangle {
     let r = setting_row(i);
-    Rectangle::new(Point::new(204, r.top_left.y + 10), Size::new(STEP_W, STEP_H))
+    Rectangle::new(Point::new(204, r.top_left.y + 13), Size::new(STEP_W, STEP_H))
 }
 
 pub fn setting_plus(i: usize) -> Rectangle {
     let r = setting_row(i);
-    Rectangle::new(Point::new(258, r.top_left.y + 10), Size::new(STEP_W, STEP_H))
+    Rectangle::new(Point::new(258, r.top_left.y + 13), Size::new(STEP_W, STEP_H))
 }
 
 /// Row of the `j`th switch (counting from 0 after the stepped settings).
 pub fn switch_row(j: usize) -> Rectangle {
+    if j < HALF_ROWS {
+        let x = 6 + j as i32 * (HALF_ROW_W + HALF_ROW_GAP);
+        return Rectangle::new(Point::new(x, HALF_ROW_TOP), Size::new(HALF_ROW_W as u32, SWITCH_ROW_H as u32));
+    }
     Rectangle::new(
-        Point::new(6, SWITCHES_TOP + j as i32 * (SWITCH_ROW_H + SWITCH_ROW_GAP)),
+        Point::new(6, SWITCHES_TOP + (j - HALF_ROWS) as i32 * (SWITCH_ROW_H + SWITCH_ROW_GAP)),
         Size::new(308, SWITCH_ROW_H as u32),
     )
 }

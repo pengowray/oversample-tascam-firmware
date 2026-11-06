@@ -114,6 +114,15 @@ pub const DELETE_BADGES: [usize; 2] = [0x80f2_a7e5, 0x80f2_b2b9];
 /// The USER SETTINGS 2 and 3 tiles' icon visibility `(binding, root)`:
 /// slot in use and delete mode off (Thumb addresses).
 pub const ICONS_SHOWN: [usize; 2] = [0x80f2_aa41, 0x80f2_b511];
+/// Those tiles' icon `(out, binding, root)`, which writes an image pointer to
+/// `out`, and its height and width `(binding, root)`. The icon's x and y centre
+/// it from its size (Thumb addresses).
+pub const ICON_IMAGES: [usize; 2] = [0x80f2_a80d, 0x80f2_b2e1];
+pub const ICON_HEIGHTS: [usize; 2] = [0x80f2_a969, 0x80f2_b439];
+pub const ICON_WIDTHS: [usize; 2] = [0x80f2_a9d5, 0x80f2_b4a5];
+/// Settings + 0x194: 0 when REC PAUSE is on, so the firmware mutes every
+/// input in the mix while the recorder is stopped (ITCM 0x161d8).
+pub const MONITOR_WHEN_STOPPED: *const u8 = 0x81e8_ca10 as *const u8;
 /// `FUN_80e05870(property, &value)`: sets a Qt property (Thumb address).
 pub const SET_PROPERTY: usize = 0x80e0_5871;
 /// The audio engine: 1 playing, 2 recording, 0 idle or paused.

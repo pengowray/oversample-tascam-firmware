@@ -86,6 +86,14 @@ BUILDS = {
             # mode, where the badge takes their place), each called once.
             ("USER SETTINGS 2 icon shown", 0x815CD6DE, 0x80F2AA40, "icon2_hook"),
             ("USER SETTINGS 3 icon shown", 0x815CE35E, 0x80F2B510, "icon3_hook"),
+            # Those tiles' icon: its image, and its height and width, from which
+            # the stock bindings centre it. Each is called once.
+            ("USER SETTINGS 2 icon image", 0x814A8470, 0x80F2A80C, "icon_image2_hook"),
+            ("USER SETTINGS 3 icon image", 0x814A86EC, 0x80F2B2E0, "icon_image3_hook"),
+            ("USER SETTINGS 2 icon height", 0x815CD54E, 0x80F2A968, "icon_height2_hook"),
+            ("USER SETTINGS 3 icon height", 0x815CE1CE, 0x80F2B438, "icon_height3_hook"),
+            ("USER SETTINGS 2 icon width", 0x815CD616, 0x80F2A9D4, "icon_width2_hook"),
+            ("USER SETTINGS 3 icon width", 0x815CE296, 0x80F2B4A4, "icon_width3_hook"),
             # The USER SETTINGS 2 and 3 tap handlers' read of the delete mode
             # property, `FUN_80e02a34(root + 0xd370)`.
             ("USER SETTINGS 2 tap, delete mode", 0x8161DA06, 0x80E02A34, "delete_mode_hook"),
@@ -106,8 +114,9 @@ BUILDS = {
 HEADER_FIELDS = ["magic", "version", "key_hook", "rec_key_hook", "touch_hook", "tile_hook", "slot_hook",
                  "free_slot_hook", "title_hook", "line1_hook", "line2_hook", "line3_hook", "line4_hook",
                  "line5_hook", "line6_hook", "label_hook", "title_y_hook", "delete_mode_hook", "delete_hook",
-                 "badge2_hook", "badge3_hook", "icon2_hook", "icon3_hook"]
-HEADER_FORMAT = "<4s22I"
+                 "badge2_hook", "badge3_hook", "icon2_hook", "icon3_hook", "icon_image2_hook", "icon_image3_hook",
+                 "icon_height2_hook", "icon_height3_hook", "icon_width2_hook", "icon_width3_hook"]
+HEADER_FORMAT = "<4s28I"
 
 B_W, BL = 0x9000, 0xD000   # bits 15, 14 and 12 of the second halfword
 
