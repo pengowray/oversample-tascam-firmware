@@ -16,11 +16,15 @@
 //! `PLAYBACK=1` shows the screen as BAT PLAYBACK shows it on the X8.
 //! `INPUTS=5,6` or `INPUTS=5` names the inputs for the meters and settings;
 //! `INPUTS=none` shows the notice for no input.
-//! `MIX=1` offers the host's mix in Listen to and chooses it; `MIX=recpause` or
-//! `MIX=page` also shows a notice that it is silent. `DEBUG=1` offers the debug switch and draws the X8 patch's
+//! `SKIP=8.2-8.25,8.6-8.8` skips the analysis in those times, in seconds, as the
+//! X8 patch does when it falls behind, to show the waterfall's grey columns.
+//! `MIX=1` offers the host's mix in Listen to and chooses it; `MIX=recpause`,
+//! `MIX=stopped` or `MIX=page` also shows the notice for why it is silent (REC PAUSE
+//! on; REC PAUSE off; a settings page open). `DEBUG=1` offers the debug switch and draws the X8 patch's
 //! longest debug lines over the last-call panel, to check that they fit.
+//! `AUTO=on` or `AUTO=bats` sets Auto volume, for the settings screen.
 
-use bat_app::{BatApp, Buffers, CallKind, Feed, HEIGHT, InputKind, InputName, MixSilence, Mode, Recorder, Rgb565Buffer, WIDTH};
+use bat_app::{AutoVolume, BatApp, Buffers, CallKind, Feed, HEIGHT, InputKind, InputName, MixSilence, Mode, Recorder, Rgb565Buffer, WIDTH};
 use embedded_graphics::prelude::*;
 use embedded_graphics::primitives::Rectangle;
 use u8g2_fonts::types::{FontColor, VerticalPosition};
@@ -97,8 +101,16 @@ fn main() {
         app.set_feed(Feed::Mix);
         app.set_mix_silence(match mix.as_str() {
             "recpause" => Some(MixSilence::RecPause),
+            "stopped" => Some(MixSilence::Stopped),
             "page" => Some(MixSilence::PageOpen),
             _ => None,
+        });
+    }
+    if let Ok(volume) = std::env::var("AUTO") {
+        app.set_auto_volume(match volume.as_str() {
+            "on" => AutoVolume::On,
+            "bats" => AutoVolume::BatsOnly,
+            _ => AutoVolume::Off,
         });
     }
     let debug = std::env::var("DEBUG").is_ok();
@@ -115,8 +127,18 @@ fn main() {
     let ch = |c: usize| -> Vec<f32> { (0..n).map(|i| samples[i * channels + c.min(channels - 1)]).collect() };
     let (a, b) = (ch(0), ch(1));
     let (mut l, mut r) = (vec![0.0; n], vec![0.0; n]);
-    for k in (0..n).step_by(4096) {
-        let e = (k + 4096).min(n);
+    let skips: Vec<(f32, f32)> = std::env::var("SKIP").map_or(Vec::new(), |list| {
+        list.split(',')
+            .map(|range| {
+                let (from, to) = range.split_once('-').expect("FROM-TO");
+                (from.parse().expect("a time"), to.parse().expect("a time"))
+            })
+            .collect()
+    });
+    for k in (0..n).step_by(1024) {
+        let e = (k + 1024).min(n);
+        let t = k as f32 / fs;
+        app.set_skip_analysis(skips.iter().any(|&(from, to)| t >= from && t < to));
         app.process(&a[k..e], &b[k..e], &mut l[k..e], &mut r[k..e]);
     }
 
@@ -127,11 +149,13 @@ fn main() {
     let mut fb = Rgb565Buffer::new(&mut pixels, WIDTH, HEIGHT);
     app.render(&mut fb);
     if debug && args.get(4).map(String::as_str) != Some("settings") {
-        // The longest lines of the patch's draw_debug, in its font and strips.
+        // The longest lines of the patch's draw_debug that a test should reach, in
+        // its font and strips. Line 3 has no room for every count at its largest
+        // at once: then the last digits of the output ring level are cut off.
         const LINES: [&str; 4] = [
-            "HET | in 5+6 | leaving standby | 192 kHz | auto",
+            "HET | in 5+6 | leaving standby | 192 kHz | auto bats only",
             "CPU % irq 100 hook 100 dsp 100 (max 100) draw 100",
-            "dry 12345 lost 123456 in 3600 s | ring in 8192 out 16384",
+            "dry 9999 lost 999999 skip 9999 in 999 s | ring in 8192 out 16384",
             "on 3f mix -99 dB: 99 99 99 99 99 99 99 99 99 99 99 99",
         ];
         let font = FontRenderer::new::<fonts::u8g2_font_helvR08_tf>();
@@ -139,6 +163,8 @@ fn main() {
         let _ = fb.fill_solid(&Rectangle::new(Point::new(0, top), Size::new(WIDTH as u32, height)), embedded_graphics::pixelcolor::Rgb565::new(4, 8, 4));
         for (i, line) in LINES.iter().enumerate() {
             let y = top + i as i32 * 13;
+            let width = font.get_rendered_dimensions(*line, Point::new(2, y + 10), VerticalPosition::Baseline).map_or(0, |d| d.advance.x);
+            eprintln!("debug line {}: {} px wide, starting at x = 2, of {WIDTH}", i + 1, width);
             let _ = fb.fill_solid(&Rectangle::new(Point::new(0, y), Size::new(WIDTH as u32, 13)), embedded_graphics::pixelcolor::Rgb565::new(4, 8, 4));
             let _ = font.render(*line, Point::new(2, y + 10), VerticalPosition::Baseline, FontColor::Transparent(embedded_graphics::pixelcolor::Rgb565::WHITE), &mut fb);
         }

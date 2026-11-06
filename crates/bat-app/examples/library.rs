@@ -122,7 +122,7 @@ fn main() {
         };
 
         let mut analyzer: SpectrumAnalyzer<512> = SpectrumAnalyzer::new(fs);
-        analyzer.set_hop(128);
+        analyzer.set_hop(bat_app::FFT_HOP);
         let mut detector: CallDetector<512> = CallDetector::new(fs);
     if let Some((lo, hi)) = audible_band_from_env() {
         detector.set_audible_band(lo, hi);

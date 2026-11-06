@@ -20,7 +20,8 @@ struct Run {
 
 fn run(x: &[f32]) -> Run {
     let mut analyzer: SpectrumAnalyzer<512> = SpectrumAnalyzer::new(FS);
-    analyzer.set_hop(128);
+    // The hop the bat app uses (bat_app::FFT_HOP).
+    analyzer.set_hop(192);
     let mut detector: CallDetector<512> = CallDetector::new(FS);
     let mut storage = std::vec![0.0f32; FS as usize];
     let mut expander = TimeExpander::new(FS, &mut storage);

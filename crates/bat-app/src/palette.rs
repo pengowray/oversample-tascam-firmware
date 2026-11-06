@@ -68,7 +68,18 @@ pub const RESISTOR: [Rgb565; 10] = [
 ];
 
 /// Inferno, as RGB565 raw values, indexed by level 0 (quiet) to 255 (loud).
-pub static INFERNO_565: [u16; 256] = {
+pub static INFERNO_565: [u16; 256] = inferno_565();
+
+/// The waterfall's colours: Inferno, except that the last value shows a display
+/// column that was not analysed. It has the colour of `PANEL`, a dark grey that
+/// is not in the colour map, so it reads as no data and not as a loud sound.
+pub static WATERFALL_565: [u16; 256] = {
+    let mut out = inferno_565();
+    out[crate::WF_NO_DATA as usize] = (0x35 >> 3 << 11) | (0x35 >> 2 << 5) | (0x35 >> 3);
+    out
+};
+
+const fn inferno_565() -> [u16; 256] {
     let mut out = [0u16; 256];
     let mut i = 0;
     while i < 256 {
@@ -77,7 +88,7 @@ pub static INFERNO_565: [u16; 256] = {
         i += 1;
     }
     out
-};
+}
 
 const INFERNO: [[u8; 3]; 256] = [
     [0, 0, 3], [0, 0, 4], [0, 0, 6], [1, 0, 7], [1, 1, 9], [1, 1, 11], [2, 1, 14], [2, 2, 16],

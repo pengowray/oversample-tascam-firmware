@@ -195,6 +195,8 @@ where
     spread: <[f32; N] as FftFrame>::Bins,
     floor_updates: u32,
     last_centre: Option<u64>,
+    /// Samples are missing before the next column; see [`gap`](Self::gap).
+    after_gap: bool,
     state: State,
     call: Call,
 }
@@ -242,6 +244,7 @@ where
             spread: <[f32; N] as FftFrame>::SILENT_BINS,
             floor_updates: 0,
             last_centre: None,
+            after_gap: false,
             state: State::Idle,
             call: Call::starting_at(0),
         }
@@ -367,6 +370,7 @@ where
         self.spread.as_mut().fill(MIN_SPREAD_DB);
         self.floor_updates = 0;
         self.last_centre = None;
+        self.after_gap = false;
         self.state = State::Settling { until: 0 };
     }
 
@@ -398,7 +402,11 @@ where
         let db = column.db;
         debug_assert_eq!(db.len(), N / 2 + 1);
         let t = column.centre_sample;
+        let after_gap = core::mem::take(&mut self.after_gap);
         let dt = match self.last_centre {
+            // A time step as long as the gap would pull the floor most of the
+            // way to this one column, and that column may hold a call.
+            Some(_) if after_gap => 0,
             Some(prev) => t.saturating_sub(prev),
             None => {
                 self.state = State::Settling { until: t + self.settle };
@@ -417,6 +425,12 @@ where
                 }
             }
             State::Idle => self.idle(db, &scan, t, dt),
+            // The first column after a gap decides what happens to a call that
+            // was in progress when the gap began.
+            State::Active if after_gap && (scan.peak_db <= self.threshold_db || t.saturating_sub(self.call.end) > self.max_call) => {
+                event = self.finish();
+                self.idle(db, &scan, t, dt);
+            }
             State::Active => {
                 if t.saturating_sub(self.call.start) > self.max_call {
                     self.state = State::Background;
@@ -453,6 +467,31 @@ where
     /// return it if it is long enough.
     pub fn flush(&mut self) -> Option<CallEvent> {
         if self.is_active() { self.finish() } else { None }
+    }
+
+    /// Samples are missing between the last column and the next, because input
+    /// was lost or analysis was paused. Call this once or more during the gap,
+    /// with the analyzer restarted so that no column spans it.
+    ///
+    /// A call that had already gone quiet ends now and is returned if it is long
+    /// enough. A call that was still loud stays in progress until the first column
+    /// after the gap:
+    /// - If that column is below the threshold, the call ended during the gap. It
+    ///   is returned then, at the length it had reached.
+    /// - If that column is above the threshold, the sound is taken to have continued,
+    ///   and the call's length includes the gap. A steady sound therefore reaches the
+    ///   longest call length and becomes background however often gaps cut it, and it
+    ///   is not reported in pieces. The cost is that a call cut by a gap, and a second
+    ///   call already sounding just after the gap, are reported as one call.
+    /// - If the gap alone is longer than the longest call, the call is reported, and
+    ///   the sound after the gap starts a new one.
+    ///
+    /// The floor is kept, because the background changes slowly, so there is no
+    /// settling time after a gap and a call starting just after one is still found.
+    /// A sound treated as background stays background until it goes quiet.
+    pub fn gap(&mut self) -> Option<CallEvent> {
+        self.after_gap = true;
+        if self.state == State::Gap { self.finish() } else { None }
     }
 
     fn ms_to_samples(&self, ms: f32) -> u64 {
@@ -825,6 +864,191 @@ mod tests {
         let mut det = CallDetector::new(FS);
         det.set_band(15_000.0, 35_000.0);
         assert!(detect(&mut det, &x).is_empty());
+    }
+
+    /// Run `x` through the analyzer and detector, leaving out `gap` samples at
+    /// `at` as a host does when it skips analysis or loses input. The missing
+    /// samples are taken out of the signal, so what follows joins it abruptly.
+    fn detect_with_gap(x: &[f32], at: usize, gap: usize, hop: usize) -> Vec<CallEvent> {
+        let mut an = SpectrumAnalyzer::<N>::new(FS);
+        an.set_hop(hop);
+        let mut det = CallDetector::<N>::new(FS);
+        let mut events = Vec::new();
+        for block in x[..at].chunks(256) {
+            an.push(block, |c| events.extend(det.process(c)));
+        }
+        events.extend(det.gap());
+        an.skip(gap as u64);
+        for block in x[at + gap..].chunks(256) {
+            an.push(block, |c| events.extend(det.process(c)));
+        }
+        events.extend(det.flush());
+        events
+    }
+
+    /// Quiet ultrasonic noise under a loud 1 kHz tone. Jumping out of the tone
+    /// at any phase makes a step, whose click is far above that noise.
+    fn noise_under_a_loud_tone(len: usize, seed: u32) -> Vec<f32> {
+        let mut x = noise(0.0003, len, seed);
+        add(&mut x, 0, &sine(FS, 1_000.0, 0.05, len));
+        x
+    }
+
+    #[test]
+    fn a_gap_invents_no_call_and_keeps_the_floor() {
+        let x = noise_under_a_loud_tone(ms(1500.0), 21);
+        // Gaps from a fraction of a window to a quarter of a second, none a
+        // whole number of the tone's periods.
+        for gap in [100, 700, ms(30.0) + 50, ms(250.0) + 50] {
+            let events = detect_with_gap(&x, ms(800.0), gap, 192);
+            assert!(events.is_empty(), "gap of {gap} samples: {events:?}");
+        }
+    }
+
+    #[test]
+    fn without_a_restart_the_same_jump_is_a_false_call() {
+        // The check that the test above tests something: the same signal and
+        // jump, with no analyzer skip and no detector gap, gives false detections.
+        let x = noise_under_a_loud_tone(ms(1500.0), 21);
+        let at = ms(800.0);
+        let joined: Vec<f32> = x[..at].iter().chain(&x[at + 700..]).copied().collect();
+        let mut an = SpectrumAnalyzer::<N>::new(FS);
+        an.set_hop(192);
+        let mut det = CallDetector::<N>::new(FS);
+        let mut events = Vec::new();
+        for block in joined.chunks(256) {
+            an.push(block, |c| events.extend(det.process(c)));
+        }
+        assert!(!events.is_empty());
+    }
+
+    #[test]
+    fn a_sound_still_there_after_a_gap_stays_one_call() {
+        // An 80 ms tone burst with 30 ms of it missing: one detection across the gap.
+        let mut x = noise(0.03, ms(600.0), 22);
+        let t0 = ms(300.0);
+        add(&mut x, t0, &sine(FS, 50_000.0, 0.1, ms(80.0)));
+        let events = detect_with_gap(&x, t0 + ms(30.0), ms(30.0), 192);
+        assert_eq!(events.len(), 1, "{events:?}");
+        assert_near(events[0].start_sample, t0, "start");
+        assert_near(events[0].end_sample, t0 + ms(80.0), "end");
+    }
+
+    #[test]
+    fn a_call_that_ends_during_a_gap_is_reported_at_the_length_it_had_reached() {
+        let mut x = noise(0.03, ms(600.0), 29);
+        let t0 = ms(300.0);
+        add(&mut x, t0, &sine(FS, 50_000.0, 0.1, ms(10.0)));
+        let events = detect_with_gap(&x, t0 + ms(6.0), ms(30.0), 192);
+        assert_eq!(events.len(), 1, "{events:?}");
+        assert_near(events[0].start_sample, t0, "start");
+        assert!(events[0].end_sample <= (t0 + ms(6.0)) as u64, "{events:?}");
+    }
+
+    #[test]
+    fn a_new_call_after_a_gap_longer_than_a_call_is_reported_separately() {
+        let mut x = noise(0.03, ms(800.0), 30);
+        let t0 = ms(300.0);
+        let gap = ms(150.0);
+        add(&mut x, t0, &sine(FS, 50_000.0, 0.1, ms(10.0)));
+        add(&mut x, t0 + ms(6.0) + gap, &sine(FS, 50_000.0, 0.1, ms(10.0)));
+        let events = detect_with_gap(&x, t0 + ms(6.0), gap, 192);
+        assert_eq!(events.len(), 2, "{events:?}");
+        assert!(events[0].end_sample <= (t0 + ms(6.0)) as u64, "{events:?}");
+    }
+
+    /// Run `x` through the analyzer and detector with `skip` samples missing out of
+    /// every `period`, as when analysis is skipped again and again.
+    fn detect_with_repeated_gaps(x: &[f32], period: usize, skip: usize) -> Vec<CallEvent> {
+        let mut an = SpectrumAnalyzer::<N>::new(FS);
+        an.set_hop(192);
+        let mut det = CallDetector::<N>::new(FS);
+        let mut events = Vec::new();
+        for (i, block) in x.chunks(256).enumerate() {
+            let at = i * 256;
+            if at % period < skip {
+                events.extend(det.gap());
+                an.skip(block.len() as u64);
+            } else {
+                an.push(block, |c| events.extend(det.process(c)));
+            }
+        }
+        events.extend(det.flush());
+        events
+    }
+
+    #[test]
+    fn a_steady_sound_becomes_background_however_often_gaps_cut_it() {
+        // Gaps from just under the longest call length apart to well under it.
+        for (period, skip) in [(ms(99.0), ms(16.0)), (ms(60.0), ms(16.0)), (ms(30.0), ms(10.0))] {
+            let mut x = noise(0.003, ms(10_000.0), 31);
+            add(&mut x, ms(5_000.0), &sine(FS, 46_000.0, 0.05, ms(5_000.0)));
+            let events = detect_with_repeated_gaps(&x, period, skip);
+            assert!(events.is_empty(), "gaps of {skip} every {period}: {events:?}");
+        }
+    }
+
+    #[test]
+    fn a_call_starting_just_after_a_gap_is_found_at_its_true_time() {
+        let mut x = noise(0.03, ms(600.0), 23);
+        let at = ms(300.0);
+        let gap = ms(50.0);
+        // Far enough after the jump for a whole window before the call.
+        let t0 = at + gap + ms(5.0);
+        add(&mut x, t0, &fm_call(0.1));
+        let events = detect_with_gap(&x, at, gap, 192);
+        assert_eq!(events.len(), 1, "{events:?}");
+        assert_near(events[0].start_sample, t0, "start");
+    }
+
+    #[test]
+    fn a_long_gap_does_not_pull_the_floor_to_the_next_column() {
+        // After a long gap the first column holds a loud call. The floor must
+        // stay where it was, so the next call is still found.
+        let mut x = noise(0.03, ms(4000.0), 24);
+        let at = ms(400.0);
+        let gap = ms(2500.0);
+        let t0 = at + gap;
+        add(&mut x, t0, &sine(FS, 50_000.0, 0.3, ms(5.0)));
+        let t1 = t0 + ms(80.0);
+        add(&mut x, t1, &fm_call(0.1));
+        let events = detect_with_gap(&x, at, gap, 192);
+        assert_eq!(events.len(), 2, "{events:?}");
+        assert_near(events[1].start_sample, t1, "second call");
+    }
+
+    #[test]
+    fn calls_of_1_ms_are_found_at_hop_192() {
+        // At hop 192 two loud columns span the 1 ms minimum.
+        let mut x = noise(0.003, ms(1000.0), 25);
+        let starts: Vec<usize> = (0..10).map(|i| ms(100.0) + i * ms(80.0) + i * 37).collect();
+        for &t in &starts {
+            let c = chirp(FS, 80_000.0, 40_000.0, 0.024, ms(1.0));
+            add(&mut x, t, &c);
+        }
+        let mut an = SpectrumAnalyzer::<N>::new(FS);
+        an.set_hop(192);
+        let mut det = CallDetector::<N>::new(FS);
+        let mut events = Vec::new();
+        for block in x.chunks(256) {
+            an.push(block, |c| events.extend(det.process(c)));
+        }
+        assert_eq!(events.len(), starts.len(), "{events:?}");
+    }
+
+    #[test]
+    fn white_noise_alone_gives_no_events_at_hop_192() {
+        for (amp, seed) in [(0.003, 26), (0.03, 27), (0.3, 28)] {
+            let x = noise(amp, ms(30_000.0), seed);
+            let mut an = SpectrumAnalyzer::<N>::new(FS);
+            an.set_hop(192);
+            let mut det = CallDetector::<N>::new(FS);
+            let mut events = Vec::new();
+            for block in x.chunks(256) {
+                an.push(block, |c| events.extend(det.process(c)));
+            }
+            assert!(events.is_empty(), "noise {amp}: {events:?}");
+        }
     }
 
     #[test]

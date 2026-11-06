@@ -889,6 +889,257 @@ info: do the lines update and fit? Record in each mode and note CPU,
 dry and lost. Turn on Auto volume: are quiet calls lifted without too much hiss
 between them?
 
+## Step 14 test file: headphones keep playing during a take, cheaper analysis, Auto volume with a noise limit, Bats only (built 2026-11-06, not yet installed)
+
+`work/patch14/#PortaX8_0232.203` (B232, SHA-256 `47cc597a…d010bdb2`). Includes steps 11
+to 13. No hook, table word or header field changed, so `BUILDS` in `tools/x8patch.py` is
+the same as for B231. Nothing in this step has run on a unit. Every figure below is
+from a host build, a model or the firmware listing, and estimates are marked.
+
+**Field report on B231** (a real unit, debug strip on, tracks 3 and 4 on). Headphones
+were choppy while recording and fine on standby. While recording, the waterfall showed
+bright vertical full-band lines, and the detector put tick marks under them. Standby
+had neither.
+
+| State, mode | irq | hook | dsp (max) | draw | dry | lost | seconds | ring in | ring out |
+|---|---|---|---|---|---|---|---|---|---|
+| Standby, 1:1 | 31 | 6 | 55 (57) | 17 | 0 | 0 | 12 | 1,912 | 6,080 |
+| Standby, HET | 31 | 6 | 57 (60) | 17 | 0 | 0 | 11 | 1,900 | 7,300 |
+| Recording, 1:1 | 43 | 7 | 71 (74) | 21 | 27 | 224,864 | 16 | 5,624 | 6,792 |
+| Recording, HET | 43 | 7 | 72 (74) | 18 | 53 | 458,564 | 19 | 3,704 | 4,560 |
+
+**Diagnosis.** Confirmed from the code and tests, not on a unit:
+
+- dsp and draw are shares of wall time in a task at priority 16, so they include time
+  taken by the interrupt and the recording tasks. The app's real work on standby was
+  about (55 + 17)% x (100 - 37)% = 45% of the CPU. While recording the interrupt and hook
+  take 50%, and the SD card writes take more, so the app got about 42% (an estimate).
+  It fell behind by 7 to 12%, which matches lost / 192,000 per second (14,000 and 24,000
+  a second).
+- `drop_backlog` threw away input after each pass, so the app heard a jump in the signal:
+  a click in the headphones and a wide-band line on the waterfall. A test confirms that
+  such a jump, with no restart of the analysis, gives a false call.
+- The listening mode was not the load: analysis was about 92% of `BatApp::process` on
+  the host, which is why HET and 1:1 differed by 2% of wall time.
+
+Corrected or added:
+
+- Dropping input never helped the headphones. The frames in the two rings stay constant
+  while they run, and that total is the longest hold-up of the task that the headphones
+  survive. Each drop lowered it, and only an underrun raised it again. So B231's drops
+  probably caused some of its underruns, as well as the jumps (from a model, not measured).
+  At SD 16 to 20% of wall time, that model of B231 gives 2.4 to 2.8 dry a second, against
+  2.8 in the field for HET.
+- B231's `lost` added two different things, drops by the task and frames that did not
+  fit in the ring. The strip now shows them separately.
+
+**What changed: less work while recording.**
+
+- `FFT_HOP` goes from 128 to 192, 1,000 FFT columns a second. Hop 256 loses calls and hop
+  192 does not. Bat calls in 238 library recordings: 5,399 at hop 128, 5,387 with the
+  same hop started 64 samples later (the size of the change from column timing alone),
+  5,486 at 192, 4,495 at 256. False bat calls in 91 minutes with no bats: 474, 491, 489,
+  319. Length readouts now step in 1 ms, and snapshots have 10 columns per 10 ms.
+  `HISTORY` goes from 256 to 192 columns, and `Buffers` from 136 to about 120 KB.
+- `to_pixels` runs once per waterfall column on a per-bin maximum, not on every FFT
+  column. A bin-to-row table replaces per-bin float maths. The waterfall draw loop has no
+  modulo and no per-pixel bounds check. The analysis closures and `Meter::update` are now
+  in ITCM (they had landed in SDRAM).
+- Host cost in ms per second of audio, with auto-vectorisation off, since the M7 has no
+  SIMD. These are proportions, not X8 figures.
+
+| Mode | B231 | B232 | Share | Estimated need on the unit | Margin against 42% |
+|---|---|---|---|---|---|
+| HET | 12.27 | 5.30 | 43% | 20.5% | 2.0 times |
+| COMB | 13.33 | 6.61 | 50% | 24.6% | 1.7 times |
+| FD | 15.76 | 8.91 | 57% | 31.4% | 1.3 times |
+| TE, waiting | 11.66 | 4.75 | 41% | 19.3% | 2.2 times |
+| 1:1 | 11.61 | 4.75 | 41% | 19.3% | 2.2 times |
+
+  The estimates assume Auto volume is off; On or Bats only adds about 3 to 4% of CPU (an
+  estimate). A busy pass adds about the same for its snapshots.
+- 5 redraws a second while the transport is recording, 10 otherwise. A redraw waits while
+  more than 5,120 frames are waiting, for at most 0.5 s.
+- The frame is drawn, then a catch-up pass of at most 10 ms (`CATCH_UP_BLOCKS`) runs,
+  then the frame is copied to the display, so input does not wait for the whole frame.
+  The longest time before the task sleeps goes up by about 10 ms, which only Qt and the
+  settings save task can notice.
+
+**What changed: when the task falls behind anyway.**
+
+- **Analysis skip.** Above 5,120 frames waiting (26.7 ms) the app stops analysing, and
+  below 2,048 it starts again. HET, COMB, FD, PITCH and 1:1 are bit-identical with or
+  without the skip (tested, including with Auto volume on). TE is too, except that it
+  does not auto-trigger on a call during a skip; MARK still works. Skipped time shows
+  as dark grey columns (`WF_NO_DATA`) with no ticks, each about 3 ms longer than the skip,
+  because a restart needs one 512-sample window.
+- **Drops.** Input is dropped only when more than 6,144 frames are waiting (`BACKLOG_FRAMES`)
+  and the two rings together hold more than 14,336 (`MOST_HELD_FRAMES`, 75 ms), and only
+  down to that total. The rings hold 8,192 until an underrun, so a hold-up by a recording
+  task no longer drops anything. In the model, 32 ms hold-ups every 250 ms for 10 s gave
+  the earlier rule of dropping on input level alone 2,828 frames dropped in 17 jumps and 2
+  underruns, and this rule nothing lost and no underruns. With random hold-ups, this rule
+  matched never dropping within 1 underrun a minute, and the earlier rule gave 10% more to 3
+  times as many.
+- **Joins.** After lost input (`input_lost`, from a drop or from frames that did not fit
+  in the ring) the sound passed to the listening modes and the TE recording fades
+  from where it stopped, over 64 samples. It has to come before the modes, because a step
+  in the input passes through their mixers and filters. Biggest step after a 2,048-frame
+  jump, against the biggest in the 0.1 s before, median and worst, on 261105_0086: HET
+  +5.8 / +22.1 dB on B231, -5.6 / +7.9 dB now; COMB -2.7 / +16.1, -5.9 / +8.0; 1:1
+  +26.7 / +40.4, -1.4 / +6.4. A jump in a TE recording no longer raises the biggest step
+  in its playback.
+- **Underruns.** If the output ring still runs dry, the output falls away from its last
+  sample (60 dB in 0.5 ms) instead of stepping to zero, and fades in over 64 samples when
+  it starts again. This adds about 12 instructions per block to the hook on its usual path
+  (read from the disassembly), about 0.1% of the CPU (an estimate). The silence itself
+  still lasts at least 43 ms, while the ring refills.
+- **Analysis after a gap.** `SpectrumAnalyzer::skip` restarts the window and keeps the
+  sample count, so no column spans a gap and times stay true. `CallDetector::gap` keeps the
+  floor. A call still loud when the gap began waits for the first column after the gap.
+  If that column is quiet, the call is reported at the length it had reached. If it is
+  loud, the sound is taken to have continued, so a steady sound reaches the 100 ms limit
+  and becomes background however often it is cut. With 16 ms skipped every 100 ms, a
+  steady 6 kHz wide sound gave 253 false bat calls and a gate open 84% of the time before
+  this rule, and now none, 0.7%. The cost is that two calls either side of a gap can be
+  reported as one. Bat calls missed on 0066 at the same skip pattern did not change (19).
+- **Regular pulses.** A run of 8 or more detections with the same spacing within 1 ms, peak
+  within 1.5 kHz and up to 3 in a row missing now counts as a steady tone (`CallKind::Tone`),
+  because these are not bats. In 286 recordings, runs in recordings of bats stopped at 5.
+  12 recordings had runs of 7 to 445, spaced about 10, 17, 33 or 400 ms, at one frequency
+  each. Some of those spacings fit the mains, so they may be electrical interference; that
+  has not been checked. 261105_0082 goes from 3,572 bat calls to 0, and its Bats only gate
+  from open 95% of the time to 0.5%. 261105_0081 goes from 1,134 to 4. Bat calls changed in
+  10 of the 286 recordings, none of them the bat walk or the roosts:
+
+| Recording | Bat calls without the rule | With it |
+|---|---|---|
+| 261105_0082_3-4 | 3,572 | 0 |
+| 261105_0081_3-4 | 1,134 | 4 |
+| 260225_0051_2 | 1,015 | 855 |
+| 20260130_233618 | 462 | 277 |
+| 260225_0051_5-6 | 314 | 272 |
+| 20260131_205322 | 107 | 67 |
+| 20260130_222228 | 94 | 55 |
+| 260225_0052_5-6 | 69 | 64 |
+| 261105_0083_3-4 | 62 | 26 |
+| 261105_0084_3 | 36 | 12 |
+
+  What made these sounds has not been identified. Please check them against what you know of
+  those nights. A constant-frequency bat calling at perfectly regular spacing for 8 or more
+  calls would now count as a tone. The survey found none, but a test of exactly that case
+  (`narrow_calls_with_gaps_between_them_are_bat_calls`) had to be shortened from 10 calls to 7 to
+  keep passing. The first 7 pulses still count as bat calls, so such a sound opens Bats only for
+  about a second when it starts. A pulsed sound with changing spacing, such as a cricket, is still
+  taken for bat calls. The Steady tones row still describes only tones.
+
+**Debug strip.** Line 3 is now `dry 0 lost 0 skip 0 in 12 s | ring in 1900 out 7300`.
+`lost` counts frames that did not fit in the input ring, in steps of 4. `drop N` appears after
+it only once the task has dropped input, because this should almost never happen. `skip`
+counts chunks of 256 samples (1.33 ms each, 750 a second) not analysed. `dsp` now includes
+the catch-up pass, `draw` covers drawing and the copy, and `ring in` is read before the
+catch-up pass. Line 1 says `auto on` or `auto bats only`. All counts restart when the
+settings change. Line 3 fits the 320 px screen at realistic counts, 317 px with `drop` showing. At
+every count's old maximum it is 329 px wide without `drop` and 365 px with it, and the end of the
+line is cut off.
+
+**Auto volume** is now a row of three choices on the settings screen, Off, On and Bats only.
+
+- **On** runs a gain stage that aims for -12 dBFS at the headphones, as in step 13, and
+  also limits the gain so the background noise comes out at most 36 dB below that
+  (`NOISE_BELOW_TARGET_DB`), about -46 to -48 dBFS. That can take the gain below 0 dB. The
+  floor follows the 10 ms level of the output (`FLOOR_WINDOW_S`), in dB, rising with a 2 s time
+  constant and falling with 0.5 s, so a 5 ms call 40 dB above it raises it about 0.2 dB. Windows
+  below -120 dBFS (`SILENCE_DB`) leave it alone, so sound after a digital mute is not lifted.
+  Changing the mode or Listen to sets the floor again from the next window, so the old mode's
+  level does not apply for seconds. After HET to 1:1, the output reaches -40 dBFS in about 2 s. A
+  new steady sound takes about 6 s to settle. FD and TE have no floor, so On matches step 13
+  there: most of what TE plays is low frequencies slowed below hearing, and the floor
+  would take the median above 300 Hz down by 9 to 21 dB.
+- **Bats only** is On plus a gate that is silent between calls. It opens on any kind marked
+  on the settings screen, and on a `Single` at least 18 dB above the floor if Bat calls is
+  marked. It opens in 5 ms (`GATE_OPEN_S`, square law, no step), stays open 0.6 s after an
+  unconfirmed call and 1.0 s after a confirmed bat call (`GATE_HOLD_S`, `GATE_HOLD_BAT_S`), and
+  closes in 200 ms. The hold counts only analysed sound, so a skip does not close it. The
+  event arrives after a call ends, so typically the first 2 calls of a pass are not heard.
+  TE ignores the gate.
+- Levels at the headphone stage at the stock headphone gain, B231 to On. HET is tuned to the
+  median bat peak, or 45 kHz. Quiet gain and noise are the median of quiet 10 ms windows. Call
+  peak is the median peak of each detected call. These are judged from figures, not by ear.
+
+| Recording | Mode | Quiet gain, dB | Noise, dBFS | Call peak, dBFS |
+|---|---|---|---|---|
+| 261105_0086, night, no bats | HET | +24 to +18.4 | -40.6 to -46.4 | -26.3 to -33.0 |
+| | COMB | +12.5 to -6.0 | -28.0 to -45.8 | -20.1 to -34.1 |
+| | 1:1 | -0.4 to -22.1 | -24.8 to -45.4 | -20.3 to -36.5 |
+| 260315_0067, bat walk, low input gain | HET | +24 to +24 | -56.2 to -56.2 | -38.9 to -39.1 |
+| | COMB | +24 to +12.0 | -34.6 to -46.3 | -22.9 to -34.4 |
+| | 1:1 | +18.1 to -3.3 | -24.6 to -45.9 | -16.8 to -37.8 |
+| web/samples/0066 | HET | +24 to +24 | -55.8 to -55.8 | -37.3 to -37.3 |
+| | COMB | +23.8 to +8.6 | -32.2 to -46.4 | -22.1 to -35.1 |
+| | 1:1 | +13.3 to -6.8 | -25.6 to -46.1 | -17.2 to -38.7 |
+| web/samples/roost-54khz | HET | +1.7 to -7.7 | -38.7 to -48.2 | -17.3 to -28.0 |
+| | COMB | -8.0 to -23.9 | -30.4 to -46.3 | -17.7 to -32.5 |
+| | 1:1 | -18.7 to -24.0 | -25.6 to -31.3 | -18.5 to -22.8 |
+| 260319_0069, 392 s, no detections | HET, COMB, 1:1 | +24 to +24 | -59.4, -51.3, -51.7, unchanged | |
+
+  Calls get quieter along with the noise, because a call must be 36 dB above the background
+  to reach -12 dBFS. "Auto volume got quiet" is the likely first reaction. On the loud roost
+  file, 1:1 sits at the -24 dB limit.
+
+| Bats only, HET | Open | Openings a minute | Bat calls heard whole | Missed per pass, before / after the first heard |
+|---|---|---|---|---|
+| 260319_0069, nothing | 0% | 0 | none in file | |
+| 261105_0086, night, no bats | 1% | 0.8 | none in file | |
+| 261105_0082, regular pulses | 0% | 0 | none in file | |
+| 260225_0053, daytime, no bats | 3% | 1.6 | 38 of 70 false ones | |
+| 260225_0054, daytime, no bats | 8% | 3.3 | 260 of 415 false ones | |
+| 260315_0067, bat walk | 43% | 6.2 | 1,020 of 1,076 | 2.00 / 0.43 |
+| web/samples/0066 | 37% | 4.3 | 95 of 98 | 1.50 / 0.00 |
+| web/samples/roost-54khz | 49% | 5.0 | 54 of 56 | 2.00 / 0.00 |
+| web/samples/roost-echolocation | 100% | 4.0 | 273 of 274 | 1.00 / 0.00 |
+
+**Silent mix notice.** It is now a small solid box in the waterfall's top left corner, and the
+waterfall stays in view. With REC PAUSE on and stopped: `Press REC once to listen`. With a page
+open in MANUAL: `Press PLAY and close the page open in MANUAL to listen`, on two lines, which also
+covers the INPUT screen. With REC PAUSE off, stopped, on MANUAL's main page, after the mix has
+been muted for 4 s (`MUTE_NOTICE_AFTER_S`): `Press REC to record and listen`. The firmware
+analysis says this last case should not happen. The 4 s is longer than the mute while an app
+opens: the firmware mutes every track while it powers up an input rail (`FUN_80da6f98`, 900 ms a
+rail, adding the time left from the rail before, up to about 2.9 s), which it does when the last
+app left that rail off.
+
+The help line above the switches now reads `If on: marked on the waterfall, played in TE, heard in
+Bats only.`
+
+**Tools.** New `bat-app` examples: `hop_compare` (hops against each other, with the null
+test) and `auto_volume` (the tables above). `calls.rs` takes `HOP=`, and `screenshot.rs` takes
+`SKIP=`, `AUTO=` and `MIX=stopped`. ITCM is 61.3 of 89.2 KB and DTCM 138.4 of 152.8 KB.
+
+**What to check.**
+
+- With Debug info on and mics on inputs 3 and 4, record for about a minute in each mode. Are the
+  headphones continuous? Note `dry`, `lost`, `drop` and `skip`. Predicted while recording (an
+  estimate): HET dsp about 33, 1:1 about 31, COMB about 42, FD about 57, draw about 10, `lost` and
+  `dry` near 0. On standby, dsp about 23 to 25 and draw about 16.
+- Record a take on B231 and note the times of the bright lines on the waterfall. On a computer,
+  look at the WAV at those times. The clicks should be absent from the file, which means the
+  lines came from the patch and the recording was not affected. A click in the file would mean
+  the recording is affected too, so stop using these builds for takes and report it. Check a B232
+  take the same way at any grey columns.
+- While recording, are there grey columns, and how many? `skip` above 0 with `lost` at 0 means
+  analysis stopped and the sound carried on. FD is the mode most likely to skip.
+- Does the screen feel too slow at 5 redraws a second, and do REC, MARK and touch still respond?
+- Does the unit power off normally during a take? Qt waits up to about 10 ms longer in the worst case.
+- Auto volume On, in quiet, in HET, COMB and 1:1: is the hiss acceptable, are calls loud enough, and
+  is 36 dB right? With REC PAUSE on, does debug line 4 read `mix -99 dB`? If it does not, the floor
+  falls during the mute and hiss is loud for up to about 6 s after REC.
+- Bats only on a real pass: how many calls go by before the sound starts, and does it stay open
+  through the pass? Does walking or handling open it? No recording made while walking with no bats
+  has been checked. Does the gate sound clean?
+- Does `Press REC to record and listen` ever appear? If it does, note what was on screen before it.
+- Open BAT DETECTOR from the LAUNCHER after VOICE with REC PAUSE off: no notice should flash.
+
 ## Firmware map (V2.03, in progress)
 
 Found with `tools/x8ram.py` (unpacks the RAM runs) and a headless Ghidra 10.4

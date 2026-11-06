@@ -23,12 +23,17 @@ SECTIONS
 {
   .header : { KEEP(*(.header)) } > PATCH
 
-  /* Run from ITCM: the app's processing, the DSP library it inlines from,
-     the FFT, libm, the snapshot builder and the patch's input loop. */
+  /* Run from ITCM: the app's processing, including the closures of its analysis
+     that the compiler does not inline, its meters, Auto volume (module level, also
+     inlined at present), the DSP library it inlines from, the FFT, libm, the snapshot
+     builder and the patch's input loop. */
   .itcm : ALIGN(8)
   {
     __itcm_start = .;
     *(.text.*BatApp7process*)
+    *(.text.*BatApp7analyse*)
+    *(.text.*Meter6update*)
+    *(.text.*5level*)
     *(.text.*bat_dsp*)
     *(.text.*microfft*)
     *(.text.*libm*)

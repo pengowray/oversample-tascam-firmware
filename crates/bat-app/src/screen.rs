@@ -13,7 +13,7 @@ use crate::fb::Rgb565Buffer;
 use crate::layout::*;
 use crate::palette::*;
 use crate::{
-    BatApp, CallKind, DEFAULT_CUTOFF_HZ, Feed, InputKind, Meter, MixSilence, Mode, MonitorSource, Recorder, Screen, Setting, TeStatus,
+    AutoVolume, BatApp, CallKind, DEFAULT_CUTOFF_HZ, Feed, InputKind, Meter, MixSilence, Mode, MonitorSource, Recorder, Screen, Setting, TeStatus,
     VIEW_HI_HZ, VIEW_LO_HZ, WF_COLUMN_MS,
 };
 use bat_dsp::heterodyne::DEFAULT_COMB_SPACING_HZ;
@@ -197,30 +197,24 @@ fn notice_lines(fb: Fb, x: i32, heading_y: i32, lines: &[&str]) {
     }
 }
 
-/// Over the waterfall while the mix is silent.
+/// What to press to hear the mix, in the top left corner of the waterfall, so the
+/// waterfall stays in view. That corner shows the oldest columns and the highest
+/// frequencies, the least used part of the waterfall, and a MARK press still shows at
+/// the right. White on `PANEL` has a contrast of 12:1, whatever the waterfall shows.
 fn mix_silence_notice(fb: Fb, silence: MixSilence) {
-    let (x, y) = notice_panel(fb);
-    text(fb, &BODY_BOLD, MIX_SILENT_HEADING, x, y, LEFT, TEXT);
     let lines: &[&str] = match silence {
-        MixSilence::RecPause => &REC_PAUSE_FIX,
-        MixSilence::PageOpen => &PAGE_OPEN_FIX,
+        MixSilence::RecPause => &["Press REC once to listen"],
+        MixSilence::Stopped => &["Press REC to record and listen"],
+        MixSilence::PageOpen => &["Press PLAY and close the page", "open in MANUAL to listen"],
     };
-    notice_lines(fb, x, y, lines);
+    let width = |line: &&str| BODY.get_rendered_dimensions(*line, Point::zero(), VerticalPosition::Baseline).map_or(0, |d| d.advance.x);
+    let panel = corner_notice(lines.iter().map(width).max().unwrap_or(0), lines.len());
+    rounded(fb, panel, 3, PANEL);
+    let (x, y) = (panel.top_left.x + CORNER_NOTICE_PAD_X, panel.top_left.y + CORNER_NOTICE_BASELINE);
+    for (line, y) in lines.iter().zip((0..).map(|row| y + row * CORNER_NOTICE_LINE)) {
+        text(fb, &BODY, *line, x, y, LEFT, TEXT);
+    }
 }
-
-const MIX_SILENT_HEADING: &str = "MANUAL's mix is silent";
-const REC_PAUSE_FIX: [&str; 4] = [
-    "REC PAUSE is on. To hear the mix:",
-    "Press REC once. This does not record.",
-    "Or turn off REC PAUSE:",
-    "GENERAL SETTINGS, REC SETTINGS page.",
-];
-const PAGE_OPEN_FIX: [&str; 4] = [
-    "A MANUAL settings page is still open.",
-    "1. Press PLAY to see MANUAL's screen.",
-    "2. Close the page with the BACK icon.",
-    "3. Press PLAY to return to BAT DETECTOR.",
-];
 
 const NO_INPUT_HEADING: &str = "No inputs turned on in MANUAL";
 const NO_INPUT_FIX: [&str; 3] = [
@@ -309,9 +303,14 @@ fn waterfall(app: &BatApp, fb: Fb) {
     for r in 0..WF_H {
         let row = fb.row_mut(WF_Y as usize + r);
         let dst = &mut row[WF_X as usize..WF_X as usize + WF_W];
-        for (x, px) in dst.iter_mut().enumerate() {
-            let c = (app.wf_next + x) % WF_W;
-            *px = INFERNO_565[app.bufs.wf[c * WF_H + r] as usize];
+        // The ring's columns from the oldest to the end, then from the start.
+        let (older, newer) = dst.split_at_mut(WF_W - app.wf_next);
+        let (first, second) = (&app.bufs.wf[app.wf_next * WF_H + r..], &app.bufs.wf[r..]);
+        for (px, &value) in older.iter_mut().zip(first.iter().step_by(WF_H)) {
+            *px = WATERFALL_565[value as usize];
+        }
+        for (px, &value) in newer.iter_mut().zip(second.iter().step_by(WF_H)) {
+            *px = WATERFALL_565[value as usize];
         }
     }
     let right = WF_X + WF_W as i32 - 1;
@@ -554,6 +553,21 @@ fn outline_selected(fb: Fb, r: Rectangle) {
     let _ = RoundedRectangle::new(r, CornerRadii::new(Size::new(6, 6))).into_styled(outline).draw(fb);
 }
 
+/// The Auto volume row, which is switch row `j`: three choices, all in view, with the
+/// current one filled. A switch could not show three states.
+fn auto_volume_row(app: &BatApp, fb: Fb, j: usize) {
+    let r = switch_row(j);
+    let (x, y) = (r.top_left.x, r.top_left.y);
+    let after = text(fb, &BODY, "Auto volume", x + 8, y + 14, LEFT, TEXT);
+    text(fb, &SMALL, "headphones", after + 5, y + 14, LEFT, TEXT_MUTED);
+    for (i, &volume) in AutoVolume::ALL.iter().enumerate() {
+        let c = auto_volume_choice(i, j);
+        let selected = volume == app.auto_volume();
+        rounded(fb, c, 3, if selected { ACCENT } else { BUTTON });
+        text(fb, &BODY, volume.label(), c.center().x, c.top_left.y + 13, CENTER, TEXT);
+    }
+}
+
 fn settings(app: &BatApp, fb: Fb) {
     for (i, setting) in Setting::ALL.iter().enumerate() {
         let selected = app.selected_setting() == *setting;
@@ -589,15 +603,14 @@ fn settings(app: &BatApp, fb: Fb) {
                     };
                     app.is_marked(kind)
                 }
+                Setting::AutoLevel => {
+                    auto_volume_row(app, fb, i - Setting::STEPPED);
+                    continue;
+                }
                 _ => {
-                    let (name, help, on) = if *setting == Setting::AutoLevel {
-                        ("Auto volume", "Headphones only", app.auto_level())
-                    } else {
-                        ("Debug info", "Hides last call", app.debug_info())
-                    };
-                    text(fb, &BODY, name, x + 10, y + 16, LEFT, TEXT);
-                    text(fb, &SMALL, help, x + 10, y + 31, LEFT, TEXT_MUTED);
-                    on
+                    text(fb, &BODY, "Debug info", x + 10, y + 16, LEFT, TEXT);
+                    text(fb, &SMALL, "Hides last call", x + 10, y + 31, LEFT, TEXT_MUTED);
+                    app.debug_info()
                 }
             };
             // On: blue track, knob at the right. Off: grey track, knob at
@@ -665,7 +678,7 @@ fn settings(app: &BatApp, fb: Fb) {
     }
     // Lined up with the text in the panels above.
     text(fb, &BODY_BOLD, "Sounds to mark", 16, SWITCHES_HEADING, LEFT, TEXT);
-    text(fb, &SMALL, "Marked on the waterfall and played in TE if switched on.", 16, SWITCHES_HELP, LEFT, TEXT_MUTED);
+    text(fb, &SMALL, "If on: marked on the waterfall, played in TE, heard in Bats only.", 16, SWITCHES_HELP, LEFT, TEXT_MUTED);
     text(fb, &SMALL, "These settings reset when the recorder is turned off.", 16, SETTINGS_NOTE, LEFT, TEXT_MUTED);
     rounded(fb, DONE, 4, ACCENT);
     text(fb, &BODY_BOLD, "Done", DONE.center().x, DONE.top_left.y + 28, CENTER, TEXT);

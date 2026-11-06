@@ -6,6 +6,7 @@
 //! Prints one line per call between FROM_S and TO_S (default: the whole
 //! file), then a summary. A call whose range reaches 25 kHz or more below its
 //! peak is marked "wide": usually a separate sound at the same moment.
+//! `HOP=128` uses another FFT hop in place of the app's.
 
 use bat_dsp::classify::{CallClassifier, CallKind};
 use bat_dsp::detector::CallDetector;
@@ -28,7 +29,8 @@ fn main() {
     let to: f32 = args.get(3).map(|s| s.parse().unwrap()).unwrap_or(f32::MAX);
 
     let mut analyzer: SpectrumAnalyzer<512> = SpectrumAnalyzer::new(fs);
-    analyzer.set_hop(128);
+    let hop = std::env::var("HOP").map_or(bat_app::FFT_HOP, |h| h.parse().expect("a hop"));
+    analyzer.set_hop(hop);
     let mut detector: CallDetector<512> = CallDetector::new(fs);
     if let Some((lo, hi)) = audible_band_from_env() {
         detector.set_audible_band(lo, hi);

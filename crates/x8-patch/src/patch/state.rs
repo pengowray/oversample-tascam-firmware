@@ -69,10 +69,19 @@ pub(super) static BLOCKS: AtomicU32 = AtomicU32::new(0);
 pub(super) static IN_WRITE: AtomicU32 = AtomicU32::new(0); // interrupt
 pub(super) static IN_READ: AtomicU32 = AtomicU32::new(0); // task 1
 pub(super) static IN_DROPPED: AtomicU32 = AtomicU32::new(0); // interrupt
+/// Where in the input ring the latest frames that did not fit were missing from
+/// (a value of IN_WRITE), and how many of IN_DROPPED the context running the app
+/// has told it about.
+pub(super) static IN_HOLE_AT: AtomicU32 = AtomicU32::new(0); // interrupt
+pub(super) static IN_DROPPED_SEEN: AtomicU32 = AtomicU32::new(0); // DSP task
 pub(super) static OUT_WRITE: AtomicU32 = AtomicU32::new(0); // task 1
 pub(super) static OUT_READ: AtomicU32 = AtomicU32::new(0); // interrupt
 pub(super) static PRIMED: AtomicBool = AtomicBool::new(false); // interrupt
 pub(super) static UNDERRUNS: AtomicU32 = AtomicU32::new(0); // interrupt
+/// The last output sample, as the bits of an f32, and the samples left of the
+/// fade after the output starts again.
+pub(super) static OUT_LAST: AtomicU32 = AtomicU32::new(0); // interrupt
+pub(super) static OUT_FADE_IN: AtomicU32 = AtomicU32::new(0); // interrupt
 pub(super) static BACKLOG_DROPPED: AtomicU32 = AtomicU32::new(0); // DSP task
 /// Peak magnitude of each of the 12 words of an input frame since the last
 /// redraw: the interrupt raises them, the drawing context reads and clears.
@@ -88,6 +97,11 @@ pub(super) const NO_INPUT_WORDS: u32 = u32::MAX;
 /// Listen to has MANUAL's mix chosen: the interrupt passes the stock output to
 /// the app instead of those words.
 pub(super) static HEAR_MIX: AtomicBool = AtomicBool::new(false);
+/// The mix has been seen muted while stopped with REC PAUSE off, and the block count
+/// when that was first seen. The context running the app sets them; task 1 clears the
+/// first when the bat screen opens.
+pub(super) static MUTE_SEEN: AtomicBool = AtomicBool::new(false);
+pub(super) static MUTE_SEEN_AT: AtomicU32 = AtomicU32::new(0);
 /// The debug figures are on (settings screen); only then does the interrupt
 /// measure the input words.
 pub(super) static DEBUG_SHOWN: AtomicBool = AtomicBool::new(false);
@@ -97,6 +111,8 @@ pub(super) static TEST_SETTINGS: AtomicU32 = AtomicU32::new(u32::MAX);
 pub(super) static TEST_START_BLOCKS: AtomicU32 = AtomicU32::new(0);
 pub(super) static TEST_START_DRY: AtomicU32 = AtomicU32::new(0);
 pub(super) static TEST_START_LOST: AtomicU32 = AtomicU32::new(0);
+pub(super) static TEST_START_BACKLOG: AtomicU32 = AtomicU32::new(0);
+pub(super) static TEST_START_SKIPPED: AtomicU32 = AtomicU32::new(0);
 pub(super) static TEST_DSP_MAX: AtomicU32 = AtomicU32::new(0);
 /// Core cycles in the last second: in all, in the stock audio callback, and in
 /// the rest of the audio hook (interrupt; read by the drawing context).

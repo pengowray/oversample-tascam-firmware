@@ -3,7 +3,7 @@ use core::ptr;
 use core::sync::atomic::{Ordering::Acquire, Ordering::Relaxed, Ordering::Release};
 
 use bat_app::fb::Rgb565Buffer;
-use bat_app::{BatApp, Feed, InputKind, MixSilence, Mode, MonitorSource, Recorder, Screen};
+use bat_app::{AutoVolume, BatApp, Feed, InputKind, MixSilence, Mode, MonitorSource, Recorder, Screen};
 use embedded_graphics::pixelcolor::Rgb565;
 use embedded_graphics::prelude::*;
 use embedded_graphics::primitives::Rectangle;
@@ -17,10 +17,10 @@ use super::state::{
     APP, APP_READY, AUDIO_INSTALLED, AUDIO_SLOT_UNEXPECTED, AUDIO_STATE, BACKLOG_DROPPED,
     BAT_ACTIVE, BLOCKS, BUFFERS, CALLS_PER_S, CYCLES_PER_S, DEBUG_SHOWN, DRAW_PERMILLE, DSP_PERMILLE,
     DUMMY_LCDIF, FRAME, HEAR_MIX, HEARD_WORDS, HOOK_CYCLES_PER_S, IN_DROPPED, IN_READ, IN_WRITE,
-    LAST_EVENT, LAUNCH_AT, LOAD_WINDOW_START, LAUNCH_FROM, LAUNCHING, NO_APP, NO_INPUT_WORDS, OUT_READ,
+    LAST_EVENT, LAUNCH_AT, LOAD_WINDOW_START, LAUNCH_FROM, LAUNCHING, MUTE_SEEN, MUTE_SEEN_AT, NO_APP, NO_INPUT_WORDS, OUT_LAST, OUT_READ,
     OUT_WRITE, PENDING, PLAYBACK, POPUP_HIDDEN, SAVED_BUFFER, SAVED_LITERAL, SCREEN_APP, SESSION,
     SOURCE_PEAK, STOCK_CYCLES_PER_S, TASK, TEST_DSP_MAX, TEST_SETTINGS, TEST_START_BLOCKS, TEST_START_DRY,
-    TEST_START_LOST, UNDERRUNS, WORD_PEAKS, WORK_ENTER,
+    TEST_START_BACKLOG, TEST_START_LOST, TEST_START_SKIPPED, UNDERRUNS, WORD_PEAKS, WORK_ENTER,
 };
 use super::task::{app, start_task, task_running};
 use super::{app_byte, blocks_per_second, rate_class, read_byte, spare, stock, system_state};
@@ -98,6 +98,9 @@ pub(super) extern "C" fn enter_work() {
     }
     SESSION.store(SESSION.load(Relaxed).wrapping_add(1), Release);
     SCREEN_APP.store(app_byte() as u32, Relaxed);
+    MUTE_SEEN.store(false, Relaxed);
+    // The audio hook leaves the output alone while the bat screen is closed.
+    OUT_LAST.store(0, Relaxed);
 
     // Take over the display: Qt's present function now writes to a dummy,
     // and the display shows the patch's buffer.
@@ -162,9 +165,14 @@ pub(super) fn hide_for_popup() {
 /// half of its ceiling, -12 dBFS at the stock headphone gain.
 const AUTO_LEVEL_OUTPUT: f32 = 0.25;
 
-/// Draw the app off-screen, with the debug figures if they are on, then copy
-/// the frame to the display buffer.
+/// Draw the app off-screen and show it.
 pub(super) fn render() {
+    draw_frame();
+    show_frame();
+}
+
+/// Draw the app off-screen, with the debug figures if they are on.
+pub(super) fn draw_frame() {
     // SAFETY: the off-screen frame, used only by the context running the app.
     let pixels = unsafe { &mut *(*FRAME.0.get()).as_mut_ptr() };
     let mut fb = Rgb565Buffer::new(pixels, stock::WIDTH, stock::HEIGHT);
@@ -176,10 +184,14 @@ pub(super) fn render() {
     if app.debug_info() && app.screen() == Screen::Main {
         draw_debug(&mut fb, app);
     }
-    // One block copy, so the writes to the uncached display buffer go out in
-    // bursts.
-    // SAFETY: both buffers hold 320 x 480 pixels and do not overlap.
-    unsafe { ptr::copy_nonoverlapping(pixels.as_ptr(), spare::DISPLAY as *mut u16, stock::WIDTH * stock::HEIGHT) };
+}
+
+/// Copy the off-screen frame to the display buffer, in one block copy, so the
+/// writes to the uncached display buffer go out in bursts.
+pub(super) fn show_frame() {
+    // SAFETY: both buffers hold 320 x 480 pixels and do not overlap; the
+    // off-screen frame is used only by the context running the app.
+    unsafe { ptr::copy_nonoverlapping((*FRAME.0.get()).as_ptr().cast::<u16>(), spare::DISPLAY as *mut u16, stock::WIDTH * stock::HEIGHT) };
 }
 
 /// A peak word as dB below full scale, for the debug figures.
@@ -196,21 +208,24 @@ fn draw_debug(fb: &mut Rgb565Buffer<'_>, app: &BatApp<'static>) {
     let words = HEARD_WORDS.load(Relaxed);
     let inputs_heard = if app.feed() == Feed::Inputs { (words & 0xf | (words >> 8 & 0xf) << 4) << 24 } else { 0 };
     let settings = app.mode() as u32
+        | (app.auto_volume() as u32) << 4
         | (app.feed() as u32) << 8
         | (app.source() as u32) << 10
-        | (app.auto_level() as u32) << 12
         | (PLAYBACK.load(Relaxed) as u32) << 13
         | (SESSION.load(Relaxed) & 3) << 14
         | (transport as u32) << 16
         | inputs_heard;
     let now = BLOCKS.load(Relaxed);
     let dry = UNDERRUNS.load(Relaxed);
-    let lost = IN_DROPPED.load(Relaxed).wrapping_add(BACKLOG_DROPPED.load(Relaxed));
+    let lost = IN_DROPPED.load(Relaxed);
+    let dropped = BACKLOG_DROPPED.load(Relaxed);
     let dsp = DSP_PERMILLE.load(Relaxed) / 10;
     if TEST_SETTINGS.swap(settings, Relaxed) != settings {
         TEST_START_BLOCKS.store(now, Relaxed);
         TEST_START_DRY.store(dry, Relaxed);
         TEST_START_LOST.store(lost, Relaxed);
+        TEST_START_BACKLOG.store(dropped, Relaxed);
+        TEST_START_SKIPPED.store(app.skipped_chunks(), Relaxed);
         TEST_DSP_MAX.store(0, Relaxed);
     }
     // Only a window that began after the change counts towards the highest.
@@ -249,9 +264,11 @@ fn draw_debug(fb: &mut Rgb565Buffer<'_>, app: &BatApp<'static>) {
         _ => "transport ?",
     };
     let _ = write!(line, " | {state} | {} kHz", rate / 1000);
-    if app.auto_level() {
-        let _ = write!(line, " | auto");
-    }
+    let _ = match app.auto_volume() {
+        AutoVolume::Off => Ok(()),
+        AutoVolume::On => write!(line, " | auto on"),
+        AutoVolume::BatsOnly => write!(line, " | auto bats only"),
+    };
     draw_strip(fb, top, &line, background);
 
     let mut line = Line::new();
@@ -271,11 +288,17 @@ fn draw_debug(fb: &mut Rgb565Buffer<'_>, app: &BatApp<'static>) {
     if task <= 0 {
         let _ = write!(line, "no task {task} | ");
     }
+    let _ = write!(line, "dry {} lost {} ", dry.wrapping_sub(TEST_START_DRY.load(Relaxed)), lost.wrapping_sub(TEST_START_LOST.load(Relaxed)));
+    // Input dropped by the task, as against input that did not fit in the ring. This
+    // should almost never happen, so it takes no room on the line until it does.
+    let dropped = dropped.wrapping_sub(TEST_START_BACKLOG.load(Relaxed));
+    if dropped != 0 {
+        let _ = write!(line, "drop {dropped} ");
+    }
     let _ = write!(
         line,
-        "dry {} lost {} in {} s | ring in {} out {}",
-        dry.wrapping_sub(TEST_START_DRY.load(Relaxed)),
-        lost.wrapping_sub(TEST_START_LOST.load(Relaxed)),
+        "skip {} in {} s | ring in {} out {}",
+        app.skipped_chunks().wrapping_sub(TEST_START_SKIPPED.load(Relaxed)),
         now.wrapping_sub(TEST_START_BLOCKS.load(Relaxed)) / blocks_per_second(),
         IN_WRITE.load(Relaxed).wrapping_sub(IN_READ.load(Relaxed)),
         OUT_WRITE.load(Relaxed).wrapping_sub(OUT_READ.load(Relaxed)),
@@ -357,21 +380,50 @@ fn update_status(app: &mut BatApp<'static>) {
     }
     let hear_mix = !PLAYBACK.load(Relaxed) && app.feed() == Feed::Mix;
     HEAR_MIX.store(hear_mix, Relaxed);
-    // The firmware also mutes the inputs briefly while an app opens, which
-    // needs no notice. A page comes first: it mutes whatever REC PAUSE does,
-    // and REC does nothing until it is closed.
+    // A page comes first: it mutes whatever REC PAUSE does, and REC does nothing
+    // until it is closed.
     let page = read_byte(stock::DSP_PAGE);
     let rec_pause = transport <= 1 && read_byte(stock::MONITOR_WHEN_STOPPED) == 0;
-    let silence = if !hear_mix || !on_tracks_muted() {
+    let muted = hear_mix && on_tracks_muted();
+    // The firmware analysis says the inputs are not muted while stopped with REC
+    // PAUSE off, except for a few seconds at most while an app opens, which needs no
+    // notice. This has not been checked on a unit, so a mute that lasts gets a notice.
+    let stopped_mute_lasted = mute_has_lasted(muted && transport == 0 && page == 0 && !rec_pause);
+    let silence = if !muted {
         None
     } else if !matches!(page, 0 | 7 | 0xb) || (rec_pause && page != 0) {
         Some(MixSilence::PageOpen)
     } else if rec_pause {
         Some(MixSilence::RecPause)
+    } else if stopped_mute_lasted {
+        Some(MixSilence::Stopped)
     } else {
         None
     };
     app.set_mix_silence(silence);
+}
+
+/// How long the mix stays muted, while stopped with REC PAUSE off, before the notice
+/// shows. The firmware mutes every track while it powers up an input rail, which it
+/// does while an app opens if the last app left that rail off, as VOICE does with
+/// its default tracks. `FUN_80da6f98` holds the mute for 900 ms for a rail and adds the
+/// time left from the rail before, up to about 2.9 s. Those figures are from reading
+/// the firmware, assuming the timer counts milliseconds. This mute has not been timed
+/// on a unit.
+const MUTE_NOTICE_AFTER_S: u32 = 4;
+
+/// Whether `muted` has been true for MUTE_NOTICE_AFTER_S, from the first redraw that
+/// saw it (a redraw comes at most 100 ms later while stopped).
+fn mute_has_lasted(muted: bool) -> bool {
+    if !muted {
+        MUTE_SEEN.store(false, Relaxed);
+        return false;
+    }
+    let now = BLOCKS.load(Relaxed);
+    if !MUTE_SEEN.swap(true, Relaxed) {
+        MUTE_SEEN_AT.store(now, Relaxed);
+    }
+    now.wrapping_sub(MUTE_SEEN_AT.load(Relaxed)) >= MUTE_NOTICE_AFTER_S * blocks_per_second()
 }
 
 /// Text in a fixed buffer, for formatting without an allocator.

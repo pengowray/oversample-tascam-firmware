@@ -21,7 +21,7 @@ mod level;
 pub mod palette;
 mod screen;
 
-use bat_dsp::classify::CallClassifier;
+use bat_dsp::classify::{CallClassifier, DEFAULT_TRAIN_MIN_DB};
 pub use bat_dsp::classify::CallKind;
 use bat_dsp::detector::{CallDetector, CallEvent, DEFAULT_AUDIBLE_BAND_HZ, DEFAULT_BAND_LO_HZ};
 use bat_dsp::freq_div::FrequencyDivider;
@@ -32,6 +32,7 @@ use bat_dsp::time_expansion::{ExpanderState, TimeExpander};
 
 pub use fb::Rgb565Buffer;
 use layout::{SNAP_H, SNAP_W, WF_H, WF_W};
+pub use level::AutoVolume;
 
 /// Screen size in pixels.
 pub const WIDTH: usize = 320;
@@ -55,12 +56,20 @@ pub const DEFAULT_DISPLAY_RANGE_DB: f32 = 45.0;
 /// floor down until the silence itself shows as faint colour.
 const MIN_FLOOR_DB: f32 = -140.0;
 /// Spectrum for the waterfall and the call detector: 512-point FFT (375 Hz
-/// bins at 192 kHz) every 128 samples.
+/// bins at 192 kHz) every 192 samples (1 ms).
+///
+/// The analysis is most of the cost of processing, and nearly all of it is per
+/// column. Hop 192 costs two thirds of hop 128 and finds as many bat calls (on
+/// 238 recordings, 5486 against 5399). Moving the hop 128 columns by half a hop
+/// changes which calls are found by as much as moving to hop 192 does. Above 192
+/// short calls are lost: 5246 at hop 208, 4902 at hop 224, 4495 at hop 256. At
+/// hop 192 two loud columns span the detector's 1 ms minimum call length; at
+/// hops 128 to 191 it takes three. See the `hop_compare` example.
+pub const FFT_HOP: usize = 192;
 const FFT_N: usize = 512;
-const FFT_HOP: usize = 128;
-/// Detector columns kept for call snapshots: 256 × 0.67 ms = 170 ms, longer
-/// than the longest call the detector reports (100 ms).
-const HISTORY: usize = 256;
+/// Detector columns kept for call snapshots: 192 × 1 ms = 192 ms, longer than
+/// the longest call the detector reports (100 ms).
+const HISTORY: usize = 192;
 /// Bins per spectrum column.
 const BINS: usize = FFT_N / 2 + 1;
 /// A snapshot shows the call's own frequency range plus this much either
@@ -69,6 +78,12 @@ const SNAP_FREQ_MARGIN_HZ: f32 = 5_000.0;
 const SNAP_MIN_SPAN_HZ: f32 = 20_000.0;
 /// Audio is processed in pieces of this many samples.
 const CHUNK: usize = 256;
+/// Waterfall value of a display column that was not analysed. The colour map
+/// shows it as grey, not as a level; real levels stop one below it.
+const WF_NO_DATA: u8 = 255;
+/// After lost input, how many samples the step in the input at the join is faded
+/// over (0.33 ms at 192 kHz).
+const JOIN_FADE_SAMPLES: u32 = 64;
 /// Margin shown either side of a call in its snapshot.
 const SNAP_MARGIN_MS: f32 = 2.0;
 
@@ -155,7 +170,8 @@ pub enum Setting {
     LowestBatCall,
     /// The sound heard in the headphones and analysed.
     ListenTo,
-    /// Whether the headphone level follows the sound automatically.
+    /// Whether the headphone level follows the sound automatically, and whether the
+    /// headphones are silent between calls: see [`AutoVolume`].
     AutoLevel,
     /// Whether the host shows its figures for testing.
     DebugInfo,
@@ -175,7 +191,7 @@ impl Setting {
         Setting::Mark(CallKind::Audible),
         Setting::Mark(CallKind::Broadband),
     ];
-    /// Settings changed with - and +; the rest are switches.
+    /// Settings changed with - and +; the rest are rows with a control at the right.
     pub const STEPPED: usize = 2;
 }
 
@@ -201,6 +217,8 @@ pub enum MonitorSource {
 pub enum MixSilence {
     /// The recorder is stopped with REC PAUSE on.
     RecPause,
+    /// The recorder is stopped with REC PAUSE off and the mix has stayed muted.
+    Stopped,
     /// One of the host's settings pages is open underneath.
     PageOpen,
 }
@@ -294,12 +312,13 @@ impl Meter {
 }
 
 /// The app's large buffers, which its processing touches only once per
-/// spectrum column or display column: about 136 KB. They are kept outside
-/// [`BatApp`] so that on the X8 the app's own state (about 43 KB, touched for
+/// spectrum column or display column: about 120 KB. They are kept outside
+/// [`BatApp`] so that on the X8 the app's own state (about 44 KB, touched for
 /// every sample) can sit in fast on-chip memory while these stay in SDRAM.
 pub struct Buffers {
-    /// Waterfall levels (0 to 255), one column of `WF_H` per `WF_COLUMN_MS`,
-    /// column-major, as a ring: `BatApp::wf_next` is the oldest column.
+    /// Waterfall levels (0 to 254, or `WF_NO_DATA`), one column of `WF_H` per
+    /// `WF_COLUMN_MS`, column-major, as a ring: `BatApp::wf_next` is the oldest
+    /// column.
     wf: [u8; WF_W * WF_H],
     /// The last `HISTORY` detector columns, every bin as a level, for
     /// snapshots, and their centre sample times.
@@ -366,7 +385,13 @@ pub struct BatApp<'a> {
     wf_next: usize,
     /// Index of the display column being filled (sample time / column length).
     wf_column: u64,
-    wf_accum: [f32; WF_H],
+    /// The loudest level of each bin over the display column being filled.
+    bin_max: [f32; BINS],
+    /// The waterfall row each bin falls in.
+    bin_row: [u8; BINS],
+    /// The level each bin shows as black in the snapshot history: the floor of
+    /// its waterfall row. The floors change once per display column.
+    bin_floor: [f32; BINS],
     /// Background level of each waterfall row, in dB, followed while no call
     /// is in progress.
     row_floor: [f32; WF_H],
@@ -380,6 +405,21 @@ pub struct BatApp<'a> {
     history_next: usize,
     /// The frequency range the snapshot shows.
     snapshot_hz: (f32, f32),
+
+    /// The chunks now being passed are not analysed; see
+    /// [`set_skip_analysis`](Self::set_skip_analysis).
+    skip_analysis: bool,
+    skipped_chunks: u32,
+    /// The next chunk does not follow on from the last one.
+    input_gap: bool,
+    /// Frames lost before the next chunk that the analyzer has not counted yet.
+    lost_frames: u32,
+    /// The offset added to the input of the listening modes after lost input, and
+    /// how many samples of its fade are left.
+    join_step: f32,
+    join_left: u32,
+    /// The last sample passed to the listening modes.
+    last_mono: f32,
 
     meters: [Meter; 2],
     recording: bool,
@@ -489,7 +529,14 @@ impl<'a> BatApp<'a> {
             field!((*this).bufs).write(buffers);
             field!((*this).wf_next).write(0);
             field!((*this).wf_column).write(0);
-            fill(field!((*this).wf_accum), f32::MIN);
+            fill(field!((*this).bin_max), f32::MIN);
+            fill(field!((*this).bin_floor), -110.0 + DEFAULT_DISPLAY_OFFSET_DB);
+            let bin_hz = sample_rate / FFT_N as f32;
+            for k in 0..BINS {
+                let t = ((VIEW_HI_HZ - k as f32 * bin_hz) / (VIEW_HI_HZ - VIEW_LO_HZ)).clamp(0.0, 1.0);
+                let row = ((t * WF_H as f32) as usize).min(WF_H - 1);
+                field!((*this).bin_row).cast::<u8>().add(k).write(row as u8);
+            }
             fill(field!((*this).row_floor), -110.0);
             field!((*this).row_floor_set).write(false);
             field!((*this).display_offset_db).write(DEFAULT_DISPLAY_OFFSET_DB);
@@ -497,6 +544,13 @@ impl<'a> BatApp<'a> {
             field!((*this).display_per_row).write(false);
             field!((*this).history_next).write(0);
             field!((*this).snapshot_hz).write((VIEW_LO_HZ, VIEW_HI_HZ));
+            field!((*this).skip_analysis).write(false);
+            field!((*this).skipped_chunks).write(0);
+            field!((*this).input_gap).write(false);
+            field!((*this).lost_frames).write(0);
+            field!((*this).join_step).write(0.0);
+            field!((*this).join_left).write(0);
+            field!((*this).last_mono).write(0.0);
             field!((*this).meters).write([Meter::new(); 2]);
             field!((*this).recording).write(false);
             field!((*this).recorded_samples).write(0);
@@ -566,6 +620,7 @@ impl<'a> BatApp<'a> {
             return;
         }
         self.mode = mode;
+        self.level.sound_changed();
         // Start the new mode clean, so no stale sound from its last use plays.
         match mode {
             Mode::Het => self.het.reset(),
@@ -629,6 +684,7 @@ impl<'a> BatApp<'a> {
                     let new = step(i, n);
                     if new != i && (i < n || steps < 0) {
                         let (feed, source) = choices[new];
+                        self.level.sound_changed();
                         if self.input_kind == InputKind::Playback {
                             self.playback_source = source;
                         } else {
@@ -637,10 +693,13 @@ impl<'a> BatApp<'a> {
                     }
                 }
             }
+            Setting::AutoLevel => {
+                let i = AutoVolume::ALL.iter().position(|&v| v == self.level.volume()).unwrap_or(0);
+                self.level.set_volume(AutoVolume::ALL[step(i, AutoVolume::ALL.len())]);
+            }
             // Turning the wheel up switches on, down switches off.
-            Setting::AutoLevel if steps != 0 => self.level.set_on(steps > 0),
             Setting::DebugInfo if steps != 0 => self.debug_info = steps > 0,
-            Setting::AutoLevel | Setting::DebugInfo => {}
+            Setting::DebugInfo => {}
             // Turning the wheel up switches on, down switches off.
             Setting::Mark(kind) if steps != 0 => self.set_marked(kind, steps > 0),
             Setting::Mark(_) => {}
@@ -743,7 +802,7 @@ impl<'a> BatApp<'a> {
         if self.mix_available { self.feed } else { Feed::Inputs }
     }
 
-    /// The host's mix is silent: a notice covers the waterfall.
+    /// The host's mix is silent: a small notice shows in a corner of the waterfall.
     pub fn set_mix_silence(&mut self, silence: Option<MixSilence>) {
         self.mix_silence = silence;
     }
@@ -758,8 +817,22 @@ impl<'a> BatApp<'a> {
         self.level.set_target(target);
     }
 
-    pub fn auto_level(&self) -> bool {
-        self.level.is_on()
+    pub fn auto_volume(&self) -> AutoVolume {
+        self.level.volume()
+    }
+
+    pub fn set_auto_volume(&mut self, volume: AutoVolume) {
+        self.level.set_volume(volume);
+    }
+
+    /// The gain Auto volume is using, for tuning tools.
+    pub fn auto_volume_gain(&self) -> f32 {
+        self.level.gain()
+    }
+
+    /// How far open the Bats only gate is, from 0 to 1, for tuning tools.
+    pub fn auto_volume_gate(&self) -> f32 {
+        self.level.gate_level()
     }
 
     /// The host has figures for testing to show: offer the switch for them.
@@ -876,7 +949,7 @@ impl<'a> BatApp<'a> {
                     self.setting = i;
                     match Setting::ALL[i] {
                         Setting::Mark(kind) => self.set_marked(kind, !self.is_marked(kind)),
-                        Setting::AutoLevel => self.level.set_on(!self.level.is_on()),
+                        Setting::AutoLevel => self.level.set_volume(layout::auto_volume_at(x, i - Setting::STEPPED)),
                         Setting::DebugInfo => self.debug_info = !self.debug_info,
                         _ => {}
                     }
@@ -975,6 +1048,44 @@ impl<'a> BatApp<'a> {
         }
     }
 
+    /// Skip the analysis of the chunks passed from now on, or go back to
+    /// analysing them. For a host that has fallen behind: the headphone output
+    /// is unchanged and costs far less without the analysis, so the host can
+    /// catch up without a gap in the sound.
+    ///
+    /// While skipping, no calls are detected, so time expansion does not trigger
+    /// by itself (MARK still triggers it), and the waterfall shows grey columns.
+    /// A call in progress when skipping starts is reported when analysis restarts,
+    /// at the length it had reached, or carries on if the sound is still there.
+    /// Analysis restarts with a new window, and the detector keeps the background
+    /// levels it had learned.
+    pub fn set_skip_analysis(&mut self, skip: bool) {
+        self.skip_analysis = skip;
+    }
+
+    /// Chunks of 256 samples (1.33 ms at 192 kHz) not analysed since the start.
+    pub fn skipped_chunks(&self) -> u32 {
+        self.skipped_chunks
+    }
+
+    /// `frames` of input were lost before the next block passed to
+    /// [`process`](Self::process), or with 0 the next block does not follow on
+    /// from the last for some other reason, such as a pause. Times carry on as if
+    /// the frames had been heard, and the analysis restarts, so the jump does not
+    /// show as a click on the waterfall or a false call. After lost frames the
+    /// sound passed to the listening modes also has no step at the join.
+    pub fn input_lost(&mut self, frames: u32) {
+        self.input_gap = true;
+        self.lost_frames = self.lost_frames.saturating_add(frames);
+        self.samples += frames as u64;
+        if self.recording {
+            self.recorded_samples += frames as u64;
+        }
+        if frames > 0 {
+            self.join_left = JOIN_FADE_SAMPLES;
+        }
+    }
+
     fn process_chunk(&mut self, first: &[f32], second: &[f32], out_l: &mut [f32], out_r: &mut [f32]) {
         let len = first.len();
         let chunk_s = len as f32 / self.sample_rate;
@@ -1002,6 +1113,21 @@ impl<'a> BatApp<'a> {
             self.trigger_te();
         }
 
+        // After lost input, start the sound from where it stopped, so the join has
+        // no step. The offset fades to nothing over JOIN_FADE_SAMPLES. This comes
+        // before the listening modes and the time expansion recording, because a
+        // step in the input would pass through their mixers and filters as a click
+        // that no change to their output could remove. The analysis has already
+        // restarted, so it does not need this.
+        let mono = &mut self.mono[..len];
+        if self.join_left == JOIN_FADE_SAMPLES {
+            self.join_step = self.last_mono - mono[0];
+        }
+        for m in mono.iter_mut().take(self.join_left as usize) {
+            *m += self.join_step * self.join_left as f32 / JOIN_FADE_SAMPLES as f32;
+            self.join_left -= 1;
+        }
+        self.last_mono = mono[len - 1];
         let mono = &self.mono[..len];
         let out = &mut self.out[..len];
         self.te.process(mono, &mut self.te_out[..len]);
@@ -1013,7 +1139,7 @@ impl<'a> BatApp<'a> {
             Mode::Pitch => self.pitch.process(mono, out),
             Mode::Thru => out.copy_from_slice(mono),
         }
-        self.level.apply(out);
+        self.level.apply(out, self.mode, !self.skip_analysis);
         out_l.copy_from_slice(out);
         out_r.copy_from_slice(out);
 
@@ -1024,7 +1150,8 @@ impl<'a> BatApp<'a> {
     }
 
     /// Feed the mono chunk to the spectrum analyzer, and each finished column
-    /// to the detector, the waterfall and the snapshot history.
+    /// to the detector, the waterfall and the snapshot history. When the chunk
+    /// is skipped or input was lost, restart the analysis instead.
     fn analyse(&mut self, len: usize) {
         let Self {
             analyzer,
@@ -1033,13 +1160,16 @@ impl<'a> BatApp<'a> {
             marked,
             detected,
             mono,
+            samples,
             calls,
             last_call,
             last_call_since,
             bufs,
             wf_next,
             wf_column,
-            wf_accum,
+            bin_max,
+            bin_row,
+            bin_floor,
             row_floor,
             row_floor_set,
             display_offset_db,
@@ -1048,64 +1178,129 @@ impl<'a> BatApp<'a> {
             history_next,
             snapshot_hz,
             sample_rate,
+            skip_analysis,
+            skipped_chunks,
+            input_gap,
+            lost_frames,
+            level: auto_level,
             ..
         } = self;
         let Buffers { wf, history, history_centre, snapshot } = &mut **bufs;
-        let column_len = (*sample_rate * WF_COLUMN_MS * 0.001) as u64;
-        analyzer.push(&mono[..len], |col: &Column<'_>| {
-            // Only the kinds of detection chosen on the settings screen (bat
-            // calls by default) are marked, shown and trigger time expansion;
-            // see bat_dsp::classify for the kinds.
-            if let Some(event) = detector.process(col) {
-                let verdict = classifier.classify(&event);
-                if *marked & kind_bit(verdict.kind) != 0 {
-                    if let Some(first) = verdict.earlier {
-                        calls.push((first.start_sample, CallKind::Bat));
-                    }
-                    calls.push((event.start_sample, verdict.kind));
-                    *last_call = Some((event, verdict.kind));
-                    *last_call_since = classifier.tone_start().unwrap_or(event.start_sample);
-                    *snapshot_hz = build_snapshot(&event, *sample_rate, history, history_centre, snapshot);
-                    *detected = true;
-                }
-            }
+        let column_len = ((*sample_rate * WF_COLUMN_MS * 0.001) as u64).max(1);
+        let bin_hz = *sample_rate / FFT_N as f32;
+        let scale = 255.0 / *display_range_db;
 
-            // Waterfall: the loudest level per pixel over each display column.
-            let mut px = [0.0f32; WF_H];
-            col.to_pixels(VIEW_HI_HZ, VIEW_LO_HZ, &mut px);
-            let this_column = col.centre_sample / column_len.max(1);
-            if this_column != *wf_column {
+        // Only the kinds of detection chosen on the settings screen (bat calls
+        // by default) are marked, shown and trigger time expansion; see
+        // bat_dsp::classify for the kinds.
+        let mut mark = |event: &CallEvent, history: &[u8; HISTORY * BINS], centres: &[u64; HISTORY]| {
+            let verdict = classifier.classify(event);
+            // In Bats only, a marked detection opens the headphones. So does a single
+            // that is strong enough to make a train with any similar call after it,
+            // which saves waiting for that call. A single has passed every other check,
+            // including the lowest bat frequency. Weaker singles do not open them: see
+            // the figures at `GATE_HOLD_S` in level.rs.
+            let strong_single = verdict.kind == CallKind::Single
+                && event.peak_db_above_floor >= DEFAULT_TRAIN_MIN_DB
+                && *marked & kind_bit(CallKind::Bat) != 0;
+            if strong_single || *marked & kind_bit(verdict.kind) != 0 {
+                auto_level.call_detected(verdict.kind == CallKind::Bat);
+            }
+            if *marked & kind_bit(verdict.kind) != 0 {
+                if let Some(first) = verdict.earlier {
+                    calls.push((first.start_sample, CallKind::Bat));
+                }
+                calls.push((event.start_sample, verdict.kind));
+                *last_call = Some((*event, verdict.kind));
+                *last_call_since = classifier.tone_start().unwrap_or(event.start_sample);
+                *snapshot_hz = build_snapshot(event, *sample_rate, history, centres, snapshot);
+                *detected = true;
+            }
+        };
+
+        // Move the waterfall on to display column `to`: write the column being
+        // filled, then one column marked as not analysed for each display
+        // column that had no spectrum at all, so times stay true on screen.
+        // With `hold_floor`, the column being filled may hold a call, so the
+        // background levels do not follow it.
+        let mut advance = |to: u64, hold_floor: bool, bin_max: &mut [f32; BINS], bin_floor: &mut [f32; BINS]| {
+            if to <= *wf_column {
+                return;
+            }
+            let base = *wf_next * WF_H;
+            let column = &mut wf[base..base + WF_H];
+            if bin_max[0] > f32::MIN {
+                // The loudest level per pixel over the display column. Each
+                // pixel takes the loudest of its bins, so taking the pixels once
+                // from the loudest level of each bin gives the same result as
+                // taking them from every spectrum column.
+                let mut pixels = [0.0f32; WF_H];
+                let loudest = Column { centre_sample: 0, bin_hz, db: &bin_max[..] };
+                loudest.to_pixels(VIEW_HI_HZ, VIEW_LO_HZ, &mut pixels);
                 // Follow each row's background, only while no call is in
                 // progress. Digital silence stops at MIN_FLOOR_DB.
-                if wf_accum[0] > f32::MIN && !detector.is_active() {
+                if !hold_floor {
                     let rate = if *row_floor_set { 0.02 } else { 1.0 };
-                    for (f, &a) in row_floor.iter_mut().zip(wf_accum.iter()) {
+                    for (f, &a) in row_floor.iter_mut().zip(&pixels) {
                         *f = (*f + rate * (a - *f)).max(MIN_FLOOR_DB);
                     }
                     *row_floor_set = true;
                 }
                 let floors = display_floors(row_floor, *display_per_row, *display_offset_db);
-                let base = *wf_next * WF_H;
-                for ((dst, &db), &floor) in wf[base..base + WF_H].iter_mut().zip(wf_accum.iter()).zip(&floors) {
-                    *dst = level(db, floor, *display_range_db);
+                for ((dst, &db), &floor) in column.iter_mut().zip(&pixels).zip(&floors) {
+                    *dst = level(db, floor, scale).min(WF_NO_DATA - 1);
                 }
-                *wf_next = (*wf_next + 1) % WF_W;
-                *wf_column = this_column;
-                wf_accum.fill(f32::MIN);
+                for (f, &row) in bin_floor.iter_mut().zip(bin_row.iter()) {
+                    *f = floors[row as usize];
+                }
+            } else {
+                column.fill(WF_NO_DATA);
             }
-            for (a, &p) in wf_accum.iter_mut().zip(&px) {
-                *a = a.max(p);
+            *wf_next = (*wf_next + 1) % WF_W;
+            // Past a whole screen of missed columns, more would change nothing.
+            for _ in 1..(to - *wf_column).min(WF_W as u64) {
+                let base = *wf_next * WF_H;
+                wf[base..base + WF_H].fill(WF_NO_DATA);
+                *wf_next = (*wf_next + 1) % WF_W;
+            }
+            *wf_column = to;
+            bin_max.fill(f32::MIN);
+        };
+
+        let skip = *skip_analysis;
+        if skip || *input_gap {
+            *input_gap = false;
+            // No later column may span the jump.
+            if let Some(event) = detector.gap() {
+                mark(&event, history, history_centre);
+            }
+            let skipped = if skip { len as u64 } else { 0 };
+            analyzer.skip(core::mem::take(lost_frames) as u64 + skipped);
+        }
+        if skip {
+            *skipped_chunks = skipped_chunks.wrapping_add(1);
+            // Keep the waterfall moving, so old columns do not stay at "now". A
+            // column cut short by the skip may have held a call that has just
+            // been ended, so it does not count as background.
+            let newest = (*samples + len as u64).saturating_sub(FFT_N as u64 / 2) / column_len;
+            advance(newest, true, bin_max, bin_floor);
+            return;
+        }
+
+        analyzer.push(&mono[..len], |col: &Column<'_>| {
+            if let Some(event) = detector.process(col) {
+                mark(&event, history, history_centre);
+            }
+            advance(col.centre_sample / column_len, detector.is_active(), bin_max, bin_floor);
+            for (m, &db) in bin_max.iter_mut().zip(col.db) {
+                *m = m.max(db);
             }
 
             // Snapshot history: every bin, against the floor of the waterfall
             // row at that bin's frequency.
-            let floors = display_floors(row_floor, *display_per_row, *display_offset_db);
             let base = *history_next * BINS;
-            for (k, (dst, &db)) in history[base..base + BINS].iter_mut().zip(col.db).enumerate() {
-                let hz = k as f32 * col.bin_hz;
-                let t = ((VIEW_HI_HZ - hz) / (VIEW_HI_HZ - VIEW_LO_HZ)).clamp(0.0, 1.0);
-                let row = ((t * WF_H as f32) as usize).min(WF_H - 1);
-                *dst = level(db, floors[row], *display_range_db);
+            for ((dst, &db), &floor) in history[base..base + BINS].iter_mut().zip(col.db).zip(bin_floor.iter()) {
+                *dst = level(db, floor, scale);
             }
             history_centre[*history_next] = col.centre_sample;
             *history_next = (*history_next + 1) % HISTORY;
@@ -1131,6 +1326,10 @@ impl<'a> BatApp<'a> {
         self.display_offset_db = offset_db;
         self.display_range_db = range_db.max(1.0);
         self.display_per_row = per_row;
+        let floors = display_floors(&self.row_floor, per_row, offset_db);
+        for (f, &row) in self.bin_floor.iter_mut().zip(&self.bin_row) {
+            *f = floors[row as usize];
+        }
     }
 
     /// Whether a tap at (x, y) would do something: the menu button, a mode
@@ -1160,10 +1359,11 @@ impl<'a> BatApp<'a> {
     }
 }
 
-/// Map a level in dB to 0..=255 for the colour map.
-fn level(db: f32, floor_db: f32, range_db: f32) -> u8 {
-    let t = (db - floor_db) / range_db;
-    (t.clamp(0.0, 1.0) * 255.0) as u8
+/// Map a level in dB to 0..=255 for the colour map. `scale` is 255 divided by
+/// the range in dB.
+#[inline]
+fn level(db: f32, floor_db: f32, scale: f32) -> u8 {
+    ((db - floor_db) * scale).clamp(0.0, 255.0) as u8
 }
 
 /// The level shown as black for each waterfall row: the row's own background,

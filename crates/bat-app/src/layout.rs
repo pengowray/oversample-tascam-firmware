@@ -7,7 +7,7 @@
 use embedded_graphics::prelude::*;
 use embedded_graphics::primitives::Rectangle;
 
-use crate::{Mode, VIEW_HI_HZ, VIEW_LO_HZ};
+use crate::{AutoVolume, Mode, VIEW_HI_HZ, VIEW_LO_HZ};
 
 pub const TITLE_H: i32 = 24;
 
@@ -36,6 +36,20 @@ pub const TICKS_Y: i32 = WF_Y + WF_H as i32 + 1;
 pub const TICK_H: i32 = 6;
 /// Time labels under the waterfall.
 pub const RULER_BASELINE: i32 = 328;
+/// A small notice in the top left corner of the waterfall: text in the BODY font, on a
+/// panel 2 px inside the waterfall's edges, so it stays clear of the frequency labels at
+/// the left and the time labels below.
+pub const CORNER_NOTICE_PAD_X: i32 = 5;
+pub const CORNER_NOTICE_BASELINE: i32 = 13;
+pub const CORNER_NOTICE_LINE: i32 = 15;
+
+/// The panel of a corner notice with this text width and number of lines.
+pub fn corner_notice(text_width: i32, lines: usize) -> Rectangle {
+    Rectangle::new(
+        Point::new(WF_X + 2, WF_Y + 2),
+        Size::new((text_width + 2 * CORNER_NOTICE_PAD_X) as u32, (lines as i32 * CORNER_NOTICE_LINE + 3) as u32),
+    )
+}
 
 /// Last-call panel: a zoomed spectrogram of the call and its measurements.
 pub const SNAP_PANEL: Rectangle = Rectangle::new(Point::new(6, 334), Size::new(308, 64));
@@ -78,8 +92,9 @@ pub const MENU: Rectangle = Rectangle::new(Point::new(0, 0), Size::new(40, TITLE
 /// name and value on the left, - and + buttons on the right, and a line
 /// saying what the setting does. Below them, under a heading, come the
 /// switches: one compact row each, with a colour swatch, a name and a line of
-/// help on the left and the switch on the right. Between them, two switches
-/// that are not about marking share one row, half the width each.
+/// help on the left and the switch on the right. Between them, two settings
+/// that are not about marking share one row, half the width each: Auto volume, with
+/// its three choices, and the Debug info switch.
 pub const SETTINGS_TOP: i32 = 34;
 pub const SETTING_H: i32 = 66;
 const SETTING_GAP: i32 = 8;
@@ -128,6 +143,35 @@ pub fn switch_row(j: usize) -> Rectangle {
         Point::new(6, SWITCHES_TOP + (j - HALF_ROWS) as i32 * (SWITCH_ROW_H + SWITCH_ROW_GAP)),
         Size::new(308, SWITCH_ROW_H as u32),
     )
+}
+
+/// The three choices of the Auto volume row, side by side under its name, in the
+/// order of `AutoVolume::ALL`. Bats only is wider to fit its text. A tap anywhere in
+/// the row's height picks the choice at that x, so each target is 38 px high, and any
+/// choice is one tap away.
+const AUTO_VOLUME_Y: i32 = 18;
+const AUTO_VOLUME_H: u32 = 16;
+const AUTO_VOLUME_GAP: i32 = 2;
+const AUTO_VOLUME_W: [i32; 3] = [34, 34, 66];
+
+/// Choice `i` of the Auto volume row, which is switch row `j`.
+pub fn auto_volume_choice(i: usize, j: usize) -> Rectangle {
+    let r = switch_row(j);
+    let x = r.top_left.x + 6 + AUTO_VOLUME_W[..i].iter().map(|w| w + AUTO_VOLUME_GAP).sum::<i32>();
+    Rectangle::new(Point::new(x, r.top_left.y + AUTO_VOLUME_Y), Size::new(AUTO_VOLUME_W[i] as u32, AUTO_VOLUME_H))
+}
+
+/// The choice a tap at `x` picks in the Auto volume row, which is switch row `j`. The
+/// row's margins belong to the nearest choice.
+pub fn auto_volume_at(x: i32, j: usize) -> AutoVolume {
+    AutoVolume::ALL
+        .iter()
+        .enumerate()
+        .find_map(|(i, &volume)| {
+            let c = auto_volume_choice(i, j);
+            (x < c.top_left.x + c.size.width as i32).then_some(volume)
+        })
+        .unwrap_or(AutoVolume::BatsOnly)
 }
 
 /// The switch itself, at the right of its row.

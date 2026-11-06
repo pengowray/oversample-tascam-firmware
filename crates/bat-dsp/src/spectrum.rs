@@ -282,6 +282,21 @@ where
         self.pushed = 0;
     }
 
+    /// Jump over `samples` samples that will never be pushed, because input was
+    /// lost or analysis is paused. The sample count carries on, so later columns
+    /// keep their true times, and the window starts again, so the next column
+    /// comes `N` samples from now and holds only samples pushed after this call.
+    /// No column ever spans the jump, which would show as a wide-band click.
+    ///
+    /// [`reset`](Self::reset) does not suit this: it restarts the count at 0.
+    pub fn skip(&mut self, samples: u64) {
+        // The ring needs no clearing: N new samples overwrite it before the
+        // next column.
+        self.pos = 0;
+        self.until_column = N;
+        self.pushed += samples;
+    }
+
     /// Add samples, in a block of any size. Calls `on_column` for each frame
     /// completed by these samples, in order, before returning.
     ///
@@ -433,6 +448,25 @@ mod tests {
         let cols = columns(&mut an, &[0.0; 2_000], 777);
         let centres: Vec<u64> = cols.iter().map(|c| c.0).collect();
         assert_eq!(centres, [256, 556, 856, 1156, 1456]);
+    }
+
+    #[test]
+    fn skip_restarts_the_window_and_keeps_the_sample_count() {
+        let mut an = SpectrumAnalyzer::<512>::new(FS);
+        an.set_hop(192);
+        // 700 samples of a tone: the columns at 512 and 704 are not both due.
+        let tone = sine(FS, 48_000.0, 0.5, 700);
+        let before = columns(&mut an, &tone, 100);
+        assert_eq!(before.iter().map(|c| c.0).collect::<Vec<_>>(), [256]);
+
+        an.skip(10_000);
+        // Silence after the jump: 511 samples make no column, the 512th does,
+        // and it holds nothing from the tone before the jump.
+        let cols = columns(&mut an, &[0.0; 511], 50);
+        assert!(cols.is_empty());
+        let cols = columns(&mut an, &[0.0; 1 + 192], 50);
+        assert_eq!(cols.iter().map(|c| c.0).collect::<Vec<_>>(), [700 + 10_000 + 256, 700 + 10_000 + 256 + 192]);
+        assert!(cols[0].1.iter().all(|&v| (v - MIN_DB).abs() < 0.01), "the tone is still in the window");
     }
 
     #[test]

@@ -6,16 +6,41 @@ use bat_app::BatApp;
 use super::state::{
     AUDIO_INSTALLED, AUDIO_SLOT_UNEXPECTED, AUDIO_STATE, BAT_ACTIVE, BLOCKS, BLOCKS_AT_SECOND,
     CYCLE_COUNTER_ON, CYCLES_AT_SECOND, CYCLES_PER_S, DEBUG_SHOWN, HEAR_MIX, HEARD_WORDS, HOOK_CYCLES, HOOK_CYCLES_PER_S,
-    IN_DROPPED, IN_READ, IN_RING, IN_WRITE, NO_INPUT_WORDS, OUT_READ, OUT_WRITE, PLAYBACK, PRIMED,
-    SOURCE_PEAK, STOCK_CYCLES, STOCK_CYCLES_PER_S, UNDERRUNS, WORD_PEAKS,
+    IN_DROPPED, IN_DROPPED_SEEN, IN_HOLE_AT, IN_READ, IN_RING, IN_WRITE, NO_INPUT_WORDS, OUT_FADE_IN, OUT_LAST, OUT_READ, OUT_WRITE,
+    PLAYBACK, PRIMED, SOURCE_PEAK, STOCK_CYCLES, STOCK_CYCLES_PER_S, UNDERRUNS, WORD_PEAKS,
 };
 use super::{Handler, blocks_per_second, rate_class, spare, stock};
 
 /// Output samples buffered before the headphones start playing the bat app's
 /// output (43 ms at 192 kHz), so the DSP task's passes do not run dry.
 const PRIME_SAMPLES: u32 = 8_192;
+/// When the output ring runs dry there are no samples left to fade, so the output
+/// falls away from the last sample by this factor per sample: 60 dB in 95 samples
+/// (0.5 ms at 192 kHz). A step to zero would be a click on top of the gap.
+const DRY_DECAY: f32 = 0.93;
+/// When the output starts again it fades in over this many samples (0.33 ms).
+const RESUME_FADE_SAMPLES: u32 = 64;
 
 const CHUNK: usize = 1_024;
+
+/// Input waiting above this many frames (26.7 ms) makes the app skip its
+/// analysis, which is most of its work, until the waiting input falls below
+/// ANALYSIS_ON_BELOW. The headphones then stay continuous, at the cost of grey
+/// columns on the waterfall.
+///
+/// While recording, the drawing part of a frame takes about 13 ms of wall time (an
+/// estimate from B231's figures; see `dsp_task`), in which about 2,500 frames
+/// arrive, so a task that is keeping up sees about that many waiting after each
+/// frame's drawing. This level leaves room for about another 14 ms on top, for the
+/// recording tasks, which run first, before any gap appears on the waterfall. It
+/// also leaves 3,072 frames (16 ms) before the input ring is full, and at the usual
+/// 8,192 frames in the two rings together, 16 ms before the headphones run out.
+pub(super) const ANALYSIS_OFF_ABOVE: u32 = 5_120;
+/// Far enough below the level above that one episode is not followed at once by
+/// another. Each restart of the analysis costs a window of 512 samples with no
+/// column. Going from 5,120 to 2,048 misses about 16 ms of sound, or two display
+/// columns.
+const ANALYSIS_ON_BELOW: u32 = 2_048;
 
 /// Gain on the app's output before the stock headphone gain (+18 dB), with a
 /// ceiling of -6 dBFS: bat calls are often 40 to 60 dB below full scale.
@@ -69,7 +94,27 @@ pub(super) fn process_input(app: &mut BatApp<'static>, budget: u32, time_blocks:
     while done < budget && BLOCKS.load(Relaxed).wrapping_sub(start) < time_blocks {
         let read = IN_READ.load(Relaxed);
         let available = IN_WRITE.load(Acquire).wrapping_sub(read);
-        let n = available.min(CHUNK as u32).min(budget - done) as usize;
+        if available > ANALYSIS_OFF_ABOVE {
+            app.set_skip_analysis(true);
+        } else if available < ANALYSIS_ON_BELOW {
+            app.set_skip_analysis(false);
+        }
+        let mut n = available.min(CHUNK as u32).min(budget - done) as usize;
+        // Frames that did not fit left a jump in the ring. Read up to it, then
+        // tell the app. Until then, no analysis: only the latest jump's place is
+        // known, and an earlier one may lie before it.
+        let seen = IN_DROPPED_SEEN.load(Relaxed);
+        let lost = IN_DROPPED.load(Acquire).wrapping_sub(seen);
+        if lost > 0 {
+            let to_jump = IN_HOLE_AT.load(Relaxed).wrapping_sub(read) as i32;
+            if to_jump > 0 {
+                app.set_skip_analysis(true);
+                n = n.min(to_jump as usize);
+            } else {
+                app.input_lost(lost);
+                IN_DROPPED_SEEN.store(seen.wrapping_add(lost), Relaxed);
+            }
+        }
         if n == 0 {
             break;
         }
@@ -186,15 +231,18 @@ unsafe extern "C" fn audio_hook(a: usize, b: usize, c: usize, d: usize) -> usize
         }
         IN_WRITE.store(write.wrapping_add(4), Release);
     } else {
-        IN_DROPPED.store(IN_DROPPED.load(Relaxed).wrapping_add(4), Relaxed);
+        IN_HOLE_AT.store(write, Relaxed);
+        IN_DROPPED.store(IN_DROPPED.load(Relaxed).wrapping_add(4), Release);
     }
 
     // The app's output, once enough is buffered, at the stock headphone gain.
     let read = OUT_READ.load(Relaxed);
     let available = OUT_WRITE.load(Acquire).wrapping_sub(read);
     let mut primed = PRIMED.load(Relaxed);
+    let mut fade_in = OUT_FADE_IN.load(Relaxed);
     if !primed && available >= PRIME_SAMPLES {
         primed = true;
+        fade_in = RESUME_FADE_SAMPLES;
     } else if primed && available < 4 {
         primed = false;
         UNDERRUNS.store(UNDERRUNS.load(Relaxed).wrapping_add(1), Relaxed);
@@ -202,13 +250,21 @@ unsafe extern "C" fn audio_hook(a: usize, b: usize, c: usize, d: usize) -> usize
     PRIMED.store(primed, Relaxed);
     let gain = stock_gain * 2_147_483_647.0;
     let ring = spare::OUT_RING as *const f32;
+    let mut last = f32::from_bits(OUT_LAST.load(Relaxed));
     for k in 0..4 {
         let y = if primed {
             // SAFETY: inside the output ring.
-            unsafe { ptr::read_volatile(ring.add((read.wrapping_add(k as u32) % spare::OUT_SAMPLES) as usize)) }
+            let y = unsafe { ptr::read_volatile(ring.add((read.wrapping_add(k as u32) % spare::OUT_SAMPLES) as usize)) };
+            if fade_in > 0 {
+                fade_in -= 1;
+                y * (RESUME_FADE_SAMPLES - fade_in) as f32 / RESUME_FADE_SAMPLES as f32
+            } else {
+                y
+            }
         } else {
-            0.0
+            last * DRY_DECAY
         };
+        last = y;
         let sample = ((y * OUTPUT_GAIN).clamp(-OUTPUT_CEILING, OUTPUT_CEILING) * gain) as i32;
         // SAFETY: the words of this frame in the output block.
         unsafe {
@@ -216,6 +272,8 @@ unsafe extern "C" fn audio_hook(a: usize, b: usize, c: usize, d: usize) -> usize
             ptr::write_volatile(output.add(2 * k + 1), sample);
         }
     }
+    OUT_LAST.store(last.to_bits(), Relaxed);
+    OUT_FADE_IN.store(fade_in, Relaxed);
     if primed {
         OUT_READ.store(read.wrapping_add(4), Release);
     }

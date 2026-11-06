@@ -16,6 +16,7 @@
 //!    1.5 kHz of it in that time are pieces of it too, so the tone does not
 //!    start again as a train of bat calls after each pause. Pieces of the
 //!    chain from before it reached 150 ms can no longer start a train.
+//!    Regular pulses count as a steady tone too (see below).
 //! 2. **Broadband**: the call's range reaches the bottom of the detection
 //!    band. Clicks and rustles are loudest at low frequencies and reach down
 //!    to it; bat calls stop well above it.
@@ -35,12 +36,31 @@
 //! The first call of a train only becomes a bat call when the second arrives,
 //! so [`Verdict::earlier`] hands it back then, for a display to mark too.
 //!
+//! **Regular pulses.** A detection that passes the first four checks is a
+//! piece of a steady tone when it extends a run of 8 or more pulses at a similar
+//! frequency (peak within 1.5 kHz) with the same spacing, within 1 ms, up to 3
+//! pulses in a row being allowed to go missing. Pulses that regular are not a bat's:
+//! bats vary the spacing of their calls. In 286 recordings (the library and the X8's),
+//! runs of bat calls stopped at 5 pulses. 12 recordings had runs of 7 to 445, spaced
+//! about 10, 17, 33 or 400 ms, at one frequency each, such as 44.6 or 83 kHz. Some of
+//! those spacings fit the mains (10 ms is twice 50 Hz), so these may be electrical
+//! interference; that has not been checked. 261105_0082 has 3,570 such pulses, which
+//! the train check took for bat calls. With this check, it has none, and 276 of the
+//! 286 recordings have the same bat calls as before. Pieces of the run from before it
+//! reached 8 can no longer start a train.
+//!
 //! Tuned on Portacapture X8 recordings at 192 kHz (call detector with
 //! 512-point columns every 128 samples): of 97 calls from a bat at 45 to
 //! 50 kHz it kept 94, it kept 97 of 98 calls in two annotated passes, and in
 //! two recordings with no bats (birds feeding beside the mics, traffic,
 //! sweeping) it reduced detections from 96 and 39 a minute to 11.1 and 3.6
 //! (7.4 and 2.0 with the lowest bat frequency at 20 kHz).
+//!
+//! The figures here were measured with columns every 128 samples. The app now
+//! makes a column every 192 samples. Rechecked with that (`bat-app` example
+//! `hop_compare`): bat calls in 238 recordings went from 5399 to 5486, and false
+//! bat calls in 91 minutes of no-bat recordings from 474 to 489. Moving the
+//! columns half a hop later, still every 128 samples, gives 5387 and 491.
 //!
 //! Checked on 247 Xeno-canto echolocation recordings of 76 genera from
 //! around the world, resampled to 192 kHz (`bat-app` example `library`):
@@ -84,6 +104,11 @@ pub const TONE_GAP_MS: f32 = 20.0;
 pub const TONE_MIN_MS: f32 = 150.0;
 /// How long a tone's frequency is remembered after its last piece.
 pub const TONE_HOLD_S: f32 = 2.0;
+/// Pulses at the same spacing that make a run of regular pulses.
+pub const REGULAR_MIN_PULSES: u32 = 8;
+/// How far a pulse may be from the spacing of its run. The detector's times are
+/// whole columns, so this is at least a column at the app's 1 ms per column.
+pub const REGULAR_TOLERANCE_MS: f32 = 1.0;
 
 /// A range whose bottom is within this of the band's bottom reaches it.
 const EDGE_MARGIN_HZ: f32 = 1_000.0;
@@ -93,11 +118,17 @@ const RECENT: usize = 16;
 const PIECES: usize = 8;
 /// Steady tones remembered at once.
 const TONES: usize = 4;
+/// Runs of evenly spaced pulses followed at once.
+const PULSE_RUNS: usize = 4;
+/// Most pulses in a row that may go missing from a run that has not yet reached
+/// REGULAR_MIN_PULSES, plus one. The detector misses some, and so does a gap in the
+/// analysis.
+const MOST_SPACINGS: u64 = 4;
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum CallKind {
     /// A piece of a steady tone lasting longer than a bat call, such as a
-    /// rat's 22 kHz alarm call.
+    /// rat's 22 kHz alarm call, or one of a run of regular pulses.
     Tone,
     /// Reaches the bottom of the detection band: a click or rustle.
     Broadband,
@@ -145,6 +176,18 @@ struct Tone {
     end: u64,
 }
 
+/// Pulses at a similar frequency, followed to see whether they are evenly spaced.
+#[derive(Clone, Copy, Debug)]
+struct PulseRun {
+    peak_hz: f32,
+    /// Start of the first pulse and of the latest pulse.
+    first: u64,
+    last: u64,
+    /// The spacing between pulses, 0 until the second pulse.
+    spacing: u64,
+    pulses: u32,
+}
+
 #[derive(Clone, Debug)]
 pub struct CallClassifier {
     sample_rate: f32,
@@ -162,6 +205,8 @@ pub struct CallClassifier {
     pieces: [Option<Piece>; PIECES],
     next_piece: usize,
     tones: [Option<Tone>; TONES],
+    pulse_runs: [Option<PulseRun>; PULSE_RUNS],
+    regular_tolerance: u64,
     /// Start of the tone the latest detection belongs to, if it is a piece
     /// of one.
     tone_since: u64,
@@ -188,6 +233,8 @@ impl CallClassifier {
             pieces: [None; PIECES],
             next_piece: 0,
             tones: [None; TONES],
+            pulse_runs: [None; PULSE_RUNS],
+            regular_tolerance: (REGULAR_TOLERANCE_MS * 0.001 * sample_rate) as u64 + 1,
             tone_since: 0,
             last_was_tone: false,
         };
@@ -236,6 +283,7 @@ impl CallClassifier {
         self.pieces = [None; PIECES];
         self.next_piece = 0;
         self.tones = [None; TONES];
+        self.pulse_runs = [None; PULSE_RUNS];
         self.last_was_tone = false;
     }
 
@@ -263,6 +311,11 @@ impl CallClassifier {
         };
         if kind != CallKind::Single {
             return Verdict { kind, earlier: None };
+        }
+        if let Some(first) = self.regular_pulses_since(event) {
+            self.last_was_tone = true;
+            self.tone_since = first;
+            return Verdict { kind: CallKind::Tone, earlier: None };
         }
 
         // The latest earlier call that makes a train with this one.
@@ -293,6 +346,61 @@ impl CallClassifier {
         self.recent[self.next] = Some(Recent { event: *event, bat: verdict.kind == CallKind::Bat });
         self.next = (self.next + 1) % RECENT;
         verdict
+    }
+
+    /// When the detection extends a run of regular pulses, the start of the run; see
+    /// the module documentation. Follows the detection's run as it goes.
+    ///
+    /// A detection at a run's frequency that does not fit the run's spacing starts
+    /// the run again. Otherwise a bat's calls, one of which fits by chance now and
+    /// then, would build up a run over time. A run that has reached REGULAR_MIN_PULSES
+    /// is not restarted, because such a detection may be a bat at the same frequency
+    /// as a machine that is still running.
+    fn regular_pulses_since(&mut self, event: &CallEvent) -> Option<u64> {
+        let (start, peak) = (event.start_sample, event.peak_freq_hz);
+        let tolerance = self.regular_tolerance;
+        let tone_hold = self.tone_hold;
+        let fits = |run: &PulseRun, most_spacings: u64| {
+            let since = start.saturating_sub(run.last);
+            // How many spacings have passed, to the nearest whole number.
+            let spacings = (since + run.spacing / 2) / run.spacing.max(1);
+            (1..=most_spacings).contains(&spacings) && since.abs_diff(spacings * run.spacing) <= tolerance
+        };
+        let similar = |run: &PulseRun| (run.peak_hz - peak).abs() <= TONE_FREQ_HZ;
+
+        for run in self.pulse_runs.iter_mut().flatten() {
+            if run.pulses >= REGULAR_MIN_PULSES && similar(run) && start.saturating_sub(run.last) <= tone_hold && fits(run, u64::MAX) {
+                run.last = start;
+                return Some(run.first);
+            }
+        }
+        let new_run = PulseRun { peak_hz: peak, first: start, last: start, spacing: 0, pulses: 1 };
+        let building = self.pulse_runs.iter_mut().flatten().find(|run| run.pulses < REGULAR_MIN_PULSES && similar(run));
+        let Some(run) = building else {
+            // Replace the run that has gone longest without a pulse.
+            let slot = (0..PULSE_RUNS).min_by_key(|&i| self.pulse_runs[i].map_or(0, |r| r.last + 1)).unwrap_or(0);
+            self.pulse_runs[slot] = Some(new_run);
+            return None;
+        };
+        if run.spacing == 0 {
+            run.spacing = start.saturating_sub(run.last);
+        } else if !fits(run, MOST_SPACINGS) {
+            *run = new_run;
+            return None;
+        }
+        run.last = start;
+        run.pulses += 1;
+        if run.pulses < REGULAR_MIN_PULSES {
+            return None;
+        }
+        // The run's earlier pulses can no longer start a train.
+        let first = run.first;
+        for slot in &mut self.recent {
+            if slot.is_some_and(|r| r.event.start_sample >= first && (r.event.peak_freq_hz - peak).abs() <= TONE_FREQ_HZ) {
+                *slot = None;
+            }
+        }
+        Some(first)
     }
 
     /// Whether the detection is a piece of a steady tone; see the module
@@ -363,8 +471,68 @@ impl CallClassifier {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::vec::Vec;
 
     const FS: f32 = 192_000.0;
+
+    /// `count` pulses from `at_s` on, with `spacing_ms` between their starts.
+    fn pulses(c: &mut CallClassifier, at_s: f32, spacing_ms: f32, count: usize, khz: f32) -> Vec<CallKind> {
+        (0..count).map(|i| c.classify(&call(at_s + i as f32 * spacing_ms * 0.001, khz, 40.0)).kind).collect()
+    }
+
+    #[test]
+    fn evenly_spaced_pulses_stop_counting_as_bat_calls() {
+        for spacing_ms in [10.0, 17.0, 50.0, 401.0] {
+            let mut c = classifier();
+            let kinds = pulses(&mut c, 1.0, spacing_ms, 20, 44.6);
+            let first_tone = kinds.iter().position(|&k| k == CallKind::Tone).unwrap();
+            assert_eq!(first_tone, REGULAR_MIN_PULSES as usize - 1, "{spacing_ms}: {kinds:?}");
+            assert!(kinds[first_tone..].iter().all(|&k| k == CallKind::Tone), "{spacing_ms}: {kinds:?}");
+        }
+    }
+
+    #[test]
+    fn a_missing_pulse_does_not_restart_a_run_of_regular_pulses() {
+        let mut c = classifier();
+        for i in (0..30).filter(|i| ![5, 12, 13, 14].contains(i)) {
+            let kind = c.classify(&call(1.0 + i as f32 * 0.010, 44.6, 40.0)).kind;
+            if i > 10 {
+                assert_eq!(kind, CallKind::Tone, "pulse {i}");
+            }
+        }
+    }
+
+    #[test]
+    fn calls_with_varied_spacing_stay_bat_calls() {
+        // Spacings that vary by more than the tolerance, as a bat's do.
+        let mut c = classifier();
+        let mut t = 1.0;
+        let mut kinds = Vec::new();
+        for i in 0..60 {
+            kinds.push(c.classify(&call(t, 45.0, 40.0)).kind);
+            t += 0.080 + 0.0031 * ((i * 7 % 5) as f32);
+        }
+        assert!(kinds[1..].iter().all(|&k| k == CallKind::Bat), "{kinds:?}");
+    }
+
+    #[test]
+    fn a_bat_at_another_frequency_is_still_a_bat_beside_regular_pulses() {
+        let mut c = classifier();
+        pulses(&mut c, 1.0, 10.0, 30, 44.6);
+        let first = c.classify(&call(1.31, 60.0, 40.0));
+        assert_eq!(first.kind, CallKind::Single);
+        let second = c.classify(&call(1.39, 60.0, 40.0));
+        assert_eq!(second.kind, CallKind::Bat);
+    }
+
+    #[test]
+    fn regular_pulses_cannot_start_a_train_afterwards() {
+        let mut c = classifier();
+        pulses(&mut c, 1.0, 10.0, 8, 44.6);
+        // Just after the run, at an uneven time: nothing left to pair with.
+        let later = c.classify(&call(1.1234, 45.0, 40.0));
+        assert_eq!(later.kind, CallKind::Single);
+    }
 
     fn call(at_s: f32, peak_khz: f32, db: f32) -> CallEvent {
         let start = (at_s * FS) as u64;
@@ -446,7 +614,8 @@ mod tests {
         // Constant-frequency calls of 50 ms every 100 ms, as a horseshoe bat
         // makes: narrow, but with gaps longer than the tone check allows.
         let mut c = classifier();
-        let kinds: std::vec::Vec<_> = pieces(1.0, 2.0, 50.0, 100.0, 70.0).iter().map(|e| c.classify(e).kind).collect();
+        // Fewer than REGULAR_MIN_PULSES, because these are evenly spaced.
+        let kinds: std::vec::Vec<_> = pieces(1.0, 1.7, 50.0, 100.0, 70.0).iter().map(|e| c.classify(e).kind).collect();
         assert!(kinds[1..].iter().all(|&k| k == CallKind::Bat), "{kinds:?}");
     }
 
