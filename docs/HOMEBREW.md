@@ -779,17 +779,17 @@ USER SETTINGS 1, what does SAVE USER SETTINGS do?
 
 ## Step 12 test file: the bat app hears the inputs turned on in MANUAL (built 2026-11-06, not yet installed)
 
-`work/patch12/#PortaX8_0230.203` (B230, SHA-256 `54a389cf…216d50d7`). Includes step 11,
-which has not been installed either. B229 (`work/patch11`) took inputs 3 to 6 before
-inputs 1 and 2; the user chose plain track order instead.
+`work/patch11/#PortaX8_0229.203` (B229, SHA-256 `40435549…105dd302`). Includes step 11,
+which has not been installed either.
 
 - **Which inputs.** BAT DETECTOR now hears two of the inputs turned on in
   MANUAL (the red tracks on its INPUT screen), through MANUAL's INPUT SELECT
   assignment, read about 10 times a second, so a change takes effect when you go
-  back with PLAY. If more than two different inputs are on, it takes the first
-  two in track order. All six tracks are on by default, so with the default
-  assignment the app hears inputs 1 and 2 (the included mics' jacks) until those
-  tracks are turned off. With one input on, the app hears that input alone. With none on, the X8 powers its inputs down, so the
+  back with PLAY. All six tracks are on by default. If more than two different
+  inputs are on, it takes inputs 3 to 6 and EXT IN first, in track order, then
+  inputs 1 and 2 (the included mics' jacks), so the default is inputs 3 and 4 and
+  mics on other inputs need the unused tracks turned off. With one input on, the
+  app hears that input alone. With none on, the X8 powers its inputs down, so the
   app hears silence and a notice covers the waterfall.
 - **On screen.** The meters are labelled with the inputs heard (1 to 6, EL and
   ER for EXT IN, L and R in BAT PLAYBACK); with one input there is one meter.
@@ -805,10 +805,9 @@ inputs 1 and 2; the user chose plain track order instead.
   pattern for it matched nothing. It now runs from ITCM as intended, which may
   help the stutter noted in step 10.
 
-**What to check.** With every track on, are the meters labelled 1 and 2? With mics
-on inputs 3 and 4, turn off tracks 1 and 2 (or MIC) on MANUAL's INPUT screen: do
-the meters say 3 and 4, with sound? With mics on 5 and 6, turn off tracks 1 to 4:
-do the meters say 5 and 6, and is the sound from them?
+**What to check.** With mics on inputs 3 and 4 and every track on, are the meters
+labelled 3 and 4, with sound? Turn off tracks 3 and 4 on MANUAL's INPUT screen
+with mics on 5 and 6: do the meters say 5 and 6, and is the sound from them?
 With one track on: is there one meter, and sound from that input? Use INPUT
 SELECT to put INPUT 5-6 on tracks 1-2: do the labels still say 5 and 6? With a
 mic on input 1 or 2 alone, does it work at 192 kHz, and how far up does it reach?
