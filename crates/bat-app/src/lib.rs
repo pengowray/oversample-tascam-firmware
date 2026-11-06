@@ -196,6 +196,15 @@ pub enum MonitorSource {
     Both,
 }
 
+/// Why the host's mix is silent, for the notice over the waterfall.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum MixSilence {
+    /// The recorder is stopped with REC PAUSE on.
+    RecPause,
+    /// One of the host's settings pages is open underneath.
+    PageOpen,
+}
+
 /// What the host passes to `process`: two inputs, or the left and right of its
 /// own stereo mix.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
@@ -389,8 +398,11 @@ pub struct BatApp<'a> {
     /// chosen.
     mix_available: bool,
     feed: Feed,
-    /// The host's mix is silent until the recorder leaves stop.
-    mix_muted: bool,
+    /// Why the host's mix is silent, if it is.
+    mix_silence: Option<MixSilence>,
+    /// Listen to while the input kind is playback, apart from the choice for
+    /// live input.
+    playback_source: MonitorSource,
     level: level::AutoLevel,
     /// Whether the host draws figures for testing, and whether it has any.
     debug_available: bool,
@@ -497,7 +509,8 @@ impl<'a> BatApp<'a> {
             ]);
             field!((*this).mix_available).write(false);
             field!((*this).feed).write(Feed::Inputs);
-            field!((*this).mix_muted).write(false);
+            field!((*this).mix_silence).write(None);
+            field!((*this).playback_source).write(MonitorSource::Both);
             field!((*this).level).write(level::AutoLevel::new(sample_rate));
             field!((*this).debug_available).write(false);
             field!((*this).debug_info).write(false);
@@ -565,11 +578,15 @@ impl<'a> BatApp<'a> {
     }
 
     pub fn set_source(&mut self, source: MonitorSource) {
-        self.source = source;
+        if self.input_kind == InputKind::Playback {
+            self.playback_source = source;
+        } else {
+            self.source = source;
+        }
     }
 
     pub fn source(&self) -> MonitorSource {
-        self.source
+        if self.input_kind == InputKind::Playback { self.playback_source } else { self.source }
     }
 
     pub fn screen(&self) -> Screen {
@@ -602,9 +619,22 @@ impl<'a> BatApp<'a> {
             Setting::ListenTo => {
                 let (choices, n) = self.listen_choices();
                 if n > 1 {
-                    let choices = &choices[..n];
-                    let i = choices.iter().position(|&c| c == (self.feed(), self.source)).unwrap_or(0);
-                    (self.feed, self.source) = choices[step(i, n)];
+                    // With one input, every source means that input, whichever
+                    // is stored: the stored one comes back with a second input.
+                    let one_input = self.feed() == Feed::Inputs && self.inputs[1].is_none();
+                    let current = (self.feed(), if one_input { MonitorSource::First } else { self.source() });
+                    // A choice no longer offered counts as one past the end, so
+                    // minus gives the last choice and plus changes nothing.
+                    let i = choices[..n].iter().position(|&c| c == current).unwrap_or(n);
+                    let new = step(i, n);
+                    if new != i && (i < n || steps < 0) {
+                        let (feed, source) = choices[new];
+                        if self.input_kind == InputKind::Playback {
+                            self.playback_source = source;
+                        } else {
+                            (self.feed, self.source) = (feed, source);
+                        }
+                    }
                 }
             }
             // Turning the wheel up switches on, down switches off.
@@ -713,14 +743,13 @@ impl<'a> BatApp<'a> {
         if self.mix_available { self.feed } else { Feed::Inputs }
     }
 
-    /// The host's mix is silent until the recorder leaves stop: a notice covers
-    /// the waterfall.
-    pub fn set_mix_muted(&mut self, muted: bool) {
-        self.mix_muted = muted;
+    /// The host's mix is silent: a notice covers the waterfall.
+    pub fn set_mix_silence(&mut self, silence: Option<MixSilence>) {
+        self.mix_silence = silence;
     }
 
-    pub fn mix_muted(&self) -> bool {
-        self.mix_muted
+    pub fn mix_silence(&self) -> Option<MixSilence> {
+        self.mix_silence
     }
 
     /// The level automatic headphone level aims for, in the units of
@@ -953,9 +982,10 @@ impl<'a> BatApp<'a> {
         self.meters[0].update(peak(first), chunk_s);
         self.meters[1].update(peak(second), chunk_s);
 
+        let source = self.source();
         let mono = &mut self.mono[..len];
         for ((m, &a), &b) in mono.iter_mut().zip(first).zip(second) {
-            *m = match self.source {
+            *m = match source {
                 MonitorSource::First => a,
                 MonitorSource::Second => b,
                 MonitorSource::Both => 0.5 * (a + b),
@@ -1108,7 +1138,13 @@ impl<'a> BatApp<'a> {
     /// control on the settings screen.
     pub fn is_tappable(&self, x: i32, y: i32) -> bool {
         if self.screen == Screen::Settings {
-            return layout::settings_hit(x, y, Setting::STEPPED, Setting::ALL.len()).is_some();
+            return match layout::settings_hit(x, y, Setting::STEPPED, Setting::ALL.len()) {
+                Some(layout::SettingsHit::Switch(i)) => Setting::ALL[i] != Setting::DebugInfo || self.debug_available,
+                Some(layout::SettingsHit::Minus(i) | layout::SettingsHit::Plus(i)) => {
+                    Setting::ALL[i] != Setting::ListenTo || self.listen_has_choices()
+                }
+                hit => hit.is_some(),
+            };
         }
         layout::MENU.contains(embedded_graphics::prelude::Point::new(x, y))
             || layout::mode_button_at(x, y, self.modes).is_some()

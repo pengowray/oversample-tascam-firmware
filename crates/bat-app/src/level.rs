@@ -7,10 +7,11 @@ use libm::expf;
 /// loud between them, and -24 dB is enough for the loudest input.
 const MAX_GAIN: f32 = 15.85;
 const MIN_GAIN: f32 = 0.063;
-/// How long the level of a call counts. Bats call several times a second, so
-/// this holds the gain steady between the calls of a pass.
+/// Time constant of the level of a call fading. Bats call several times a
+/// second, so this keeps the gain steady between the calls of a pass; after a
+/// sound stops the gain rises about 6 dB per second.
 const HOLD_S: f32 = 1.5;
-/// How fast the gain falls for a louder sound, and rises afterwards.
+/// Time constants of the gain falling for a louder sound and rising after one.
 const FALL_S: f32 = 0.001;
 const RISE_S: f32 = 0.5;
 
@@ -53,6 +54,11 @@ impl AutoLevel {
 
     pub(crate) fn set_target(&mut self, target: f32) {
         self.target = target;
+    }
+
+    #[cfg(test)]
+    pub(crate) fn gain(&self) -> f32 {
+        self.gain
     }
 
     pub(crate) fn apply(&mut self, out: &mut [f32]) {

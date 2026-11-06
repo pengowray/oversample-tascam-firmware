@@ -16,11 +16,11 @@
 //! `PLAYBACK=1` shows the screen as BAT PLAYBACK shows it on the X8.
 //! `INPUTS=5,6` or `INPUTS=5` names the inputs for the meters and settings;
 //! `INPUTS=none` shows the notice for no input.
-//! `MIX=1` offers the host's mix in Listen to and chooses it; `MIX=muted` also
-//! shows its notice. `DEBUG=1` offers the debug switch and draws the X8 patch's
+//! `MIX=1` offers the host's mix in Listen to and chooses it; `MIX=recpause` or
+//! `MIX=page` also shows a notice that it is silent. `DEBUG=1` offers the debug switch and draws the X8 patch's
 //! longest debug lines over the last-call panel, to check that they fit.
 
-use bat_app::{BatApp, Buffers, CallKind, Feed, HEIGHT, InputKind, InputName, Mode, Recorder, Rgb565Buffer, WIDTH};
+use bat_app::{BatApp, Buffers, CallKind, Feed, HEIGHT, InputKind, InputName, MixSilence, Mode, Recorder, Rgb565Buffer, WIDTH};
 use embedded_graphics::prelude::*;
 use embedded_graphics::primitives::Rectangle;
 use u8g2_fonts::types::{FontColor, VerticalPosition};
@@ -95,7 +95,11 @@ fn main() {
     if let Ok(mix) = std::env::var("MIX") {
         app.set_mix_available(true);
         app.set_feed(Feed::Mix);
-        app.set_mix_muted(mix == "muted");
+        app.set_mix_silence(match mix.as_str() {
+            "recpause" => Some(MixSilence::RecPause),
+            "page" => Some(MixSilence::PageOpen),
+            _ => None,
+        });
     }
     let debug = std::env::var("DEBUG").is_ok();
     app.set_debug_available(debug);

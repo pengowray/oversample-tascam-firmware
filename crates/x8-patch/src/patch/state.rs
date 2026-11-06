@@ -60,6 +60,8 @@ pub(super) static DRAW_BLOCKS: AtomicU32 = AtomicU32::new(0);
 pub(super) static DSP_PERMILLE: AtomicU32 = AtomicU32::new(0);
 pub(super) static DRAW_PERMILLE: AtomicU32 = AtomicU32::new(0);
 pub(super) static LOAD_SECOND: AtomicU32 = AtomicU32::new(0);
+/// When the window of the latest published CPU share began, in blocks.
+pub(super) static LOAD_WINDOW_START: AtomicU32 = AtomicU32::new(0);
 
 // Shared with the audio interrupt.
 pub(super) static BAT_ACTIVE: AtomicBool = AtomicBool::new(false);
@@ -75,8 +77,8 @@ pub(super) static BACKLOG_DROPPED: AtomicU32 = AtomicU32::new(0); // DSP task
 /// Peak magnitude of each of the 12 words of an input frame since the last
 /// redraw: the interrupt raises them, the drawing context reads and clears.
 pub(super) static WORD_PEAKS: [AtomicU32; 12] = [const { AtomicU32::new(0) }; 12];
-/// The same for the left channel of the stock output, unscaled, in BAT
-/// PLAYBACK.
+/// The same for the stock output, unscaled, whichever side is louder, when the
+/// app hears MANUAL's mix or a file playing.
 pub(super) static SOURCE_PEAK: AtomicU32 = AtomicU32::new(0);
 /// The words of an input frame the interrupt passes to the app, first | second
 /// << 8, or `NO_INPUT_WORDS` to pass silence. Inputs 3 and 4 until

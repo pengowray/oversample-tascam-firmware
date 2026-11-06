@@ -178,7 +178,8 @@ unsafe extern "C" fn audio_hook(a: usize, b: usize, c: usize, d: usize) -> usize
                     [0, 0]
                 };
                 if from_output {
-                    SOURCE_PEAK.store(SOURCE_PEAK.load(Relaxed).max(pair[0].unsigned_abs()), Relaxed);
+                    let peak = pair[0].unsigned_abs().max(pair[1].unsigned_abs());
+                    SOURCE_PEAK.store(SOURCE_PEAK.load(Relaxed).max(peak), Relaxed);
                 }
                 ptr::write_volatile(ring.add((write.wrapping_add(k as u32) % spare::IN_FRAMES) as usize), pair);
             }

@@ -605,8 +605,8 @@ single-cycle memories, with no cache to miss.
   patch stores it after its header and copies it into ITCM on the first
   opening, before anything calls it. The linker adds 21 long-branch veneers
   between SDRAM and ITCM. A checksum of the ITCM code is checked once a
-  second; if anything has changed it, the DSP task stops and the strip says
-  "ITCM CHANGED".
+  second; if anything has changed it, the DSP task stops and the screen freezes
+  with no message.
 - **Hot state in DTCM.** `bat-app` now takes its large buffers (waterfall,
   snapshot history, snapshot: 136 KB, in SDRAM) from the caller, so the app's
   own state (43 KB), the input ring (64 KB) and the DSP task's stack (32 KB)
@@ -816,7 +816,7 @@ debug line? Is the stutter during a take better?
 
 ## Step 13 test file: MANUAL's mix, debug figures on a switch, auto level, bat glyph (built 2026-11-06, not yet installed)
 
-`work/patch13/#PortaX8_0231.203` (B231, SHA-256 `a66bdc5d…0a3637b9`). Includes steps 11
+`work/patch13/#PortaX8_0231.203` (B231, SHA-256 `6c253918…d9fb75a8`). Includes steps 11
 and 12.
 
 - **Listen to** now chooses between MANUAL's mix and the raw inputs: MANUAL's
@@ -826,16 +826,30 @@ and 12.
   does. The meters say L and R for the mix. The raw inputs are read before the
   mixer, so faders do nothing to them. Which is better, and whether ultrasound
   survives the mix path, is what this build is for.
-- **Formats.** Both reach the app as a 32-bit integer and then a 32-bit float. A
-  raw input is the high gain path's word, and clips at that path's full scale.
-  The mix comes from the merged 32-bit float tracks (which can exceed 1.0, as the
-  recorded files do) through the faders and pans, and is then clamped to full
-  scale before the output, so at a fader of 0 dB it clips at about the same
-  level; pulling a fader down gains headroom in the mix, and the merge means it
-  does not distort before that point.
-- **REC PAUSE.** With REC PAUSE on (settings+0x194 is 0) and the recorder stopped,
-  the firmware mutes every track in the mix, so a notice covers the waterfall
-  until REC is pressed. Whether the raw inputs are also off then is not known.
+- **Formats.** Both reach the app as a 32-bit integer and then a 32-bit float.
+  A raw input is the word of the path that follows the input gain, and clips at
+  its full scale. The mix comes from the merged 32-bit float tracks, which can go
+  above 1.0 as the recorded files do, through the faders and pans, and is then
+  clamped to full scale before the output. For inputs 3 to 6 the merged value is
+  on the raw word's scale and peaks D dB above it, D being the gain set (at most
+  35 dB). So at a fader of 0 dB the mix clips at the same level as the raw word,
+  and pulling a fader down gains headroom only up to D dB, so none at a gain of 0.
+  For inputs 1 and 2 the mix is (gain - 20) dB relative to the raw word, gain being
+  the value set, 0 to 36 dB. Tracks on one side add up, so several together clip
+  sooner. By default tracks 1, 3 and 5 are hard left and 2, 4 and 6 hard right at 0
+  dB, so a single mic on input 3 is at the raw word's level on the left and silent
+  on the right. The default Listen to averages the two sides, -6 dB, which is the
+  same as both raw inputs with one active.
+- **Silent mix.** When the firmware has the input of every track that is on muted,
+  a notice covers the waterfall. With REC PAUSE on (settings+0x194 is 0) and the
+  recorder stopped, the fix is REC. Otherwise it is usually one of MANUAL's settings
+  pages left open under the bat screen: the firmware mutes the inputs on most of
+  them (ITCM 0x161ec, screen byte 0x2a2d1). The patch reads the mute words at
+  0x29e5c + 0x14 per channel. Whether the raw inputs carry sound with REC PAUSE on
+  is not known; no reader of settings+0x194 that the review checked turns input power
+  off directly, but the return to the app screen skips `FUN_80da5e94` in that state.
+  In MANUAL's default, REC from stop enters the recording guide (transport 9, or
+  standby without the guide); the status bar shows it as standby.
 - **Debug figures** are off by default, with a switch on the settings screen, and
   replace the last-call panel, so the menu button stays visible. The strip on
   MANUAL's and the LAUNCHER's screens follows the same switch. While they are off
@@ -849,11 +863,17 @@ and 12.
   changing one restarts the counts.
 - **Auto volume** (off by default, settings screen) changes the headphones only: a
   gain at the end of the app's processing, +24 to -24 dB, aiming for -12 dBFS. The
-  level of a call holds for 1.5 s; the gain falls in 1 ms and rises in 0.5 s.
+  level of a call fades with a 1.5 s time constant, so calls in a pass keep the gain
+  steady and it rises about 6 dB per second after a sound stops. The gain falls with
+  a 1 ms time constant, so the first call after a quiet spell can reach the output
+  ceiling for a few ms.
 - **Tile icon.** Both bat tiles show a bat from the Oversample logo. The launcher's
   icons are alpha masks drawn in white, so it is one colour, 38 x 34 px
   (`tools/make_glyph.py` writes `bat_glyph.rs`). The patch replaces the two tiles'
-  image, height and width bindings.
+  image, height and width bindings. **This is the riskiest part of the build.** If
+  the launcher hangs when a bat tile comes into view, recover as in "If it goes
+  wrong" in step 3: remove the batteries and USB power, then start update mode.
+  B229 has no glyph.
 - **Settings screen.** The two stepped panels are 10 px shorter to fit the row of
   two switches.
 
@@ -862,7 +882,8 @@ inputs 3 and 4 and MIC off: step Listen to through the mix and the inputs and
 compare the waterfall above 20 kHz, the noise and the sound. Does ultrasound
 survive the mix? Pull a fader down and pan a track: does the mix follow? With REC
 PAUSE on and stopped: does the notice show, and is there level on the raw inputs?
-Turn on Debug info: do the lines update and fit? Record in each mode and note CPU,
+Leave a settings page open and press PLAY: does the page notice show? Turn on Debug
+info: do the lines update and fit? Record in each mode and note CPU,
 dry and lost. Turn on Auto volume: are quiet calls lifted without too much hiss
 between them?
 
@@ -1078,11 +1099,16 @@ IN, 5 probably USB. Tracks 1, 3 and 5 hear the left input of the pair, and track
 
 **Launcher icons.** A tile's image binding writes a plain image pointer to its
 result; pointers with flag bits clear are not reference counted. The descriptors
-are in the SDRAM data (lc_manual.png at 0x819a188c: unused word, width, height,
-tile count, tile pointer; its tile: pixels, 3 words of offsets, height << 16 |
-width, stride, 3 unused words). The pixels are 8-bit alpha. Height and width are
-separate bindings, and x and y centre the item from them: (parent + 1) / 2 -
-size / 2 (`FUN_813e0120`).
+are in the SDRAM data (lc_manual.png at 0x819a188c). Image: +0 colour (0xAARRGGBB),
++4 width, +8 height, +0xc tile count, +0x10 tile pointer. Tile: +0 pixels, +4 layout
+(0x1e498 for 8-bit alpha, format 5), +8 flags, +0xc x and y offset, +0x10 width and
+height (16 bits each), +0x14 stride, +0x18 trim bytes, +0x1c cache size, +0x20 cache
+entry. **Static constructors write the colour and layout at start-up (the table at
+0x81382be4), so `work/ram/sdram-81900000.bin` shows both as 0; a hand-made descriptor
+must set them, or the draw path's "textureLayout" assert hangs the unit.** The pixels
+are drawn by the CPU blender (`FUN_0001ca54`), with no stride alignment. Height and
+width are separate bindings, and x and y centre the item from them: (parent + 1) / 2
+- size / 2 (`FUN_813e0120`). The parent is 50 x 50.
 
 **USER SETTINGS tiles** (cursor 11 to 13). Each is shown only while its slot
 holds a preset. The slots are three words at 0x81e9da60, each the Qt number of

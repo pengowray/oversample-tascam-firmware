@@ -43,6 +43,29 @@ fn track_input(track: usize) -> Option<Input> {
     Some(Input { word: stock::INPUT_WORDS[if swapped { 1 - input } else { input }], name })
 }
 
+/// Whether the firmware has muted the input of every track turned on, so
+/// MANUAL's mix is silent. False with none on, which has its own notice.
+pub(super) fn on_tracks_muted() -> bool {
+    let on = tracks_on();
+    let mut any = false;
+    for track in (0..stock::TRACKS).filter(|track| on >> track & 1 != 0) {
+        // SAFETY: a byte in the settings record, inside the track's record.
+        let source = read_byte(unsafe { stock::TRACK_SOURCES.add(track * stock::TRACK_SOURCE_STEP) });
+        let channel = match source {
+            1 | 2 | 3 => (source as usize - 1) * 2 + track % 2,
+            4 => 4 + track % 2,
+            _ => continue,
+        };
+        // SAFETY: the word of one of six channels, in the stock DSP state.
+        let muted = unsafe { ptr::read_volatile(stock::CHANNEL_MUTED.byte_add(channel * stock::CHANNEL_MUTED_STEP)) };
+        if muted != 1 {
+            return false;
+        }
+        any = true;
+    }
+    any
+}
+
 /// Tracks turned on in the app, as a bit for each of tracks 1 to 6.
 pub(super) fn tracks_on() -> u32 {
     // SAFETY: words in the settings record.

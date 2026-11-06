@@ -110,12 +110,12 @@ pub fn setting_row(i: usize) -> Rectangle {
 
 pub fn setting_minus(i: usize) -> Rectangle {
     let r = setting_row(i);
-    Rectangle::new(Point::new(204, r.top_left.y + 13), Size::new(STEP_W, STEP_H))
+    Rectangle::new(Point::new(204, r.top_left.y + 7), Size::new(STEP_W, STEP_H))
 }
 
 pub fn setting_plus(i: usize) -> Rectangle {
     let r = setting_row(i);
-    Rectangle::new(Point::new(258, r.top_left.y + 13), Size::new(STEP_W, STEP_H))
+    Rectangle::new(Point::new(258, r.top_left.y + 7), Size::new(STEP_W, STEP_H))
 }
 
 /// Row of the `j`th switch (counting from 0 after the stepped settings).

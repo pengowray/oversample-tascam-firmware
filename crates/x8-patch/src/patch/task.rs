@@ -9,7 +9,7 @@ use super::screen::{hide_for_popup, render};
 use super::state::{
     ACTIONS_READ, ACTIONS_WRITE, APP, BACKLOG_DROPPED, BAT_ACTIVE, BLOCKS, DRAW_BLOCKS,
     DRAW_PERMILLE, DSP_BLOCKS, DSP_PERMILLE, DSP_STACK, DSP_STACK_BYTES, IN_READ, IN_WRITE,
-    LAST_RENDER, LOAD_SECOND, OUT_READ, OUT_WRITE, SESSION, SESSION_SEEN, STACK, Stack, TASK,
+    LAST_RENDER, LOAD_SECOND, LOAD_WINDOW_START, OUT_READ, OUT_WRITE, SESSION, SESSION_SEEN, STACK, Stack, TASK,
     TOUCH_DOWN, TOUCH_READ, TOUCH_WRITE,
 };
 use super::{blocks_per_second, stock, system_state};
@@ -176,6 +176,7 @@ extern "C" fn dsp_task(_: isize) {
         if second >= blocks_per_second() {
             DSP_PERMILLE.store(DSP_BLOCKS.swap(0, Relaxed) * 1000 / second, Relaxed);
             DRAW_PERMILLE.store(DRAW_BLOCKS.swap(0, Relaxed) * 1000 / second, Relaxed);
+            LOAD_WINDOW_START.store(LOAD_SECOND.load(Relaxed), Relaxed);
             LOAD_SECOND.store(now, Relaxed);
         }
         // Sleep after every pass, even with input waiting: the audio interrupt

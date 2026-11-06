@@ -123,6 +123,16 @@ pub const ICON_WIDTHS: [usize; 2] = [0x80f2_a9d5, 0x80f2_b4a5];
 /// Settings + 0x194: 0 when REC PAUSE is on, so the firmware mutes every
 /// input in the mix while the recorder is stopped (ITCM 0x161d8).
 pub const MONITOR_WHEN_STOPPED: *const u8 = 0x81e8_ca10 as *const u8;
+/// DSP state + 0x1b0, one word every 0x14 bytes for channels 0 to 5: 1 while
+/// the firmware has that input muted in the mix, for REC PAUSE or an open
+/// settings page among other reasons.
+pub const CHANNEL_MUTED: *const u32 = 0x0002_9e5c as *const u32;
+pub const CHANNEL_MUTED_STEP: usize = 0x14;
+/// The layout word for an 8-bit alpha image: what `FUN_80e06310` returns and
+/// the launcher icons' static constructors store in each tile (ITCM).
+pub const ALPHA8_LAYOUT: *const u8 = 0x0001_e498 as *const u8;
+/// The colour that those constructors store in each launcher icon: opaque white.
+pub const ICON_COLOUR: u32 = 0xffff_ffff;
 /// `FUN_80e05870(property, &value)`: sets a Qt property (Thumb address).
 pub const SET_PROPERTY: usize = 0x80e0_5871;
 /// The audio engine: 1 playing, 2 recording, 0 idle or paused.

@@ -40,6 +40,7 @@ def flash(address):
 # words: a word holding a stock function pointer, replaced by a header field.
 # branches: a `b.w` tail call, retargeted to a header field's function.
 # calls: a `bl` call, retargeted the same way.
+# facts: a stock word the patch's constants depend on, checked and left alone.
 # entries: the first 4 bytes of a stock function (whole instructions, given as
 #   two halfwords), replaced by a `b.w` to a header field's function, which
 #   does the stock function's whole job.
@@ -99,6 +100,11 @@ BUILDS = {
             ("USER SETTINGS 2 tap, delete mode", 0x8161DA06, 0x80E02A34, "delete_mode_hook"),
             ("USER SETTINGS 3 tap, delete mode", 0x8161D8AA, 0x80E02A34, "delete_mode_hook"),
         ],
+        "facts": [
+            # The veneer FUN_80e06310 goes to ITCM 0x1e484, which returns 0x1e498,
+            # the alpha mask layout the patch's launcher glyph uses.
+            ("alpha mask layout veneer", 0x80E06314, 0x0001E485),
+        ],
         "entries": [
             # The bridge's USER SETTINGS slot getter (bridge, slot):
             # `cmp r1,#3; ldr r3,[pc,#0x2fc]`. Its only callers are the
@@ -154,6 +160,10 @@ def apply(image, patch, fields, build):
     put_word = lambda address, value: struct.pack_into("<I", image, flash(address), value)
     put_half = lambda address, value: struct.pack_into("<H", image, flash(address), value)
     in_patch = lambda target: PATCH_BASE <= target < PATCH_BASE + len(patch)
+
+    for name, address, stock in build["facts"]:
+        if word(address) != stock:
+            return f"{name} at 0x{address:08x} holds 0x{word(address):08x}, expected 0x{stock:08x}"
 
     for name, address, stock, field in build["words"]:
         target = fields[field]

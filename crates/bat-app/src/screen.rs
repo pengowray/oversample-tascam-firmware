@@ -13,7 +13,7 @@ use crate::fb::Rgb565Buffer;
 use crate::layout::*;
 use crate::palette::*;
 use crate::{
-    BatApp, CallKind, DEFAULT_CUTOFF_HZ, Feed, InputKind, Meter, Mode, MonitorSource, Recorder, Screen, Setting, TeStatus,
+    BatApp, CallKind, DEFAULT_CUTOFF_HZ, Feed, InputKind, Meter, MixSilence, Mode, MonitorSource, Recorder, Screen, Setting, TeStatus,
     VIEW_HI_HZ, VIEW_LO_HZ, WF_COLUMN_MS,
 };
 use bat_dsp::heterodyne::DEFAULT_COMB_SPACING_HZ;
@@ -85,8 +85,8 @@ pub fn draw(app: &BatApp, fb: Fb) {
         rate_warning(fb, rate, app.input_kind());
     } else if app.inputs()[0].is_none() {
         no_input_notice(fb);
-    } else if app.mix_muted() {
-        mix_muted_notice(fb);
+    } else if let Some(silence) = app.mix_silence() {
+        mix_silence_notice(fb, silence);
     }
     snapshot(app, fb);
     value_line(app, fb);
@@ -197,19 +197,29 @@ fn notice_lines(fb: Fb, x: i32, heading_y: i32, lines: &[&str]) {
     }
 }
 
-/// Over the waterfall while the mix is silent until REC is pressed.
-fn mix_muted_notice(fb: Fb) {
+/// Over the waterfall while the mix is silent.
+fn mix_silence_notice(fb: Fb, silence: MixSilence) {
     let (x, y) = notice_panel(fb);
-    text(fb, &BODY_BOLD, MIX_MUTED_HEADING, x, y, LEFT, TEXT);
-    notice_lines(fb, x, y, &MIX_MUTED_FIX);
+    text(fb, &BODY_BOLD, MIX_SILENT_HEADING, x, y, LEFT, TEXT);
+    let lines: &[&str] = match silence {
+        MixSilence::RecPause => &REC_PAUSE_FIX,
+        MixSilence::PageOpen => &PAGE_OPEN_FIX,
+    };
+    notice_lines(fb, x, y, lines);
 }
 
-const MIX_MUTED_HEADING: &str = "MANUAL's mix is silent";
-const MIX_MUTED_FIX: [&str; 4] = [
+const MIX_SILENT_HEADING: &str = "MANUAL's mix is silent";
+const REC_PAUSE_FIX: [&str; 4] = [
     "REC PAUSE is on. To hear the mix:",
-    "Press REC once for recording standby.",
+    "Press REC once. This does not record.",
     "Or turn off REC PAUSE:",
     "GENERAL SETTINGS, REC SETTINGS page.",
+];
+const PAGE_OPEN_FIX: [&str; 4] = [
+    "A MANUAL settings page is still open.",
+    "1. Press PLAY to see MANUAL's screen.",
+    "2. Close the page with the BACK icon.",
+    "3. Press PLAY to return to BAT DETECTOR.",
 ];
 
 const NO_INPUT_HEADING: &str = "No inputs turned on in MANUAL";
@@ -618,7 +628,7 @@ fn settings(app: &BatApp, fb: Fb) {
         if *setting == Setting::LowestBatCall {
             text(fb, &VALUE, format_args!("{:.0} kHz", app.lowest_bat_call_hz() / 1000.0), x, y + 38, LEFT, TEXT);
         } else {
-            let value = match (app.feed(), app.inputs(), app.source) {
+            let value = match (app.feed(), app.inputs(), app.source()) {
                 (Feed::Mix, _, MonitorSource::Both) => "MANUAL's mix",
                 (Feed::Mix, _, MonitorSource::First) => "Mix, left side",
                 (Feed::Mix, _, MonitorSource::Second) => "Mix, right side",

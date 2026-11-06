@@ -222,38 +222,125 @@ fn listen_to_steps_through_the_mix_and_then_the_inputs() {
 }
 
 #[test]
-fn auto_level_changes_the_output_only_when_on_and_within_limits() {
+fn listen_to_in_playback_leaves_the_live_choice_alone() {
     let mut storage = vec![0.0f32; 1024];
     let mut app = BatApp::new(FS, &mut storage, buffers());
-    app.set_mode(Mode::Thru);
-    let tone = |amplitude: f32, n: usize| -> Vec<f32> {
+    let name = |short, long| Some(InputName { short, long });
+    app.set_mix_available(true);
+    app.set_feed(Feed::Mix);
+    app.set_input_kind(InputKind::Playback);
+    app.set_mix_available(false);
+    app.set_inputs([name("L", "Left"), name("R", "Right")]);
+    app.change_setting(Setting::ListenTo, 1);
+    assert_eq!((app.feed(), app.source()), (Feed::Inputs, MonitorSource::First));
+    app.set_input_kind(InputKind::Live);
+    app.set_mix_available(true);
+    app.set_inputs([name("3", "Input 3"), name("4", "Input 4")]);
+    assert_eq!((app.feed(), app.source()), (Feed::Mix, MonitorSource::Both));
+    // The playback choice is still there on the way back.
+    app.set_input_kind(InputKind::Playback);
+    assert_eq!(app.source(), MonitorSource::First);
+}
+
+#[test]
+fn listen_to_steps_from_what_is_shown_when_inputs_change() {
+    let mut storage = vec![0.0f32; 1024];
+    let mut app = BatApp::new(FS, &mut storage, buffers());
+    let input3 = Some(InputName { short: "3", long: "Input 3" });
+    let input4 = Some(InputName { short: "4", long: "Input 4" });
+    app.set_mix_available(true);
+    app.set_feed(Feed::Inputs);
+    app.set_source(MonitorSource::Both);
+    // Input 4 turned off: the screen shows Input 3, the last choice.
+    app.set_inputs([input3, None]);
+    app.change_setting(Setting::ListenTo, 1);
+    assert_eq!((app.feed(), app.source()), (Feed::Inputs, MonitorSource::Both));
+    app.set_inputs([input3, input4]);
+    assert_eq!((app.feed(), app.source()), (Feed::Inputs, MonitorSource::Both));
+    app.set_inputs([input3, None]);
+    app.change_setting(Setting::ListenTo, -1);
+    assert_eq!((app.feed(), app.source()), (Feed::Mix, MonitorSource::Second));
+    // No input on, with the inputs still chosen: plus stays, minus reaches the mix.
+    app.set_feed(Feed::Inputs);
+    app.set_source(MonitorSource::Both);
+    app.set_inputs([None, None]);
+    app.change_setting(Setting::ListenTo, 1);
+    assert_eq!(app.feed(), Feed::Inputs);
+    app.change_setting(Setting::ListenTo, -1);
+    assert_eq!((app.feed(), app.source()), (Feed::Mix, MonitorSource::Second));
+}
+
+#[test]
+fn hidden_controls_are_not_tappable() {
+    let mut storage = vec![0.0f32; 1024];
+    let mut app = BatApp::new(FS, &mut storage, buffers());
+    app.open_settings();
+    let index = Setting::ALL.iter().position(|&s| s == Setting::DebugInfo).unwrap();
+    let debug = layout::switch_row(index - Setting::STEPPED).center();
+    assert!(!app.is_tappable(debug.x, debug.y));
+    app.set_debug_available(true);
+    assert!(app.is_tappable(debug.x, debug.y));
+    let minus = layout::setting_minus(1).center();
+    assert!(app.is_tappable(minus.x, minus.y));
+    app.set_inputs([Some(InputName { short: "5", long: "Input 5" }), None]);
+    assert!(!app.is_tappable(minus.x, minus.y));
+}
+
+#[test]
+fn auto_level_holds_its_limits_and_timing() {
+    let tone = |n: usize, amplitude: f32| -> Vec<f32> {
         (0..n).map(|i| amplitude * (i as f32 * 2.0 * core::f32::consts::PI * 1000.0 / FS).sin()).collect()
     };
-    let peak_after = |app: &mut BatApp, input: &[f32]| {
-        let (mut l, mut r) = (vec![0.0; input.len()], vec![0.0; input.len()]);
-        app.process(input, input, &mut l, &mut r);
-        l[l.len() / 2..].iter().fold(0.0f32, |m, v| m.max(v.abs()))
+    let mut auto = level::AutoLevel::new(FS);
+    let peak_after = |auto: &mut level::AutoLevel, seconds: f32, amplitude: f32| {
+        let mut out = tone((seconds * FS) as usize, amplitude);
+        auto.apply(&mut out);
+        out[out.len() / 2..].iter().fold(0.0f32, |m, v| m.max(v.abs()))
     };
-    let second = FS as usize;
-    // Off: the output is the input.
-    assert!((peak_after(&mut app, &tone(0.1, second)) - 0.1).abs() < 0.001);
-    app.change_setting(Setting::AutoLevel, 1);
-    assert!(app.auto_level());
-    // A moderate level settles on the target; the limits hold very quiet and
-    // very loud sounds.
-    for _ in 0..3 {
-        peak_after(&mut app, &tone(0.05, second));
+    // Off, it changes nothing.
+    assert!((peak_after(&mut auto, 0.1, 0.1) - 0.1).abs() < 0.001);
+    auto.set_on(true);
+    assert!(auto.is_on());
+    // A moderate level settles on the target.
+    assert!((peak_after(&mut auto, 3.0, 0.05) - 0.25).abs() < 0.01);
+    // After the sound stops, the gain rises about 6 dB per second.
+    let before = auto.gain();
+    let mut silence = vec![0.0f32; (2.0 * FS) as usize];
+    auto.apply(&mut silence);
+    let rise_db = 20.0 * (auto.gain() / before).log10();
+    assert!(rise_db > 8.0 && rise_db < 14.0, "{rise_db}");
+    // The upper limit is +24 dB.
+    let quiet = peak_after(&mut auto, 12.0, 0.001);
+    assert!((quiet - 0.001 * 15.85).abs() < 0.0005, "{quiet}");
+    // The lower limit is -24 dB, reached with the X8's target.
+    auto.set_target(0.25 / 8.0);
+    let loud = peak_after(&mut auto, 1.0, 1.0);
+    assert!((loud - 0.063).abs() < 0.002, "{loud}");
+}
+
+#[test]
+fn auto_level_applies_in_each_mode_and_only_to_the_output() {
+    let mut storage = vec![0.0f32; FS as usize];
+    let mut app = BatApp::new(FS, &mut storage, buffers());
+    let input: Vec<f32> = (0..FS as usize / 2).map(|i| 0.05 * (i as f32 * 2.0 * core::f32::consts::PI * 45_000.0 / FS).sin()).collect();
+    for mode in [Mode::Thru, Mode::Het] {
+        app.set_mode(mode);
+        let peak = |app: &mut BatApp| {
+            let (mut l, mut r) = (vec![0.0; input.len()], vec![0.0; input.len()]);
+            app.process(&input, &input, &mut l, &mut r);
+            l[l.len() / 2..].iter().fold(0.0f32, |m, v| m.max(v.abs()))
+        };
+        let fixed = peak(&mut app);
+        let meter_before = app.meters[0].level_db;
+        app.change_setting(Setting::AutoLevel, 1);
+        peak(&mut app);
+        let automatic = peak(&mut app);
+        assert!(app.auto_level());
+        assert!(automatic > fixed * 1.5, "{mode:?} {fixed} {automatic}");
+        assert!((app.meters[0].level_db - meter_before).abs() < 1.0);
+        app.change_setting(Setting::AutoLevel, -1);
+        assert!(!app.auto_level());
     }
-    assert!((peak_after(&mut app, &tone(0.05, second)) - 0.25).abs() < 0.03);
-    for _ in 0..4 {
-        peak_after(&mut app, &tone(0.001, second));
-    }
-    let quiet = peak_after(&mut app, &tone(0.001, second));
-    assert!(quiet > 0.012 && quiet < 0.018, "{quiet}");
-    let loud = peak_after(&mut app, &tone(1.0, second));
-    assert!(loud < 0.3, "{loud}");
-    app.change_setting(Setting::AutoLevel, -1);
-    assert!((peak_after(&mut app, &tone(0.1, second)) - 0.1).abs() < 0.001);
 }
 
 #[test]

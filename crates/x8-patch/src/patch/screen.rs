@@ -3,21 +3,21 @@ use core::ptr;
 use core::sync::atomic::{Ordering::Acquire, Ordering::Relaxed, Ordering::Release};
 
 use bat_app::fb::Rgb565Buffer;
-use bat_app::{BatApp, Feed, InputKind, Mode, MonitorSource, Recorder, Screen};
+use bat_app::{BatApp, Feed, InputKind, MixSilence, Mode, MonitorSource, Recorder, Screen};
 use embedded_graphics::pixelcolor::Rgb565;
 use embedded_graphics::prelude::*;
 use embedded_graphics::primitives::Rectangle;
 use u8g2_fonts::types::{FontColor, VerticalPosition};
 use u8g2_fonts::{FontRenderer, fonts};
 
-use super::inputs::{PLAYBACK_LEFT, PLAYBACK_RIGHT, selected_inputs, tracks_on};
+use super::inputs::{PLAYBACK_LEFT, PLAYBACK_RIGHT, on_tracks_muted, selected_inputs, tracks_on};
 use super::audio::OUTPUT_GAIN;
 use super::itcm::load_itcm;
 use super::state::{
     APP, APP_READY, AUDIO_INSTALLED, AUDIO_SLOT_UNEXPECTED, AUDIO_STATE, BACKLOG_DROPPED,
     BAT_ACTIVE, BLOCKS, BUFFERS, CALLS_PER_S, CYCLES_PER_S, DEBUG_SHOWN, DRAW_PERMILLE, DSP_PERMILLE,
-    DUMMY_LCDIF, FRAME, HEAR_MIX, HEARD_WORDS, HOOK_CYCLES_PER_S, IN_DROPPED, IN_READ, IN_WRITE, ITCM_OK,
-    LAST_EVENT, LAUNCH_AT, LAUNCH_FROM, LAUNCHING, NO_APP, NO_INPUT_WORDS, OUT_READ,
+    DUMMY_LCDIF, FRAME, HEAR_MIX, HEARD_WORDS, HOOK_CYCLES_PER_S, IN_DROPPED, IN_READ, IN_WRITE,
+    LAST_EVENT, LAUNCH_AT, LOAD_WINDOW_START, LAUNCH_FROM, LAUNCHING, NO_APP, NO_INPUT_WORDS, OUT_READ,
     OUT_WRITE, PENDING, PLAYBACK, POPUP_HIDDEN, SAVED_BUFFER, SAVED_LITERAL, SCREEN_APP, SESSION,
     SOURCE_PEAK, STOCK_CYCLES_PER_S, TASK, TEST_DSP_MAX, TEST_SETTINGS, TEST_START_BLOCKS, TEST_START_DRY,
     TEST_START_LOST, UNDERRUNS, WORD_PEAKS, WORK_ENTER,
@@ -193,11 +193,16 @@ fn db_below_full_scale(peak: u32) -> u32 {
 /// figures can be read without another's in them.
 fn draw_debug(fb: &mut Rgb565Buffer<'_>, app: &BatApp<'static>) {
     let transport = read_byte(stock::TRANSPORT);
+    let words = HEARD_WORDS.load(Relaxed);
+    let inputs_heard = if app.feed() == Feed::Inputs { (words & 0xf | (words >> 8 & 0xf) << 4) << 24 } else { 0 };
     let settings = app.mode() as u32
         | (app.feed() as u32) << 8
         | (app.source() as u32) << 10
         | (app.auto_level() as u32) << 12
-        | (transport as u32) << 16;
+        | (PLAYBACK.load(Relaxed) as u32) << 13
+        | (SESSION.load(Relaxed) & 3) << 14
+        | (transport as u32) << 16
+        | inputs_heard;
     let now = BLOCKS.load(Relaxed);
     let dry = UNDERRUNS.load(Relaxed);
     let lost = IN_DROPPED.load(Relaxed).wrapping_add(BACKLOG_DROPPED.load(Relaxed));
@@ -208,7 +213,10 @@ fn draw_debug(fb: &mut Rgb565Buffer<'_>, app: &BatApp<'static>) {
         TEST_START_LOST.store(lost, Relaxed);
         TEST_DSP_MAX.store(0, Relaxed);
     }
-    let dsp_max = TEST_DSP_MAX.load(Relaxed).max(dsp);
+    // Only a window that began after the change counts towards the highest.
+    let window_is_current =
+        LOAD_WINDOW_START.load(Relaxed).wrapping_sub(TEST_START_BLOCKS.load(Relaxed)) as i32 >= 0;
+    let dsp_max = TEST_DSP_MAX.load(Relaxed).max(if window_is_current { dsp } else { 0 });
     TEST_DSP_MAX.store(dsp_max, Relaxed);
     let percent = |part: u32, all: u32| if all == 0 { 0 } else { (part as u64 * 100 / all as u64) as u32 };
     let all = CYCLES_PER_S.load(Relaxed);
@@ -237,6 +245,7 @@ fn draw_debug(fb: &mut Rgb565Buffer<'_>, app: &BatApp<'static>) {
         4 | 6 => "paused",
         5 => "closing file",
         7 => "leaving standby",
+        9..=11 => "guide",
         _ => "transport ?",
     };
     let _ = write!(line, " | {state} | {} kHz", rate / 1000);
@@ -267,10 +276,6 @@ fn draw_debug(fb: &mut Rgb565Buffer<'_>, app: &BatApp<'static>) {
         IN_WRITE.load(Relaxed).wrapping_sub(IN_READ.load(Relaxed)),
         OUT_WRITE.load(Relaxed).wrapping_sub(OUT_READ.load(Relaxed)),
     );
-    // Faults that would make these figures meaningless.
-    if !ITCM_OK.load(Relaxed) {
-        let _ = write!(line, " | ITCM CHANGED");
-    }
     let task = TASK.load(Relaxed) as i32;
     if task <= 0 {
         let _ = write!(line, " | no task {task}");
@@ -289,7 +294,6 @@ fn draw_debug(fb: &mut Rgb565Buffer<'_>, app: &BatApp<'static>) {
         if app.feed() == Feed::Mix {
             let _ = write!(line, "on {:02x} mix -{source} dB:", tracks_on());
         } else {
-            let words = HEARD_WORDS.load(Relaxed);
             let _ = write!(line, "on {:02x} w{},{} dB:", tracks_on(), words & 0xff, words >> 8 & 0xff);
         }
         for peak in &WORD_PEAKS {
@@ -307,7 +311,8 @@ fn update_status(app: &mut BatApp<'static>) {
     let state = match transport {
         3 => Recorder::Recording,
         4 | 6 => Recorder::Paused,
-        1 | 2 | 8 => Recorder::Standby,
+        // 9 to 11 are MANUAL's recording guide, with the REC LED blinking.
+        1 | 2 | 8..=11 => Recorder::Standby,
         _ => Recorder::Stopped,
     };
     // SAFETY: words in the stock recorder block (see `stock`).
@@ -352,7 +357,13 @@ fn update_status(app: &mut BatApp<'static>) {
     }
     let hear_mix = !PLAYBACK.load(Relaxed) && app.feed() == Feed::Mix;
     HEAR_MIX.store(hear_mix, Relaxed);
-    app.set_mix_muted(hear_mix && transport <= 1 && read_byte(stock::MONITOR_WHEN_STOPPED) == 0);
+    app.set_mix_silence((hear_mix && on_tracks_muted()).then(|| {
+        if transport <= 1 && read_byte(stock::MONITOR_WHEN_STOPPED) == 0 {
+            MixSilence::RecPause
+        } else {
+            MixSilence::PageOpen
+        }
+    }));
 }
 
 /// Text in a fixed buffer, for formatting without an allocator.
