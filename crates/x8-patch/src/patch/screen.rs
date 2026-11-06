@@ -1,0 +1,342 @@
+use core::fmt::Write as _;
+use core::ptr;
+use core::sync::atomic::{Ordering::Acquire, Ordering::Relaxed, Ordering::Release};
+
+use bat_app::fb::Rgb565Buffer;
+use bat_app::{BatApp, InputKind, Mode, Recorder};
+use embedded_graphics::pixelcolor::Rgb565;
+use embedded_graphics::prelude::*;
+use embedded_graphics::primitives::Rectangle;
+use u8g2_fonts::types::{FontColor, VerticalPosition};
+use u8g2_fonts::{FontRenderer, fonts};
+
+use super::inputs::{PLAYBACK_LEFT, PLAYBACK_RIGHT, selected_inputs, tracks_on};
+use super::itcm::load_itcm;
+use super::state::{
+    APP, APP_READY, AUDIO_INSTALLED, AUDIO_SLOT_UNEXPECTED, AUDIO_STATE, BACKLOG_DROPPED,
+    BAT_ACTIVE, BLOCKS, BUFFERS, CALLS_PER_S, CYCLES_PER_S, DRAW_PERMILLE, DSP_PERMILLE,
+    DUMMY_LCDIF, FRAME, HEARD_WORDS, HOOK_CYCLES_PER_S, IN_DROPPED, IN_READ, IN_WRITE, ITCM_OK,
+    LAST_EVENT, LAST_TOUCH, LAUNCH_AT, LAUNCH_FROM, LAUNCHING, NO_APP, NO_INPUT_WORDS, OUT_READ,
+    OUT_WRITE, PENDING, PLAYBACK, POPUP_HIDDEN, SAVED_BUFFER, SAVED_LITERAL, SCREEN_APP, SESSION,
+    SOURCE_PEAK, STOCK_CYCLES_PER_S, TASK, UNDERRUNS, WORD_PEAKS, WORK_ENTER,
+};
+use super::task::{app, start_task, task_running};
+use super::{app_byte, blocks_per_second, rate_class, read_byte, spare, stock, system_state};
+
+const SAMPLE_RATE: f32 = 192_000.0;
+
+/// Open the bat screen on task 1's next pass through `on_message`. The only
+/// way into `enter_work`, so it never runs with the screen already up. While
+/// a pop-up is open, wait for it to close.
+pub(super) fn request_enter() {
+    if BAT_ACTIVE.load(Relaxed) {
+        return;
+    }
+    if system_state() == stock::STATE_POPUP {
+        SCREEN_APP.store(app_byte() as u32, Relaxed);
+        POPUP_HIDDEN.store(true, Relaxed);
+        return;
+    }
+    PENDING.store(WORK_ENTER, Relaxed);
+}
+
+/// Open the bat screen once a tap on a bat tile has taken effect, close it when
+/// the app it was opened in closes, and take it back after a pop-up.
+pub(super) fn follow_app() {
+    let app = app_byte() as u32;
+    if LAUNCHING.load(Acquire) {
+        let waited = BLOCKS.load(Relaxed).wrapping_sub(LAUNCH_AT.load(Relaxed));
+        // The app byte changes when the C core has switched; if it already
+        // said MANUAL, give the switch half a second.
+        let switched = app != LAUNCH_FROM.load(Relaxed) && app != 0;
+        if switched || (app == stock::C_MANUAL as u32 && waited >= blocks_per_second() / 2) {
+            LAUNCHING.store(false, Relaxed);
+            request_enter();
+        } else if waited >= 5 * blocks_per_second() {
+            LAUNCHING.store(false, Relaxed);
+        }
+    }
+    let owner = SCREEN_APP.load(Relaxed);
+    if owner != NO_APP && app != owner {
+        if BAT_ACTIVE.load(Relaxed) {
+            leave_bat_screen();
+        }
+        SCREEN_APP.store(NO_APP, Relaxed);
+        POPUP_HIDDEN.store(false, Relaxed);
+    }
+    if POPUP_HIDDEN.load(Acquire) && system_state() != stock::STATE_POPUP {
+        POPUP_HIDDEN.store(false, Relaxed);
+        request_enter();
+    }
+}
+
+/// Build the app (the first time), start feeding it, and show its screen.
+pub(super) extern "C" fn enter_work() {
+    if !APP_READY.load(Relaxed) {
+        load_itcm();
+        // SAFETY: spare SDRAM no stock code uses (see `spare`).
+        let te = unsafe { core::slice::from_raw_parts_mut(spare::TE_STORAGE as *mut f32, spare::TE_SAMPLES) };
+        // SAFETY: zeroing the buffers in place makes them a valid Buffers.
+        let buffers = unsafe {
+            ptr::write_bytes(BUFFERS.0.get(), 0, 1);
+            (*BUFFERS.0.get()).assume_init_mut()
+        };
+        // SAFETY: init_in_place writes every field; only task 1 uses APP.
+        unsafe { BatApp::init_in_place((*APP.0.get()).as_mut_ptr(), SAMPLE_RATE, te, buffers) };
+        // SAFETY: just built; no other context uses it yet.
+        let app = unsafe { app() };
+        app.set_modes(&Mode::WITHOUT_PITCH);
+        app.set_recorder(Recorder::Stopped, 0);
+        APP_READY.store(true, Relaxed);
+        start_task();
+    }
+    SESSION.store(SESSION.load(Relaxed).wrapping_add(1), Release);
+    SCREEN_APP.store(app_byte() as u32, Relaxed);
+
+    // Take over the display: Qt's present function now writes to a dummy,
+    // and the display shows the patch's buffer.
+    // SAFETY: the literal and registers named in `stock`; task 1 only.
+    unsafe {
+        SAVED_BUFFER.store(ptr::read_volatile(stock::LCDIF_CUR_BUF) as u32, Relaxed);
+        SAVED_LITERAL.store(ptr::read_volatile(stock::PRESENT_LCDIF_LITERAL) as u32, Relaxed);
+        (*DUMMY_LCDIF.0.get()).write([0; 32]);
+        ptr::write_volatile(stock::PRESENT_LCDIF_LITERAL, DUMMY_LCDIF.0.get() as usize);
+    }
+    if task_running() {
+        // The DSP task may still be finishing a chunk from the last opening,
+        // so it draws the first frame; until then the display is blank.
+        for i in 0..stock::WIDTH * stock::HEIGHT / 2 {
+            // SAFETY: the display buffer (see `spare`).
+            unsafe { ptr::write_volatile((spare::DISPLAY as *mut u32).add(i), 0) };
+        }
+    } else {
+        // SAFETY: no other context uses the app without a DSP task.
+        render();
+    }
+    BAT_ACTIVE.store(true, Release);
+    // SAFETY: the display controller's next buffer register.
+    unsafe { ptr::write_volatile(stock::LCDIF_NEXT_BUF, spare::DISPLAY) };
+}
+
+/// Give the display back to Qt and stop feeding the app.
+pub(super) fn leave_bat_screen() {
+    BAT_ACTIVE.store(false, Release);
+    // SAFETY: as in enter_work.
+    unsafe {
+        let literal = SAVED_LITERAL.load(Relaxed) as usize;
+        ptr::write_volatile(
+            stock::PRESENT_LCDIF_LITERAL,
+            if literal == stock::LCDIF_CTRL_SET { literal } else { stock::LCDIF_CTRL_SET },
+        );
+        // The buffer Qt last presented while the bat screen was up, or the
+        // one it showed before.
+        let presented = (*DUMMY_LCDIF.0.get()).assume_init_ref()[0x13] as usize;
+        let back = if stock::FRAMEBUFFERS.contains(&presented) {
+            presented
+        } else {
+            SAVED_BUFFER.load(Relaxed) as usize
+        };
+        if stock::FRAMEBUFFERS.contains(&back) {
+            ptr::write_volatile(stock::LCDIF_NEXT_BUF, back);
+        }
+    }
+}
+
+/// From the DSP task, when a pop-up opens under the bat screen: pop-ups
+/// install their own key handler, so the key hooks cannot see them. Give the
+/// display (and touch) back so the pop-up can be read and answered; task 1
+/// takes it again once the pop-up closes (`follow_app`). BAT_ACTIVE is cleared
+/// first and POPUP_HIDDEN set last, so task 1 cannot reopen the screen halfway.
+pub(super) fn hide_for_popup() {
+    leave_bat_screen();
+    POPUP_HIDDEN.store(true, Release);
+}
+
+/// Draw the app off-screen, with a line of figures across the top for
+/// testing, then copy the frame to the display buffer.
+pub(super) fn render() {
+    // SAFETY: the off-screen frame, used only by the context running the app.
+    let pixels = unsafe { &mut *(*FRAME.0.get()).as_mut_ptr() };
+    let mut fb = Rgb565Buffer::new(pixels, stock::WIDTH, stock::HEIGHT);
+    // SAFETY: built by enter_work.
+    let app = unsafe { app() };
+    update_status(app);
+    app.render(&mut fb);
+    let task = TASK.load(Relaxed) as i32;
+    let percent = |part: u32, all: u32| if all == 0 { 0 } else { (part as u64 * 100 / all as u64) as u32 };
+    let all = CYCLES_PER_S.load(Relaxed);
+    let mut line = Line::new();
+    let _ = write!(
+        line,
+        "{}{} | key {}/s | app {} st {} rec {} | dsp {}% draw {}%",
+        if task > 0 { "task" } else { "no task" },
+        if ITCM_OK.load(Relaxed) { "" } else { " ITCM CHANGED" },
+        CALLS_PER_S.load(Relaxed),
+        app_byte(),
+        system_state(),
+        read_byte(stock::TRANSPORT),
+        DSP_PERMILLE.load(Relaxed) / 10,
+        DRAW_PERMILLE.load(Relaxed) / 10,
+    );
+    if task <= 0 {
+        let _ = write!(line, " | cre_tsk {task}");
+    }
+    draw_strip(&mut fb, 0, &line, Rgb565::new(4, 8, 4));
+    let mut line = Line::new();
+    let _ = write!(
+        line,
+        "irq {}% hook {}% | in {} out {} | dry {} lost {} | touch {} {},{}",
+        percent(STOCK_CYCLES_PER_S.load(Relaxed), all),
+        percent(HOOK_CYCLES_PER_S.load(Relaxed), all),
+        IN_WRITE.load(Relaxed).wrapping_sub(IN_READ.load(Relaxed)),
+        OUT_WRITE.load(Relaxed).wrapping_sub(OUT_READ.load(Relaxed)),
+        UNDERRUNS.load(Relaxed),
+        IN_DROPPED.load(Relaxed).wrapping_add(BACKLOG_DROPPED.load(Relaxed)),
+        if LAST_TOUCH.load(Relaxed) >> 31 != 0 { "down" } else { "up" },
+        LAST_TOUCH.load(Relaxed) >> 16 & 0x7fff,
+        LAST_TOUCH.load(Relaxed) & 0xffff,
+    );
+    draw_strip(&mut fb, STRIP_ROWS as i32, &line, Rgb565::new(4, 8, 4));
+    // Peak level of each input word since the last redraw, in dB below full
+    // scale, to check which word carries which input.
+    let mut peaks = Line::new();
+    let words = HEARD_WORDS.load(Relaxed);
+    let _ = write!(peaks, "on {:02x} w{},{} dB", tracks_on(), words & 0xff, words >> 8 & 0xff);
+    for peak in &WORD_PEAKS {
+        let p = peak.swap(0, Relaxed);
+        let db = if p == 0 { 99 } else { (-20.0 * libm::log10f(p as f32 / 2_147_483_648.0)) as u32 };
+        let _ = write!(peaks, " {}", db.min(99));
+    }
+    if PLAYBACK.load(Relaxed) {
+        // BAT PLAYBACK: the player's state and rate, and the level the app
+        // hears, instead of the input words.
+        let p = SOURCE_PEAK.swap(0, Relaxed);
+        let db = if p == 0 { 99 } else { (-20.0 * libm::log10f(p as f32 / 2_147_483_648.0)) as u32 };
+        // SAFETY: words in the stock audio engine, recorder and DSP blocks.
+        let (engine, playing, rate) = unsafe {
+            (
+                ptr::read_volatile(stock::ENGINE_STATE),
+                ptr::read_volatile(stock::DSP_PLAYING),
+                ptr::read_volatile(stock::CONVERTER_RATE),
+            )
+        };
+        peaks = Line::new();
+        let _ = write!(peaks, "playback | engine {engine} play {playing} | rate {rate} | source -{}dBFS", db.min(99));
+    }
+    draw_strip(&mut fb, 2 * STRIP_ROWS as i32, &peaks, Rgb565::new(8, 4, 4));
+    // One block copy, so the writes to the uncached display buffer go out in
+    // bursts.
+    // SAFETY: both buffers hold 320 x 480 pixels and do not overlap.
+    unsafe { ptr::copy_nonoverlapping(pixels.as_ptr(), spare::DISPLAY as *mut u16, stock::WIDTH * stock::HEIGHT) };
+}
+
+/// The X8 recorder's state and take length, and the record rate, for the
+/// status bar and the wrong-rate warning. Reads only; a value may be one
+/// update old.
+fn update_status(app: &mut BatApp<'static>) {
+    let transport = read_byte(stock::TRANSPORT);
+    let state = match transport {
+        3 => Recorder::Recording,
+        4 | 6 => Recorder::Paused,
+        1 | 2 | 8 => Recorder::Standby,
+        _ => Recorder::Stopped,
+    };
+    // SAFETY: words in the stock recorder block (see `stock`).
+    let seconds = unsafe {
+        let frames = if read_byte(stock::TAKE_FROZEN_FLAG) != 0 {
+            ptr::read_volatile(stock::TAKE_FROZEN)
+        } else {
+            ptr::read_volatile(stock::TAKE_OFFSET)
+                .wrapping_add(ptr::read_volatile(stock::TAKE_COUNT))
+                .wrapping_sub(ptr::read_volatile(stock::TAKE_START))
+        };
+        let rate = ptr::read_volatile(stock::CONVERTER_RATE);
+        if matches!(transport, 3..=6) && rate != 0 { (frames / rate) as u64 } else { 0 }
+    };
+    app.set_recorder(state, seconds);
+    // SAFETY: as above.
+    let rate = unsafe {
+        if !PLAYBACK.load(Relaxed) {
+            ptr::read_volatile(stock::RECORD_RATE)
+        } else if ptr::read_volatile(stock::DSP_PLAYING) == 1 {
+            // The converters run at the file's rate while a file plays or is
+            // paused (the DSP play byte stays 1 then), so BAT PLAYBACK checks
+            // that rate.
+            ptr::read_volatile(stock::CONVERTER_RATE)
+        } else {
+            // No file is playing, so there is no rate to warn about.
+            SAMPLE_RATE as u32
+        }
+    };
+    app.set_input_rate(rate);
+    if PLAYBACK.load(Relaxed) {
+        app.set_input_kind(InputKind::Playback);
+        app.set_inputs([Some(PLAYBACK_LEFT), Some(PLAYBACK_RIGHT)]);
+    } else {
+        app.set_input_kind(InputKind::Live);
+        let [first, second] = selected_inputs();
+        let words = first.map_or(NO_INPUT_WORDS, |first| first.word | second.unwrap_or(first).word << 8);
+        HEARD_WORDS.store(words, Relaxed);
+        app.set_inputs([first, second].map(|input| input.map(|input| input.name)));
+    }
+}
+
+/// Text in a fixed buffer, for formatting without an allocator.
+struct Line {
+    buf: [u8; 96],
+    len: usize,
+}
+
+impl Line {
+    const fn new() -> Self {
+        Self { buf: [0; 96], len: 0 }
+    }
+    fn as_str(&self) -> &str {
+        core::str::from_utf8(&self.buf[..self.len]).unwrap_or("")
+    }
+}
+
+impl core::fmt::Write for Line {
+    fn write_str(&mut self, s: &str) -> core::fmt::Result {
+        let n = s.len().min(self.buf.len() - self.len);
+        self.buf[self.len..self.len + n].copy_from_slice(&s.as_bytes()[..n]);
+        self.len += n;
+        Ok(())
+    }
+}
+
+const STRIP_ROWS: usize = 13;
+const FONT: FontRenderer = FontRenderer::new::<fonts::u8g2_font_helvR08_tf>();
+
+fn draw_strip(target: &mut Rgb565Buffer<'_>, top: i32, line: &Line, background: Rgb565) {
+    let _ = target.fill_solid(&Rectangle::new(Point::new(0, top), Size::new(stock::WIDTH as u32, STRIP_ROWS as u32)), background);
+    let _ =
+        FONT.render(line.as_str(), Point::new(2, top + 10), VerticalPosition::Baseline, FontColor::Transparent(Rgb565::WHITE), target);
+}
+
+/// While the bat screen is closed: a strip across the top of Qt's framebuffers.
+pub(super) fn draw_status_strip() {
+    let mut line = Line::new();
+    let audio = match AUDIO_STATE.load(Relaxed) {
+        AUDIO_INSTALLED => "audio hooked",
+        AUDIO_SLOT_UNEXPECTED => "audio NOT hooked",
+        _ => "waiting for audio",
+    };
+    let event = LAST_EVENT.load(Relaxed);
+    let _ = write!(
+        line,
+        "{audio} | rate {} | key {}/s | app {} st {} rec {} | ev {} {:x}",
+        rate_class(),
+        CALLS_PER_S.load(Relaxed),
+        app_byte(),
+        system_state(),
+        read_byte(stock::TRANSPORT),
+        event >> 16,
+        event & 0xffff
+    );
+    for &fb in &stock::FRAMEBUFFERS {
+        // SAFETY: the top rows of a framebuffer the stock firmware allocated.
+        let pixels = unsafe { core::slice::from_raw_parts_mut(fb as *mut u16, stock::WIDTH * STRIP_ROWS) };
+        draw_strip(&mut Rgb565Buffer::new(pixels, stock::WIDTH, STRIP_ROWS), 0, &line, Rgb565::new(4, 8, 4));
+    }
+}
