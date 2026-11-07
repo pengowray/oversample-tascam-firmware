@@ -1607,7 +1607,7 @@ The emulator page has no MANUAL's mix, so none of this has been played there.
   the left ear and the right ear should play different sound. With one track on, both ears should play the
   same sound. Is the return to the bat screen free of clicks?
 
-## Step 17 test file: the chime test screen (installed 2026-11-07: keeps up while recording, chime test reads the time)
+## Step 17 test file: the chime test screen (installed 2026-11-07: keeps up with Auto volume off, TE and COMB lose input with Bats only, chime test reads the time)
 
 `work/patch17/#PortaX8_0235.203` (B235, SHA-256 `8649341c…8a744013`). Includes steps 11 to 16. Install this file in
 place of B234. No stock hook site or header field changed, so `BUILDS` in `tools/x8patch.py` needs no
@@ -1757,9 +1757,49 @@ figures from a unit since Step 13.
 - These runs say the patch kept up. They do not explain clicks, if any were heard during them. CPU overload shows in these
   counts, so a click with all of them at 0 has another cause.
 
-Not tested yet: runs longer than 48 s, FD, TE, Auto volume on or `Bats only`, one input on, and a busy bat pass. The
-tightest estimate is still COMB with Auto volume on during a busy pass (Step 15). Takes have not been checked for clicks in
-the WAV (Step 14's list).
+**Results with Auto volume on `Bats only` (2026-11-07).** The same setup, read from a second set of photos. Calls were on
+screen in most of them, so these runs include busy moments. Pairs of rows are the same take, except standby.
+
+| Mode, state, take time | irq | hook | dsp (max) | draw | dry | lost | skip | ring in / out |
+|---|---|---|---|---|---|---|---|---|
+| TE playing, recording, 1:07 | 43 | 9 | 77 (82) | 13 | 3 | 13,220 | 2,772 in 13 s | 4,268 / 8,860 |
+| TE playing, recording, 1:25 | 43 | 9 | 80 (82) | 11 | 5 | 25,516 | 5,888 in 30 s | 3,264 / 6,312 |
+| COMB, recording, 0:14 | 43 | 9 | 71 (71) | 9 | 1 | 0 | 444 in 14 s | 2,760 / 8,332 |
+| COMB, recording, 0:23 | 43 | 9 | 71 (71) | 12 | 1 | 1,072 | 808 in 23 s | 3,216 / 6,804 |
+| FD, recording, 0:46 | 43 | 9 | 66 (70) | 12 | 0 | 0 | 464 in 17 s | about 2,626 / 7,298 |
+| FD, recording, 0:50 | 43 | 9 | 67 (70) | 12 | 0 | 0 | 576 in 21 s | 2,628 / 7,392 |
+| COMB, standby | 31 | 8 | 48 (50) | 18 | 0 | 0 | 0 in 29 s | 2,036 / 6,252 |
+
+- `drop` did not appear in any photo. `lost` is input that did not fit in the ring.
+- TE analysed about 72 to 76% of the time: `skip` is about 200 chunks a second, at most 256 frames each. It also lost about
+  0.5% of its input and ran the headphones dry 5 times in 30 s, so clicks are expected here. TE does not auto-trigger during
+  a skip, so it can miss calls too.
+- COMB skipped about 4 to 5% of the time. Between the two photos it lost 1,072 frames, and it had one underrun in the take.
+- FD skipped about 3.5% of the time and lost nothing.
+
+Bats only costs more than Step 14's estimate of 3 to 4% of CPU. COMB's `dsp` goes from 39 to 48 on standby and from 55 to 71
+while recording. Taking out the interrupt and hook's share, that is about 5.5 and 7.7 points of CPU. The recording figure
+includes calls, and the Auto volume off runs had almost none, so it is a high estimate.
+
+Host cost, in ms per second of audio with auto-vectorisation off, best of 5 runs on `260223_0048_3-4 -- small selection`
+(1.3 s, X8 inputs 3 and 4), at 256 frames a call, both sides:
+
+| Mode | Off | On | Bats only |
+|---|---|---|---|
+| HET | 8.05 | 9.01 | 8.38 |
+| COMB | 10.23 | 11.97 | 11.72 |
+| FD | 11.21 | 12.89 | 13.44 |
+| TE | 6.98 | 8.83 | 9.85 |
+| 1:1 | 6.41 | 7.80 | 7.41 |
+
+**TE costs far more on the unit than on the host.** TE is cheaper than FD on the host, but reads 10 to 13 `dsp` points higher
+on the unit. The likely reason, from the code and the memory map and not measured: `TE_STORAGE` is at 0x87f00000, which
+the MPU leaves uncached, and playback reads 4 samples per output sample. That is 768,000 uncached SDRAM reads a second
+while playing, which the host cannot show. The same ring takes 192,000 uncached writes a second in every mode, because the
+TE recording always runs.
+
+Not tested yet: TE with Auto volume off, HET with Bats only, Auto volume On, one input on, runs longer than about 90 s.
+Takes have not been checked for clicks in the WAV (Step 14's list).
 
 **Chime test on the unit.** With Listen to on the mix, the screen showed a date, a time zone and a time that ticked. It
 read 10 chimes and failed 22 on the left side, and read 16 and failed 15 on the right. The last chime read had a carrier at
