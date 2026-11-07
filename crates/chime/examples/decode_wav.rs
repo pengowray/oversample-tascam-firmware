@@ -302,12 +302,18 @@ fn describe_chime(channel: usize, sample_rate: u32, chime: &Chime) -> String {
         );
     };
 
-    let contents = match (message.location.is_some(), message.deployment_id.is_some()) {
-        (false, false) => String::new(),
-        (true, false) => format!("Payload length {} bytes, with location. ", payload.len()),
-        (false, true) => format!("Payload length {} bytes, with deployment ID. ", payload.len()),
-        (true, true) => format!("Payload length {} bytes, with location and deployment ID. ", payload.len()),
-    };
+    let mut contents = String::new();
+    if let Some((latitude, longitude)) = message.latitude_longitude() {
+        contents += &format!("Location {latitude:.6}, {longitude:.6}. ");
+    }
+    if let Some(id) = message.deployment_id {
+        let hex: String = id.iter().map(|byte| format!("{byte:02x}")).collect();
+        contents += &match (&id[..7] == b"BATXREC", id[7]) {
+            (true, 1) => format!("Phone remote: start recording (deployment ID {hex}). "),
+            (true, 2) => format!("Phone remote: stop recording (deployment ID {hex}). "),
+            _ => format!("Deployment ID {hex}. "),
+        };
+    }
     format!(
         "{prefix} phone time {} {} (Unix {}). {contents}{signal}",
         message.local(),
@@ -903,20 +909,22 @@ mod tests {
     }
 
     #[test]
-    fn chime_report_states_the_length_of_longer_payloads() {
+    fn chime_report_gives_the_location_and_deployment_id() {
         let mut payload = vec![0x40, 0x02, 0xDF, 0x6A, 0x2C, 0xFF];
-        payload.extend_from_slice(&[0; 7]);
+        // -33.87, 151.21, packed as the connector packs them.
+        payload.extend_from_slice(&[0x50, 0x2F, 0xFB, 0x8D, 0x40, 0x1A, 0x48]);
         let line = describe_chime(1, RATE, &chime_with_payload(&payload));
         assert!(line.starts_with("Channel 2 at 3.512 s: phone time 2026-10-26 04:01:20 UTC-03:32"), "{line}");
-        assert!(line.contains("Payload length 13 bytes, with location. Signal"), "{line}");
+        assert!(line.contains("Location -33.870000, 151.210000. Signal"), "{line}");
 
-        payload.push(0);
-        let line = describe_chime(0, RATE, &chime_with_payload(&payload));
-        assert!(line.contains("Payload length 14 bytes, with deployment ID. Signal"), "{line}");
+        let mut with_id = payload[..6].to_vec();
+        with_id.extend_from_slice(b"BATXREC\x02");
+        let line = describe_chime(0, RATE, &chime_with_payload(&with_id));
+        assert!(line.contains("Phone remote: stop recording (deployment ID 4241545852454302). Signal"), "{line}");
 
-        payload.extend_from_slice(&[0; 7]);
+        payload.extend_from_slice(&[0x12, 0x34, 0x56, 0x78, 0x9a, 0xbc, 0xde, 0xf0]);
         let line = describe_chime(0, RATE, &chime_with_payload(&payload));
-        assert!(line.contains("Payload length 21 bytes, with location and deployment ID. Signal"), "{line}");
+        assert!(line.contains("Location -33.870000, 151.210000. Deployment ID 123456789abcdef0. Signal"), "{line}");
     }
 
     #[test]

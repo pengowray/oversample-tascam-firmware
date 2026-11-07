@@ -254,6 +254,8 @@ pub fn waterfall_freq_at(x: i32, y: i32) -> Option<f32> {
 /// Tools screen: the phone remote's panel, with its switch at the right, then a full-width
 /// button for each test, with its help inside the button.
 pub const TOOLS_REMOTE: Rectangle = Rectangle::new(Point::new(6, 32), Size::new(308, 118));
+/// The top of that panel, where a tap flips the switch.
+pub const TOOLS_REMOTE_ROW: Rectangle = Rectangle::new(Point::new(6, 32), Size::new(308, 40));
 pub const TOOLS_REMOTE_SWITCH: Rectangle = Rectangle::new(Point::new(260, 40), Size::new(SWITCH_W, SWITCH_H));
 pub const TOOLS_CHIME_TEST: Rectangle = Rectangle::new(Point::new(6, 158), Size::new(308, 48));
 pub const TOOLS_CPU_TEST: Rectangle = Rectangle::new(Point::new(6, 214), Size::new(308, 62));

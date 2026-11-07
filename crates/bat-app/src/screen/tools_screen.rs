@@ -11,7 +11,7 @@ pub(super) const TITLE_LABEL: &str = "REMOTE";
 
 pub(super) const REMOTE_NAME: &str = "Phone remote (experimental)";
 pub(super) const REMOTE_HELP: [&str; 2] =
-    ["Phone chimes start or stop recording about 4 s later.", "Needs BAT DETECTOR on screen. Almost no CPU until then."];
+    ["Phone chimes start or stop recording about 4 s later.", "BAT DETECTOR only. Almost no CPU until the phone plays."];
 pub(super) const REMOTE_BEEPS: &str = "Two notes up: started. Two down: stopped. One low: failed.";
 pub(super) const CHIME_TEST_NAME: &str = "Chime test";
 pub(super) const CHIME_TEST_HELP: &str = "Shows if the X8 reads the phone's chimes, and the level.";

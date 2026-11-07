@@ -167,11 +167,23 @@ impl TimeMessage {
         Some(TimeMessage { unix_time, timezone_minutes, location, deployment_id })
     }
 
+    /// The location as latitude and longitude in degrees, if the chime has one.
+    pub fn latitude_longitude(&self) -> Option<(f64, f64)> {
+        let b = self.location?.map(u32::from);
+        // Move each 28-bit field to the top of an i32, so that shifting back extends its sign.
+        let latitude = ((b[0] | b[1] << 8 | b[2] << 16 | (b[3] & 0x0f) << 24) << 4) as i32 >> 4;
+        let longitude = ((b[3] >> 4 | b[4] << 4 | b[5] << 12 | b[6] << 20) << 4) as i32 >> 4;
+        Some((latitude as f64 / LATITUDE_UNITS_PER_DEGREE, longitude as f64 / LONGITUDE_UNITS_PER_DEGREE))
+    }
+
     /// The phone's local time at the start of the chime.
     pub fn local(&self) -> LocalTime {
         LocalTime::from_epoch_seconds(self.unix_time as i64 + self.timezone_minutes as i64 * 60)
     }
 }
+
+const LATITUDE_UNITS_PER_DEGREE: f64 = 1_000_000.0;
+const LONGITUDE_UNITS_PER_DEGREE: f64 = 500_000.0;
 
 const SECONDS_IN_DAY: i64 = 86_400;
 
@@ -249,6 +261,42 @@ fn days_from_civil(year: i32, month: u8, day: u8) -> i64 {
     let day_of_year = (153 * shifted_month + 2) / 5 + day as i64 - 1;
     let day_of_era = year_of_era * 365 + year_of_era / 4 - year_of_era / 100 + day_of_year;
     era * 146_097 + day_of_era - 719_468
+}
+
+#[cfg(test)]
+mod location_tests {
+    use super::*;
+
+    /// As `encodeLocation` in `audiomothchime_connector.js` packs them.
+    fn message_at(latitude: f64, longitude: f64) -> TimeMessage {
+        let lat = libm::round(latitude * LATITUDE_UNITS_PER_DEGREE) as i32;
+        let lon = libm::round(longitude * LONGITUDE_UNITS_PER_DEGREE) as i32;
+        let location = [
+            lat as u8,
+            (lat >> 8) as u8,
+            (lat >> 16) as u8,
+            ((lat >> 24) & 0x0f) as u8 | ((lon & 0x0f) << 4) as u8,
+            (lon >> 4) as u8,
+            (lon >> 12) as u8,
+            (lon >> 20) as u8,
+        ];
+        TimeMessage { unix_time: 0, timezone_minutes: 0, location: Some(location), deployment_id: None }
+    }
+
+    #[test]
+    fn location_comes_back_in_all_four_quarters_of_the_world() {
+        for (latitude, longitude) in [(-33.87, 151.21), (51.5, -0.12), (-54.8, -68.3), (90.0, 180.0), (-90.0, -180.0), (0.0, 0.0)] {
+            let (lat, lon) = message_at(latitude, longitude).latitude_longitude().unwrap();
+            assert!((lat - latitude).abs() < 1e-6, "{lat} {latitude}");
+            assert!((lon - longitude).abs() < 3e-6, "{lon} {longitude}");
+        }
+    }
+
+    #[test]
+    fn no_location_field_gives_none() {
+        let message = TimeMessage { unix_time: 0, timezone_minutes: 0, location: None, deployment_id: None };
+        assert_eq!(message.latitude_longitude(), None);
+    }
 }
 
 #[cfg(test)]

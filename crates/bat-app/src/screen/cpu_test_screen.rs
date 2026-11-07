@@ -11,18 +11,19 @@ use crate::{AutoVolume, BatApp, Recorder};
 pub(super) const TITLE: &str = "CPU TEST";
 
 /// The right edge of each column of figures, in table order.
-const DSP_X: i32 = 92;
-const MAX_X: i32 = 112;
-const DRAW_X: i32 = 136;
-const IRQ_X: i32 = 154;
-const HOOK_X: i32 = 178;
-const DRY_X: i32 = 198;
-const LOST_X: i32 = 228;
-const DROP_X: i32 = 256;
-const RING_X: i32 = 284;
-const SKIP_X: i32 = 314;
+const DSP_X: i32 = 99;
+const MAX_X: i32 = 121;
+const DRAW_X: i32 = 145;
+const IRQ_X: i32 = 162;
+const HOOK_X: i32 = 188;
+const DRY_X: i32 = 207;
+const LOST_X: i32 = 232;
+const DROP_X: i32 = 257;
+const RING_X: i32 = 282;
+const SKIP_X: i32 = 312;
 
 const LABEL_X: i32 = 6;
+const ROW_INDENT: i32 = 4;
 
 pub(super) const CALLS_LINES: [&str; 2] = ["Synthetic calls make every run sound the same.", "10 a second. Heard in headphones. Not recorded."];
 pub(super) const START: &str = "Start test";
@@ -74,7 +75,7 @@ fn row_name(row: &Row) -> (&'static str, &'static str) {
 
 /// Whether the mode's own label and suffix fit before the first column of figures.
 #[cfg(test)]
-pub(crate) const NAME_ROOM: i32 = DSP_X - 18 - LABEL_X;
+pub(crate) const NAME_ROOM: i32 = DSP_X - 17 - LABEL_X - ROW_INDENT;
 
 /// A count in at most 5 characters, as a column's room allows.
 struct Count(u32);
@@ -140,7 +141,7 @@ fn table(app: &BatApp, fb: Fb) {
             y += CPU_TEST_ROW_H;
         }
         let (mode, suffix) = row_name(row);
-        let x = text(fb, &SMALL, mode, LABEL_X + 6, y, LEFT, TEXT);
+        let x = text(fb, &SMALL, mode, LABEL_X + ROW_INDENT, y, LEFT, TEXT);
         let x = text(fb, &SMALL, suffix, x, y, LEFT, TEXT);
         if let Some(result) = row.result {
             if result.recorder != first_state {
@@ -198,8 +199,8 @@ pub(super) fn running_line(app: &BatApp, fb: Fb) {
     let (mode, suffix) = row_name(row);
     let left = app.cpu_test.seconds_left_in_row(app.samples, app.sample_rate as u64);
     let volume = match row.volume {
-        AutoVolume::Off => "Off",
-        AutoVolume::On => "On",
+        AutoVolume::Off => "off",
+        AutoVolume::On => "on",
         AutoVolume::BatsOnly => "Bats only",
     };
     let decoders = if row.decoders { ", decoders" } else { "" };

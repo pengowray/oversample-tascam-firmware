@@ -1938,6 +1938,89 @@ PLAYBACK and the web emulator do not write takes, so they leave the row empty.
 4. Play the take without a MIX file in MANUAL and on BAT PLAYBACK. Try PLAY in BROWSE, NORMALIZE and MIX DOWN, and note what each one does.
 5. Stop a take straight after REC, and press STOP from record standby. Do the next takes open and close normally, with MIX file off?
 
+## Step 21 test file: CPU test, phone remote, Tools screen (built 2026-11-07, not yet installed)
+
+`work/patch21/#PortaX8_0239.203` (B239, SHA-256 `81b7554f…52bd14aaa`). Includes steps 11 to 20. Install this file in place of
+B238. All the checks in `tools/x8patch.py` pass on this file. No stock hook site or header field changed (header version 16).
+Nothing in this step has run on a real recorder.
+
+**Tools screen.** SETTINGS' `Chime test` button is now `Tools`, in the same place. The Tools screen has the Phone remote switch,
+then `Chime test` and `CPU test`, each with a line of help, and `Back`. `Back` on the chime test now returns to Tools.
+
+### CPU test
+
+Runs each listening mode with each Auto volume choice for 8 s, on the main screen, so the figures include drawing the waterfall
+and the debug strip. The title bar shows `CPU TEST row 7/26`, the value line shows the row and the seconds left, and a tap anywhere
+stops the test. The first 2 s of a row are left out. The test then shows a table: per row, the average `dsp`, its highest
+one-second value (`max`), `draw`, `irq` and `hook`, and the `dry`, `lost` and `drop` counts, `ring` (the most input frames waiting at
+the start of a chunk, of 8,192) and `skip%` (the share of the measured time the analysis skipped, at most). Counts above 0 are yellow.
+The line above the table says what the recorder did, for example `Recorder was recording for every row.` Rows in another state
+than row 1 get a `*`.
+
+| Rows with two inputs on | With one input on |
+|---|---|
+| HET, COMB and 1:1 stereo and mono, FD and TE, for Auto volume off, on and Bats only, then COMB stereo and TE with the chime decoders running: 26 rows, 3.5 min | 17 rows, 2.3 min |
+
+- **Synthetic calls** (switch on the CPU test screen, on by default): ten 5 ms sweeps from 60 to 40 kHz a second at -40 dBFS are
+  added to what the app hears. They are classed as bat calls, so Bats only opens and TE keeps triggering, and every run hears the same
+  sound. They are heard in the headphones and show on the waterfall. They do not reach the recording.
+- **Decoder rows.** No chime plays in them, so they measure the decoders listening, not reading a message.
+- **What it puts back.** Mode, Auto volume and Listen to return to what they were. A pause in the input (PLAY to MANUAL's screen, a
+  pop-up) also stops the test.
+- The patch passes the debug strip's figures at each redraw (`host_figures` in `screen.rs`). `IN_WAITING_MOST` in `process_input` is
+  the only new measurement.
+
+### Phone remote (experimental, off by default)
+
+The phone page plays a 0.5 s tone, waits 0.8 s, and plays a chime whose deployment ID is `BATXREC` and a command byte (1 start, 2
+stop), and then does it all once more. The X8 starts or stops recording and beeps in the headphones: two rising notes for started, two
+falling for stopped, one low note when it could not. A notice shows for 5 s in the corner of the waterfall. While the switch is on,
+`REMOTE` shows in the title bar, blue while the decoders run.
+
+- **CPU.** The decoders cost too much to run all the time while recording, so the app looks for the tone in the spectrum its analysis
+  already makes: the 18 kHz bin 10 dB above the bins 1.5 kHz either side, scored over about 120 ms. On the PC that check made no
+  difference that `bench` could measure (within 0.5 ms a second either way). The tone wakes the decoders for 6 s, and a later tone
+  keeps them awake, so the page's second play still works if its first chime fails. While awake they cost what the chime test's
+  decoders cost (about 1.9 ms a second each on the PC, that is about 5 to 6 `dsp` points each on the unit by the usual scaling, not
+  measured). The CPU test's two decoder rows measure it on the unit.
+- **Range.** In the tests, with noise of -94 dBFS in the chime's 2 kHz band (what the unit showed in Step 17), the tone woke the
+  decoders and the command was read every time down to a carrier of -88 dBFS, and half the time at -91 dBFS. So the tone check is no
+  less sensitive than the decoder. In 17 minutes of recordings from 6 and 7 November and `~/sync/default/bats`, nothing woke the
+  decoders. Example `remote_check` runs this on any 192 kHz files.
+- **End to end.** WAVs made with the page's own encoder (`tools/chime_render.mjs`, deployment ID reversed as the connector does it),
+  after the tone, with gaps of 0.2 to 2 s, gave the command in the app every time.
+- **Pressing the buttons.** `remote.rs` in the patch posts REC (0x07) and HOME (0x06, which stops a take on the recording screen)
+  as a button message to task 1's mailbox, with the stock block allocator `FUN_80d70026` and `snd_mbx`. These take a lock and are
+  called from other tasks by the stock code. It does not call `FUN_80d6c058`, whose key translation keeps state that task 9 also
+  changes, and which calls `FUN_80ddaf60` for HOME. From stop it presses REC, waits for standby, and presses REC again. Each press is
+  decided from the transport byte at that moment, at most once every 2 s, and the command gives up after 5 s.
+- **What it refuses.** HOLD on (`FUN_80daca30`): the X8 would show its HOLD pop-up. MANUAL's recording guide on (settings+0x196 =
+  1): REC from stop would open the guide. A page open in MANUAL: the X8 ignores REC. A start while recording, and a stop while
+  stopped, beep as done and do nothing.
+- **REC PAUSE.** With Listen to on MANUAL's mix and REC PAUSE on, the X8 hears nothing while stopped. So after a stop by phone,
+  the patch presses REC once, 1 s later, to go back to standby. The first start still needs REC pressed once by hand.
+- **The data in the take.** The stop chime is in the recording, and so is the start command's second play. `decode_wav` now prints
+  the location and the deployment ID, and names the remote's commands, for example `Location -33.870000, 151.210000. Phone remote:
+  stop recording (deployment ID 4241545852454302).`
+- **Phone page.** `batchi-chime`, Tascam X8 tab: `Start recording` and `Stop recording`, and `Add my location to the chime`.
+
+| Item | B238 | B239 | Limit |
+|---|---|---|---|
+| ITCM | 74.9 KB | 75.7 KB | 89.2 KB |
+| DTCM | 141.8 KB | 140.2 KB | 152.8 KB |
+| Patch stored in the update file | | 260.8 KB | |
+| `.noinit`, the end of the patch's memory | | ends at 0x818eb630 | 0x81900000 |
+
+**What to check.**
+
+- **CPU test.** Press REC twice, then SETTINGS, Tools, CPU test, Start test. Photograph the table when it ends. Is `dsp` close to
+  what the strip showed for the same mode in Step 17? Does anything look wrong while it runs?
+- **Remote, standby.** Turn Phone remote on, press REC once, and press `Start recording` on the phone 10 to 20 cm from a mic. Does
+  `REMOTE` turn blue during the tone? Does recording start, with two rising beeps? Note `Tones heard` and `Chimes read` on Tools.
+- **Remote, distance.** Repeat at 1 m and 3 m, with the X8 in its bag. Note the carrier level on Tools.
+- **Stop.** Does `Stop recording` stop the take and return to standby? Does `decode_wav` read the stop chime from the take?
+- **Refusals.** With HOLD on, is there one low beep and `Cannot start: HOLD is on.`?
+
 ## Checking takes for cuts in the WAV (2026-11-07)
 
 Files from B231 (`to-2026-11-06`, 13.8 minutes in 9 takes) and B235 (`to-2026-11-07`, 5.7 minutes in 6 takes). Scripts were

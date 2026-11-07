@@ -445,4 +445,31 @@ fn main() {
         }
         println!("{:>16.3}", draw * 1000.0);
     }
+
+    // The phone remote waiting for a tone: one comparison per spectrum column. With no tone in
+    // the input, its decoders never run.
+    println!();
+    println!("Whole app with source Both, Auto volume off, with the phone remote off and on (waiting for a tone):");
+    println!("{:<8}{:>12}{:>12}", "mode", "remote off", "remote on");
+    for mode in [Mode::Het, Mode::Comb, Mode::Fd, Mode::Te] {
+        print!("{:<8}", mode.label());
+        for on in [false, true] {
+            let mut storage = vec![0.0f32; 96_000];
+            let mut buffers = Box::new(Buffers::new());
+            let mut app = BatApp::new(FS, &mut storage, &mut buffers);
+            app.set_mode(mode);
+            app.set_remote_available(true);
+            app.set_remote_on(on);
+            let (mut l, mut r) = (vec![0.0; 1024], vec![0.0; 1024]);
+            let t = best_of(STEREO_RUNS, || {
+                for (a, b) in first.chunks(1024).zip(second.chunks(1024)) {
+                    let k = a.len();
+                    app.process(a, b, &mut l[..k], &mut r[..k]);
+                }
+            });
+            print!("{:>12.2}", per_s(t));
+            assert_eq!(app.remote_counts().0, 0, "the bench input woke the decoders");
+        }
+        println!();
+    }
 }

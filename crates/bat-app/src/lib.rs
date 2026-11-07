@@ -1198,7 +1198,7 @@ impl<'a> BatApp<'a> {
                     self.open_chime_test();
                 } else if layout::TOOLS_CPU_TEST.contains(p) && self.debug_available {
                     self.open_cpu_test();
-                } else if layout::TOOLS_REMOTE.contains(p) && self.remote.available {
+                } else if layout::TOOLS_REMOTE_ROW.contains(p) && self.remote.available {
                     self.remote.on = !self.remote.on;
                 }
                 return;
@@ -1742,7 +1742,7 @@ impl<'a> BatApp<'a> {
                 return layout::BACK.contains(p)
                     || layout::TOOLS_CHIME_TEST.contains(p)
                     || (self.debug_available && layout::TOOLS_CPU_TEST.contains(p))
-                    || (self.remote.available && layout::TOOLS_REMOTE.contains(p));
+                    || (self.remote.available && layout::TOOLS_REMOTE_ROW.contains(p));
             }
             Screen::CpuTest => {
                 return layout::CPU_TEST_BACK.contains(p) || layout::CPU_TEST_START.contains(p) || layout::CPU_TEST_CALLS.contains(p);

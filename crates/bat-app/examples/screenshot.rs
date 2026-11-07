@@ -3,8 +3,10 @@
 //! cargo run -p bat-app --release --example screenshot -- IN.wav OUT.png [SECONDS] [MODE] [SCALE] [OFFSET RANGE PER_ROW]
 //!
 //! SECONDS: how much of the file to play first (default: all of it).
-//! MODE: het, comb, fd, te, pitch, settings for the settings screen, or chime for
-//! the chime test, which listens to the file (default het). SCALE: 1 to 4 (default 2).
+//! MODE: het, comb, fd, te, pitch, settings for the settings screen, chime for the chime
+//! test, which listens to the file, tools for the tools screen, cputest for the CPU test's
+//! screen (CPU_ROWS=N runs N rows first, with made-up figures, and CPU_STOP=1 stops it early)
+//! or cpurun for the main screen during a CPU test (default het). SCALE: 1 to 4 (default 2).
 //! OFFSET, RANGE (dB) and PER_ROW (0 or 1): waterfall contrast, as
 //! `BatApp::set_display` (default: the app's defaults).
 //! The file must be at 192 kHz; channel 1 feeds input 3, channel 2 input 4.
@@ -33,6 +35,33 @@ use embedded_graphics::prelude::*;
 use embedded_graphics::primitives::Rectangle;
 use u8g2_fonts::types::{FontColor, VerticalPosition};
 use u8g2_fonts::{FontRenderer, fonts};
+
+/// Run the CPU test on silence for `rows` rows, with made-up figures that rise with the row. With
+/// `rows` at the plan's length the test ends by itself. Otherwise it is left running.
+fn run_cpu_test(app: &mut BatApp, rows: usize) {
+    app.start_cpu_test();
+    let plan = app.cpu_test_rows().len();
+    let mut figures = bat_app::HostFigures { irq_percent: 43, hook_percent: 9, draw_percent: 13, ..Default::default() };
+    let block = 192_000 / 5;
+    let (a, b) = (vec![0.0f32; block], vec![0.0f32; block]);
+    let (mut l, mut r) = (vec![0.0f32; block], vec![0.0f32; block]);
+    for row in 0..rows.min(plan) {
+        for _ in 0..40 {
+            app.process(&a, &b, &mut l, &mut r);
+            figures.dsp_percent = 35 + 2 * row as u32;
+            figures.window = figures.window.wrapping_add(1);
+            figures.waiting_most = 2_500 + 120 * row as u32;
+            if row > 10 {
+                figures.lost += 40 * (row as u32 - 10);
+                figures.dry += (row as u32 / 8).min(1);
+            }
+            app.cpu_test_figures(figures);
+        }
+    }
+    if rows < plan && std::env::var("CPU_STOP").is_ok() {
+        app.touch(160, 200);
+    }
+}
 
 fn main() {
     let args: Vec<String> = std::env::args().collect();
@@ -158,10 +187,30 @@ fn main() {
     if args.get(4).map(String::as_str) == Some("settings") {
         app.open_settings();
     }
+    match args.get(4).map(String::as_str) {
+        Some("tools") => {
+            app.set_remote_available(true);
+            app.set_remote_on(true);
+            app.open_tools();
+        }
+        Some("cputest") => {
+            app.open_cpu_test();
+            if let Ok(rows) = std::env::var("CPU_ROWS") {
+                run_cpu_test(&mut app, rows.parse().unwrap());
+            }
+        }
+        Some("cpurun") => {
+            app.set_remote_available(true);
+            app.set_remote_on(true);
+            app.remote_result(bat_app::RemoteResult::Started);
+            run_cpu_test(&mut app, 7);
+        }
+        _ => {}
+    }
     let mut pixels = vec![0u16; WIDTH * HEIGHT];
     let mut fb = Rgb565Buffer::new(&mut pixels, WIDTH, HEIGHT);
     app.render(&mut fb);
-    if debug && args.get(4).map(String::as_str) != Some("settings") {
+    if debug && !matches!(args.get(4).map(String::as_str), Some("settings" | "tools" | "cputest")) {
         // The longest lines of the patch's draw_debug that a test should reach, in
         // its font and strips. Line 3 has no room for every count at its largest
         // at once: then the last digits of the output ring level are cut off.
