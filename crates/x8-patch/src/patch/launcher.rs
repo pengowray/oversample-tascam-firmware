@@ -1,7 +1,7 @@
 use core::ptr;
 use core::sync::atomic::{Ordering::Relaxed, Ordering::Release};
 
-use super::state::{BLOCKS, LAUNCH_AT, LAUNCH_FROM, LAUNCHING, PLAYBACK};
+use super::state::{BLOCKS, LAUNCH_AT, LAUNCH_FROM, LAUNCHING, PLAYBACK, SCREEN_APP};
 use super::{Handler, app_byte, bat_glyph, play_glyph, stock, system_mode};
 
 /// The bat tiles, in USER SETTINGS slots 2 and 3 (slots 0 to 2 in the
@@ -57,6 +57,32 @@ pub(super) unsafe extern "C" fn tile_hook(bridge: usize, slot: usize, c: usize, 
     // SAFETY: the bridge setter, called as the MANUAL tile calls it.
     let set: Handler = unsafe { core::mem::transmute(stock::BRIDGE_SET) };
     unsafe { set(bridge, stock::APP_PROPERTY, stock::QT_MANUAL, 0) }
+}
+
+/// Replaces the power-off sequence's call that saves the settings. If a bat
+/// tile opened the current app, the record is saved with the LAUNCHER as the
+/// open app, so the next start does not open MANUAL's own screen. The stock
+/// firmware saves the same value when powered off on the LAUNCHER.
+///
+/// The live app byte changes only for the length of the save. Interrupts are
+/// off during this call, so no task can read it. The settings save task's own
+/// call is left alone because that task runs alongside task 1, which would
+/// read the LAUNCHER as the open app and close the bat screen.
+pub(super) unsafe extern "C" fn power_off_save_hook(a: usize, b: usize, c: usize, d: usize) -> usize {
+    // SAFETY: the stock function the power-off sequence called, with its arguments.
+    let save: Handler = unsafe { core::mem::transmute(stock::SAVE_SETTINGS) };
+    let app = app_byte();
+    if SCREEN_APP.load(Relaxed) != app as u32 {
+        return unsafe { save(a, b, c, d) };
+    }
+    // SAFETY: the app byte in the settings record; nothing else runs until
+    // interrupts are back on, by which time it holds its old value again.
+    unsafe {
+        ptr::write_volatile(stock::APP as *mut u8, stock::C_LAUNCHER);
+        let result = save(a, b, c, d);
+        ptr::write_volatile(stock::APP as *mut u8, app);
+        result
+    }
 }
 
 /// What a USER SETTINGS slot holds, as the launcher sees it: the bat tiles'

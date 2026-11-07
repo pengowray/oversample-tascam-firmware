@@ -142,7 +142,12 @@ pub const SET_PROPERTY: usize = 0x80e0_5871;
 pub const ENGINE_STATE: *const u32 = 0x81cb_e780 as *const u32;
 /// The open app in the C core's numbering: 0 the LAUNCHER, 2 MANUAL.
 pub const APP: *const u8 = 0x81e8_ca90 as *const u8;
+pub const C_LAUNCHER: u8 = 0;
 pub const C_MANUAL: u8 = 2;
+/// `FUN_80da2778(defaults)`: with 0, saves the settings record, the app byte
+/// among them, to the next slot in flash (Thumb address). The next start
+/// opens the app the saved byte names.
+pub const SAVE_SETTINGS: usize = 0x80da_2779;
 /// Task 1's system state: 1 app screens, 2 recording screen, 6 a pop-up
 /// (which installs its own key handler).
 pub const SYSTEM_STATE: *const u8 = 0x8196_a3e0 as *const u8;

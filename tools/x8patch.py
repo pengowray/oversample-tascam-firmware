@@ -99,6 +99,9 @@ BUILDS = {
             # property, `FUN_80e02a34(root + 0xd370)`.
             ("USER SETTINGS 2 tap, delete mode", 0x8161DA06, 0x80E02A34, "delete_mode_hook"),
             ("USER SETTINGS 3 tap, delete mode", 0x8161D8AA, 0x80E02A34, "delete_mode_hook"),
+            # The power-off sequence FUN_80dca8b8's settings save, between
+            # `cpsid i` and `cpsie i`. The save function's other callers are left alone.
+            ("power-off settings save", 0x80DCA996, 0x80DA2778, "power_off_save_hook"),
         ],
         "facts": [
             # The veneer FUN_80e06310 goes to ITCM 0x1e484, which returns 0x1e498,
@@ -121,8 +124,9 @@ HEADER_FIELDS = ["magic", "version", "key_hook", "rec_key_hook", "touch_hook", "
                  "free_slot_hook", "title_hook", "line1_hook", "line2_hook", "line3_hook", "line4_hook",
                  "line5_hook", "line6_hook", "label_hook", "title_y_hook", "delete_mode_hook", "delete_hook",
                  "badge2_hook", "badge3_hook", "icon2_hook", "icon3_hook", "icon_image2_hook", "icon_image3_hook",
-                 "icon_height2_hook", "icon_height3_hook", "icon_width2_hook", "icon_width3_hook"]
-HEADER_FORMAT = "<4s28I"
+                 "icon_height2_hook", "icon_height3_hook", "icon_width2_hook", "icon_width3_hook",
+                 "power_off_save_hook"]
+HEADER_FORMAT = "<4s29I"
 
 B_W, BL = 0x9000, 0xD000   # bits 15, 14 and 12 of the second halfword
 

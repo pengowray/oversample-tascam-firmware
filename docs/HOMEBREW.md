@@ -1808,6 +1808,45 @@ right side. It was not lost frames, so that failure does not point to the CPU. W
 known: the carrier was quiet, and the phone's distance and volume were not noted. The other questions in this step's list
 are still open.
 
+## Step 18 test file: start on the LAUNCHER after using a bat tile (built 2026-11-07, not yet installed)
+
+`work/patch18/#PortaX8_0236.203` (B236, SHA-256 `fbf2ba14…3f900f18ee`). Includes steps 11 to 17. Install this file in
+place of B235. All the checks in `tools/x8patch.py` pass on this file. This step's change has not run on a real recorder.
+
+**The problem.** The bat tiles open MANUAL with the bat screen over it, so the settings record is saved with MANUAL as the
+open app. The next start then showed MANUAL's own screen, and leaving it took a long HOME press.
+
+**What changed.** If a bat tile opened the current app when the unit powers off, the settings are saved with the LAUNCHER
+as the open app (settings + 0x214 = 0). The next start opens the LAUNCHER, one tap from BAT DETECTOR. MANUAL opened from its
+own tile still comes back as MANUAL. No other stored setting changes: the stock firmware saves this same value when it is
+powered off on the LAUNCHER, and factory settings also use 0.
+
+- **The hook.** `power_off_save_hook` replaces the `bl 0x80da2778` at 0x80dca996 in the power-off sequence `FUN_80dca8b8`,
+  which runs with interrupts off. It writes 0 to the live app byte, calls the stock save and puts the byte back. No task
+  can see the 0, and the save writes to flash the same way as before.
+- **MANUAL's settings are kept.** MANUAL's per-app copies in the record are written when each setting changes, and the
+  app change handler (case 0xd04 in `FUN_80dbe324`) has no step that stores MANUAL's settings on the way to app 0. So
+  skipping that handler at power-off loses nothing.
+- **The periodic save is left alone.** The settings save task `FUN_80dd0254` runs alongside task 1, which would read the 0,
+  close the bat screen and ignore REC for the length of the flash write. A start after the battery was pulled, with no
+  normal power-off, therefore still opens MANUAL.
+- **Why not reopen the bat screen at start-up.** That needs a flag that survives power-off, stored in the flash settings
+  record or as a file on the SD card. Bat settings are not stored in the recorder's flash, and the patch cannot write files
+  to the SD card yet.
+
+**What to check.**
+
+- From BAT DETECTOR, power off and on. Does the LAUNCHER open? Does the same happen with the bat screen swapped to
+  MANUAL's screen with PLAY, and from BAT PLAYBACK?
+- Open MANUAL from its own tile, power off and on. Does MANUAL open?
+- Go to the LAUNCHER with a long HOME press from the bat screen, open MANUAL from its tile, power off and on. Does MANUAL open?
+- Change a MANUAL setting from the bat screen's MANUAL (turn on a track, for example), power off from there and on, then open
+  MANUAL. Is the change still there?
+- Does the unit power off normally with the bat screen up? This change only works if that path runs.
+
+**If it goes wrong.** A hang at power-off needs the battery taken out. The next start then opens MANUAL, from the last
+periodic save. Recover as in "If it goes wrong" in the earlier steps.
+
 ## Firmware map (V2.03, in progress)
 
 Found with `tools/x8ram.py` (unpacks the RAM runs) and a headless Ghidra 10.4

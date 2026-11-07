@@ -36,7 +36,7 @@ mod task;
 use keys::{key_hook, rec_key_hook, touch_hook};
 use launcher::{
     badge_hook, delete_hook, delete_mode_hook, free_slot_hook, icon_height_hook, icon_hook, icon_image_hook,
-    icon_width_hook, slot_hook, text_hook, tile_hook, title_y_hook,
+    icon_width_hook, power_off_save_hook, slot_hook, text_hook, tile_hook, title_y_hook,
 };
 
 type Handler = unsafe extern "C" fn(usize, usize, usize, usize) -> usize;
@@ -78,13 +78,15 @@ pub struct Header {
     icon_image_hooks: [Handler; 2],
     icon_height_hooks: [Handler; 2],
     icon_width_hooks: [Handler; 2],
+    /// Replaces the power-off sequence's call that saves the settings.
+    power_off_save_hook: Handler,
 }
 
 #[unsafe(no_mangle)]
 #[unsafe(link_section = ".header")]
 pub static X8_PATCH_HEADER: Header = Header {
     magic: *b"BATX",
-    version: 14,
+    version: 15,
     key_hook,
     rec_key_hook,
     touch_hook,
@@ -102,6 +104,7 @@ pub static X8_PATCH_HEADER: Header = Header {
     icon_image_hooks: [icon_image_hook::<0>, icon_image_hook::<1>],
     icon_height_hooks: [icon_height_hook::<0>, icon_height_hook::<1>],
     icon_width_hooks: [icon_width_hook::<0>, icon_width_hook::<1>],
+    power_off_save_hook,
 };
 
 /// Statics written by one context at a time, as the comments on each use say.
