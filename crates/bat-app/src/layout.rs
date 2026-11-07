@@ -270,5 +270,7 @@ pub const CPU_TEST_ROW_H: i32 = 11;
 /// The test calls' switch, under the table. The whole row is the target.
 pub const CPU_TEST_CALLS: Rectangle = Rectangle::new(Point::new(6, 398), Size::new(308, 30));
 pub const CPU_TEST_CALLS_SWITCH: Rectangle = Rectangle::new(Point::new(264, 403), Size::new(40, 20));
-pub const CPU_TEST_BACK: Rectangle = Rectangle::new(Point::new(6, BUTTONS_Y), Size::new(112, BUTTON_H as u32));
-pub const CPU_TEST_START: Rectangle = Rectangle::new(Point::new(126, BUTTONS_Y), Size::new(188, BUTTON_H as u32));
+pub const CPU_TEST_BACK: Rectangle = Rectangle::new(Point::new(6, BUTTONS_Y), Size::new(90, BUTTON_H as u32));
+/// Switches between the Totals and Stages tables, when the host lends the app a clock.
+pub const CPU_TEST_VIEW: Rectangle = Rectangle::new(Point::new(102, BUTTONS_Y), Size::new(96, BUTTON_H as u32));
+pub const CPU_TEST_START: Rectangle = Rectangle::new(Point::new(204, BUTTONS_Y), Size::new(110, BUTTON_H as u32));

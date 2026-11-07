@@ -226,23 +226,86 @@ fn the_table_columns_keep_apart() {
 
     let small = FontRenderer::new::<u8g2_font_helvR08_tf>();
     let width = |s: &str| small.get_rendered_dimensions(s, Point::zero(), VerticalPosition::Baseline).unwrap().advance.x;
-    let columns = cpu_test_columns();
     // The widest row name, with the `*` drawn 1 px after it, ends here. The `*` shows only when
     // the recorder's state changed, and its glyph has room to its right.
     let name_end = 4 + 6 + 1 + width("COMB stereo*");
-    let mut previous_right = None;
-    for (right, contents) in columns {
-        let widest = contents.iter().map(|s| width(s)).max().unwrap();
-        let (before, gap) = previous_right.map_or((name_end, 2), |x| (x, CPU_TEST_COLUMN_GAP));
-        assert!(right - widest >= before + gap, "{contents:?}: {} px from the column before", right - widest - before);
-        previous_right = Some(right);
+    for columns in cpu_test_columns() {
+        let mut previous_right = None;
+        for (right, contents) in columns {
+            let widest = contents.iter().map(|s| width(s)).max().unwrap();
+            let (before, gap) = previous_right.map_or((name_end, 2), |x| (x, CPU_TEST_COLUMN_GAP));
+            assert!(right - widest >= before + gap, "{contents:?}: {} px from the column before", right - widest - before);
+            previous_right = Some(right);
+        }
+        assert!(previous_right.unwrap() <= 314);
     }
-    let previous_right = previous_right.unwrap();
-    assert!(previous_right <= 314);
 }
 
 #[test]
 fn the_longest_table_stays_above_the_switch() {
     let last_baseline = layout::CPU_TEST_FIRST_ROW + (26 + 4 - 1) * layout::CPU_TEST_ROW_H;
     assert!(last_baseline < layout::CPU_TEST_CALLS.top_left.y);
+}
+
+#[test]
+fn a_stage_clock_adds_each_stage_and_rows_keep_their_shares() {
+    use core::sync::atomic::{AtomicU32, Ordering::Relaxed};
+    use crate::stages::{Stage, StageClock};
+
+    static TICKS: AtomicU32 = AtomicU32::new(u32::MAX - 5);
+    let mut clock = StageClock::new();
+    clock.set(&TICKS, 48_000);
+    clock.start();
+    // Across the counter's wrap.
+    TICKS.store(4, Relaxed);
+    clock.lap(Stage::Analysis);
+    TICKS.store(7, Relaxed);
+    clock.lap(Stage::Mode);
+    assert_eq!(clock.totals[Stage::Analysis as usize], 10);
+    assert_eq!(clock.totals[Stage::Mode as usize], 3);
+
+    // A row of 6 s measured, with a quarter of it in the analysis and 5% in the mode.
+    let mut test = crate::cpu_test::CpuTest::new();
+    test.plan(&Mode::WITHOUT_PITCH, true);
+    test.begin_row(0);
+    let rate = FS as u64;
+    let figures = HostFigures { dsp_percent: 40, draw_percent: 18, copy_percent: 8, ..Default::default() };
+    let settle = crate::cpu_test::SETTLE_S * rate;
+    assert!(!test.figures(figures, Recorder::Stopped, 0, &clock, settle, rate));
+    let start = clock.totals;
+    clock.totals[Stage::Analysis as usize] = start[Stage::Analysis as usize] + 48_000 * 6 / 4;
+    clock.totals[Stage::Mode as usize] = start[Stage::Mode as usize] + 48_000 * 6 / 20;
+    let end = (crate::cpu_test::SETTLE_S + crate::cpu_test::MEASURE_S) * rate;
+    let next = HostFigures { window: 1, ..figures };
+    assert!(test.figures(next, Recorder::Stopped, 0, &clock, end, rate));
+    let result = test.rows[0].result.expect("the row finished");
+    let stages = result.stages.expect("the clock was running");
+    assert_eq!(stages[Stage::Analysis as usize], 25);
+    assert_eq!(stages[Stage::Mode as usize], 5);
+    assert_eq!(stages[Stage::Input as usize], 0);
+    assert_eq!(result.copy_percent, 8);
+}
+
+#[test]
+fn the_view_button_shows_only_with_a_stage_clock_and_switches_tables() {
+    use core::sync::atomic::AtomicU32;
+    use crate::cpu_test::View;
+
+    static TICKS: AtomicU32 = AtomicU32::new(0);
+    let mut storage = vec![0.0f32; SECOND];
+    let mut buffers = Box::new(Buffers::new());
+    let mut app = app_with_storage(&mut storage, &mut buffers);
+    two_inputs(&mut app);
+    app.set_debug_available(true);
+    app.open_cpu_test();
+    let view = layout::CPU_TEST_VIEW.center();
+    app.touch(view.x, view.y);
+    assert_eq!(app.cpu_test.view, View::Totals, "no clock, so no button");
+    app.set_stage_clock(&TICKS, 48_000);
+    app.touch(view.x, view.y);
+    assert_eq!(app.cpu_test.view, View::Stages);
+    let mut pixels = vec![0u16; WIDTH * HEIGHT];
+    app.render(&mut Rgb565Buffer::new(&mut pixels, WIDTH, HEIGHT));
+    app.touch(view.x, view.y);
+    assert_eq!(app.cpu_test.view, View::Totals);
 }

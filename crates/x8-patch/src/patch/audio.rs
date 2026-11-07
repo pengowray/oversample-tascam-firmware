@@ -5,7 +5,7 @@ use bat_app::BatApp;
 
 use super::state::{
     AUDIO_INSTALLED, AUDIO_SLOT_UNEXPECTED, AUDIO_STATE, BAT_ACTIVE, BLOCKS, BLOCKS_AT_SECOND,
-    CYCLE_COUNTER_ON, CYCLES_AT_SECOND, CYCLES_PER_S, DEBUG_SHOWN, HEAR_MIX, HEARD_WORDS, HOOK_CYCLES, HOOK_CYCLES_PER_S,
+    CYCLE_COUNTER_ON, CYCLES_AT_SECOND, CYCLES_PER_S, DEBUG_SHOWN, HEAR_MIX, HEARD_WORDS, HOOK_CYCLES, HOOK_CYCLES_PER_S, HOOK_IN_ITCM,
     IN_DROPPED, IN_DROPPED_SEEN, IN_HOLE_AT, IN_READ, IN_RING, IN_WAITING_MOST, IN_WRITE, NO_INPUT_WORDS, OUT_FADE_IN, OUT_LAST, OUT_READ, OUT_WRITE,
     PLAYBACK, PRIMED, SOURCE_PEAK, STOCK_CYCLES, STOCK_CYCLES_PER_S, UNDERRUNS, WORD_PEAKS,
 };
@@ -56,6 +56,7 @@ const DWT_CTRL: *mut u32 = 0xe000_1000 as *mut u32;
 const DWT_CYCCNT: *const u32 = 0xe000_1004 as *const u32;
 const DWT_LAR: *mut u32 = 0xe000_1fb0 as *mut u32;
 
+#[inline(always)]
 fn cycles() -> u32 {
     // SAFETY: reading the cycle counter, from the interrupt.
     unsafe { ptr::read_volatile(DWT_CYCCNT) }
@@ -76,6 +77,19 @@ pub(super) fn install_audio_hook() {
     // SAFETY: a single aligned word store, which the interrupt reads whole.
     unsafe { ptr::write_volatile(stock::AUDIO_CALLBACK_SLOT, hook as usize) };
     AUDIO_STATE.store(AUDIO_INSTALLED, Relaxed);
+}
+
+/// Run the hook from its copy in ITCM, or from SDRAM. The ITCM copy is only valid once
+/// `load_itcm` has run and while the ITCM check passes, so the hook installed at start-up
+/// is the SDRAM one, and the bat screen switches between them.
+pub(super) fn use_itcm_hook(itcm: bool) {
+    if AUDIO_STATE.load(Relaxed) != AUDIO_INSTALLED {
+        return;
+    }
+    let hook: Handler = if itcm { audio_hook_itcm } else { audio_hook };
+    // SAFETY: as in install_audio_hook. Both hooks do the same, so the interrupt may
+    // run either one.
+    unsafe { ptr::write_volatile(stock::AUDIO_CALLBACK_SLOT, hook as usize) };
 }
 
 /// Process up to `budget` frames from the input ring, stopping after
@@ -160,10 +174,26 @@ pub(super) fn process_input(app: &mut BatApp<'static>, budget: u32, time_blocks:
     done
 }
 
-/// The audio DMA callback: runs the stock one, then, with the bat screen up at
-/// 192 kHz, passes the inputs chosen by `selected_inputs` to the app and plays
-/// the app's output.
+/// The audio DMA callback, run from SDRAM: see `hook_body`.
 unsafe extern "C" fn audio_hook(a: usize, b: usize, c: usize, d: usize) -> usize {
+    // SAFETY: as for hook_body.
+    unsafe { hook_body::<false>(a, b, c, d) }
+}
+
+/// The same, which x8patch.ld puts in ITCM: from SDRAM the hook cost about 900 cycles a
+/// call on B239, 48,000 times a second.
+unsafe extern "C" fn audio_hook_itcm(a: usize, b: usize, c: usize, d: usize) -> usize {
+    // SAFETY: as for hook_body.
+    unsafe { hook_body::<true>(a, b, c, d) }
+}
+
+/// Runs the stock callback, then, with the bat screen up at 192 kHz, passes the inputs
+/// chosen by `selected_inputs` to the app and plays the app's output.
+/// `ITCM` says which copy is running. Storing it also keeps the two copies different, so
+/// the compiler does not merge them into one function.
+#[inline(always)]
+unsafe fn hook_body<const ITCM: bool>(a: usize, b: usize, c: usize, d: usize) -> usize {
+    HOOK_IN_ITCM.store(ITCM, Relaxed);
     if !CYCLE_COUNTER_ON.load(Relaxed) {
         // SAFETY: turning on the Cortex-M7 cycle counter (trace enable, then
         // the DWT's lock and counter enable); this interrupt is privileged.

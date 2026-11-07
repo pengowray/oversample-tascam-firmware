@@ -2074,8 +2074,9 @@ the synthetic calls were off. `dsp (max)`:
   recorder stopped. The highest were in rows with low `dsp`: HET mono 7,436 at 37, TE 7,468 at 38, FD 7,688 at 52. So while
   recording something holds up the DSP task for up to about 40 ms at a time (8,192 frames is 42.7 ms at 192 kHz), whatever the
   mode costs. `skip%` was 0 to 3.
-- The ring is 64 KB in DTCM, which has 12.6 KB free, so it cannot grow there. `.noinit` (cached SDRAM) has 84 KB free below
-  0x81900000, enough for a ring of twice the size, at the cost of slower access from the interrupt. Not tried.
+- The ring is 64 KB in DTCM, which has 12.6 KB free. Moved to `.noinit` (cached SDRAM, 84 KB free below 0x81900000 on B240)
+  it could hold about 10,500 frames (55 ms), not twice as many. Or moving the DSP task's 32 KB stack out of DTCM would let the
+  ring grow where it is to about 13,500 frames (70 ms). Not tried.
 
 ## Step 22 test file: build number on the CPU test, decoder rows, column spacing (built 2026-11-08, not yet installed)
 
@@ -2105,6 +2106,64 @@ B239. All the checks in `tools/x8patch.py` pass on this file. No stock hook site
 - **CPU test while recording**, synthetic calls on. Press REC twice so that the X8 records, then SETTINGS, Tools, CPU test, Start
   test. Photograph the table when it ends. The FD decoder row is the heaviest case for the phone remote.
 - Do all the columns read apart?
+
+## Step 23 test file: audio hook in ITCM, Auto volume per block, CPU test Stages table (built 2026-11-08, not yet installed)
+
+`work/patch23/#PortaX8_0241.203` (B241, SHA-256 `03651092…4397fe01fa`). Includes steps 11 to 22. Install this file in place of
+B240 or B239. All the checks in `tools/x8patch.py` pass on this file. No stock hook site changed (header version 17).
+
+The aim is headroom for the phone remote's decoders while recording: on B239 they needed about 11 `dsp` points more than FD
+with Auto volume on had left. While recording, the interrupts take about half the CPU, so one point of real CPU saved in the
+DSP task shows as about 2 `dsp` points.
+
+- **Audio hook in ITCM.** The patch's part of the audio interrupt ran from SDRAM, 48,000 times a second. `hook` read 7% stopped
+  and 9% recording, which is about 900 to 1,100 cycles a call for some 100 instructions: that fits refilling the instruction
+  cache on each call (an estimate, not measured). `hook` is real CPU, measured in cycles, so every point saved there also
+  shortens the DSP task's wall time. The hook is now also built as `audio_hook_itcm`, which x8patch.ld puts in ITCM. Start-up
+  still installs the SDRAM hook, because ITCM is loaded only when a bat tile first opens. Entering the bat screen switches the
+  callback to the ITCM copy, and leaving it, or a failed ITCM check, switches back. The two copies store which one ran, which
+  keeps the compiler from merging them, and the debug strip shows `hook N itcm` while the ITCM copy runs. `memcpy` and `memset`,
+  which the app calls for every chunk, moved to ITCM too.
+- **Auto volume per block.** The gain is worked out once per 8 samples, from the block's loudest sample, and moves in a straight
+  line across the block. It was worked out for every sample, with a division that takes the M7 14 cycles and that it cannot
+  overlap with other work. On the PC without auto-vectorisation, Auto volume went from 0.99 to 0.69 ms per second of audio.
+  Against the old code on 8 s test signals (calls over noise that steps up 20 dB, a tone stepping between -60 and -6 dBFS, one
+  chain and two, On and Bats only), the output's level in each 10 ms window differs by at most 0.06 dB, and its loudest sample
+  by at most 0.15 dB.
+- **Stages table.** The CPU test has a `Stages` button between `Back` and `Test again`, which shows a second table with the same
+  rows. `Totals` switches back. All its figures are % of CPU, like `dsp`:
+
+  | Column | What it times |
+  |---|---|
+  | `dsp` | as in the Totals table |
+  | `in` | meters, the mix of the two inputs, the fade after lost input |
+  | `dec` | the chime decoders |
+  | `ana` | spectrum, detector, waterfall and snapshots |
+  | `te` | time expansion's recording, which runs in every mode, and its playback |
+  | `mode` | the listening mode |
+  | `vol` | Auto volume and its gate |
+  | `out` | fades after a change between one chain and two, the remote's beeps, copies to the output |
+  | `rest` | `dsp` minus the stages: the DSP task reading the input ring and queueing the output |
+  | `frame`, `copy` | `draw`, split into drawing the frame and copying it to the uncached display |
+
+  The app times the stages with the audio block counter, one step every 21 us. One stage of one chunk is shorter than a step,
+  but the steps fall at random points in the stages, so over a row's thousands of chunks the sums come out right. Like `dsp`,
+  they include the time the interrupts take while a stage runs. The patch lends the app the counter with `set_stage_clock`.
+
+| Item | B240 | B241 | Limit |
+|---|---|---|---|
+| ITCM | 75.0 KB | 82.0 KB | 89.2 KB |
+| DTCM | 140.2 KB | 141.5 KB | 152.8 KB |
+| `.noinit`, the end of the patch's memory | ends at 0x818eb710 | ends at 0x818ed438 | 0x81900000 |
+
+**What to check.**
+
+- **The hook.** With Debug info on and the bat screen up, does the CPU line read `hook N itcm`? Is N below B239's 7 when stopped
+  and 9 when recording? Do the headphones and the recording still sound right? This is the only change to the audio interrupt.
+- **CPU test while recording**, synthetic calls on: press REC twice, then SETTINGS, Tools, CPU test, Start test. Photograph the
+  Totals table, then press `Stages` and photograph that. B239's recording run is the baseline, for example FD 52 and 61 (Auto
+  volume off and on), COMB stereo 44 and 56.
+- **Auto volume.** Does On and Bats only sound as before?
 
 ## Checking takes for cuts in the WAV (2026-11-07)
 

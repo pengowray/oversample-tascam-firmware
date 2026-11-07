@@ -220,7 +220,7 @@ fn main() {
         // at once: then the last digits of the output ring level are cut off.
         const LINES: [&str; 4] = [
             "HET | in 5+6 | leaving standby | 192 kHz | auto bats only",
-            "CPU % irq 100 hook 100 dsp 100 (max 100) draw 100",
+            "CPU % irq 100 hook 100 itcm dsp 100 (max 100) draw 100",
             "dry 9999 lost 999999 skip 9999 in 999 s | ring in 8192 out 15360",
             "on 3f mix -99 dB: 99 99 99 99 99 99 99 99 99 99 99 99",
         ];

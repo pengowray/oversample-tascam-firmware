@@ -11,12 +11,12 @@ use u8g2_fonts::types::{FontColor, VerticalPosition};
 use u8g2_fonts::{FontRenderer, fonts};
 
 use super::inputs::{PLAYBACK_LEFT, PLAYBACK_RIGHT, on_tracks_muted, selected_inputs, tracks_on};
-use super::audio::OUTPUT_GAIN;
+use super::audio::{OUTPUT_GAIN, use_itcm_hook};
 use super::itcm::load_itcm;
 use super::state::{
     APP, APP_READY, AUDIO_INSTALLED, AUDIO_SLOT_UNEXPECTED, AUDIO_STATE, BACKLOG_DROPPED,
-    BAT_ACTIVE, BLOCKS, BUFFERS, CALLS_PER_S, CYCLES_PER_S, DEBUG_SHOWN, DRAW_PERMILLE, DSP_PERMILLE,
-    DUMMY_LCDIF, FRAME, HEAR_MIX, HEARD_WORDS, HOOK_CYCLES_PER_S, IN_DROPPED, IN_READ, IN_WAITING_MOST, IN_WRITE,
+    BAT_ACTIVE, BLOCKS, BUFFERS, CALLS_PER_S, COPY_PERMILLE, CYCLES_PER_S, DEBUG_SHOWN, DRAW_PERMILLE, DSP_PERMILLE,
+    DUMMY_LCDIF, FRAME, HEAR_MIX, HEARD_WORDS, HOOK_CYCLES_PER_S, HOOK_IN_ITCM, ITCM_OK, IN_DROPPED, IN_READ, IN_WAITING_MOST, IN_WRITE,
     LAST_EVENT, LAUNCH_AT, MIX_FILE_OFF, LOAD_WINDOW_START, LAUNCH_FROM, LAUNCHING, MUTE_SEEN, MUTE_SEEN_AT, NO_APP, NO_INPUT_WORDS, OUT_LAST, OUT_READ,
     OUT_WRITE, PENDING, PLAYBACK, POPUP_HIDDEN, PRIMED, SAVED_BUFFER, SAVED_LITERAL, SCREEN_APP, SESSION,
     SOURCE_PEAK, STOCK_CYCLES_PER_S, TASK, TEST_DSP_MAX, TEST_SETTINGS, TEST_START_BLOCKS, TEST_START_DRY,
@@ -129,6 +129,7 @@ pub(super) extern "C" fn enter_work() {
         // SAFETY: no other context uses the app without a DSP task.
         render();
     }
+    use_itcm_hook(ITCM_OK.load(Relaxed));
     BAT_ACTIVE.store(true, Release);
     // SAFETY: the display controller's next buffer register.
     unsafe { ptr::write_volatile(stock::LCDIF_NEXT_BUF, spare::DISPLAY) };
@@ -137,6 +138,8 @@ pub(super) extern "C" fn enter_work() {
 /// Give the display back to Qt and stop feeding the app.
 pub(super) fn leave_bat_screen() {
     BAT_ACTIVE.store(false, Release);
+    // ITCM is checked only while the bat screen is up.
+    use_itcm_hook(false);
     // SAFETY: as in enter_work.
     unsafe {
         let literal = SAVED_LITERAL.load(Relaxed) as usize;
@@ -206,6 +209,7 @@ fn host_figures() -> HostFigures {
         hook_percent: percent(HOOK_CYCLES_PER_S.load(Relaxed)),
         dsp_percent: DSP_PERMILLE.load(Relaxed) / 10,
         draw_percent: DRAW_PERMILLE.load(Relaxed) / 10,
+        copy_percent: COPY_PERMILLE.load(Relaxed) / 10,
         window: LOAD_WINDOW_START.load(Relaxed),
         dry: UNDERRUNS.load(Relaxed),
         lost: IN_DROPPED.load(Relaxed),
@@ -304,9 +308,10 @@ fn draw_debug(fb: &mut Rgb565Buffer<'_>, app: &BatApp<'static>) {
     let mut line = Line::new();
     let _ = write!(
         line,
-        "CPU % irq {} hook {} dsp {} (max {}) draw {}",
+        "CPU % irq {} hook {}{} dsp {} (max {}) draw {}",
         percent(STOCK_CYCLES_PER_S.load(Relaxed), all),
         percent(HOOK_CYCLES_PER_S.load(Relaxed), all),
+        if HOOK_IN_ITCM.load(Relaxed) { " itcm" } else { "" },
         dsp,
         dsp_max,
         DRAW_PERMILLE.load(Relaxed) / 10,
@@ -396,6 +401,8 @@ fn update_status(app: &mut BatApp<'static>) {
         }
     };
     app.set_input_rate(rate);
+    // The audio blocks, as the clock for the CPU test's Stages table.
+    app.set_stage_clock(&BLOCKS, blocks_per_second());
     if PLAYBACK.load(Relaxed) {
         app.set_input_kind(InputKind::Playback);
         app.set_mix_available(false);

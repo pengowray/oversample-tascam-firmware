@@ -15,5 +15,5 @@ pub const OUT_FRAMES: u32 = 15_360;
 const _: () = assert!(OUT_RING + OUT_FRAMES as usize * 8 == 0x8660_0000);
 // The audio hook reads 4 frames a block and relies on a block not crossing the end.
 const _: () = assert!(OUT_FRAMES % 4 == 0);
-/// The input ring is in the patch region (`IN_RING`), also cached.
+/// The input ring is `IN_RING`, in DTCM (see state.rs).
 pub const IN_FRAMES: u32 = 8_192;

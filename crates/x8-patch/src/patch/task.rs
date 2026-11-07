@@ -2,13 +2,13 @@ use core::sync::atomic::{Ordering::Acquire, Ordering::Relaxed, Ordering::Release
 
 use bat_app::BatApp;
 
-use super::audio::{ANALYSIS_OFF_ABOVE, process_input};
+use super::audio::{ANALYSIS_OFF_ABOVE, process_input, use_itcm_hook};
 use super::itcm::itcm_still_ok;
 use super::keys::{apply_actions, apply_touches};
 use super::remote::run_remote;
 use super::screen::{draw_frame, hide_for_popup, render, show_frame};
 use super::state::{
-    ACTIONS_READ, ACTIONS_WRITE, APP, BACKLOG_DROPPED, BAT_ACTIVE, BLOCKS, DRAW_BLOCKS,
+    ACTIONS_READ, ACTIONS_WRITE, APP, BACKLOG_DROPPED, BAT_ACTIVE, BLOCKS, COPY_BLOCKS, COPY_PERMILLE, DRAW_BLOCKS,
     DRAW_PERMILLE, DSP_BLOCKS, DSP_PERMILLE, DSP_STACK, DSP_STACK_BYTES, IN_READ, IN_WRITE,
     LAST_RENDER, LOAD_SECOND, LOAD_WINDOW_START, OUT_READ, OUT_WRITE, SESSION, SESSION_SEEN, STACK, Stack, TASK,
     TOUCH_DOWN, TOUCH_READ, TOUCH_WRITE,
@@ -231,6 +231,7 @@ extern "C" fn dsp_task(_: isize) {
             continue;
         }
         if !itcm_still_ok() {
+            use_itcm_hook(false);
             sleep_ms(20);
             continue;
         }
@@ -260,13 +261,16 @@ extern "C" fn dsp_task(_: isize) {
             let caught_up = BLOCKS.load(Relaxed);
             DSP_BLOCKS.store(DSP_BLOCKS.load(Relaxed).wrapping_add(caught_up.wrapping_sub(drawn)), Relaxed);
             show_frame();
-            DRAW_BLOCKS.store(DRAW_BLOCKS.load(Relaxed).wrapping_add(BLOCKS.load(Relaxed).wrapping_sub(caught_up)), Relaxed);
+            let copy = BLOCKS.load(Relaxed).wrapping_sub(caught_up);
+            DRAW_BLOCKS.store(DRAW_BLOCKS.load(Relaxed).wrapping_add(copy), Relaxed);
+            COPY_BLOCKS.store(COPY_BLOCKS.load(Relaxed).wrapping_add(copy), Relaxed);
         }
         let now = BLOCKS.load(Relaxed);
         let second = now.wrapping_sub(LOAD_SECOND.load(Relaxed));
         if second >= blocks_per_second() {
             DSP_PERMILLE.store(DSP_BLOCKS.swap(0, Relaxed) * 1000 / second, Relaxed);
             DRAW_PERMILLE.store(DRAW_BLOCKS.swap(0, Relaxed) * 1000 / second, Relaxed);
+            COPY_PERMILLE.store(COPY_BLOCKS.swap(0, Relaxed) * 1000 / second, Relaxed);
             LOAD_WINDOW_START.store(LOAD_SECOND.load(Relaxed), Relaxed);
             LOAD_SECOND.store(now, Relaxed);
         }

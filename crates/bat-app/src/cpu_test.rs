@@ -9,6 +9,7 @@
 
 use core::f32::consts::{PI, TAU};
 
+use crate::stages::{Stage, StageClock};
 use crate::{AutoVolume, Mode, MonitorSource, Recorder};
 
 /// Seconds after a change of row that are left out, so the time expansion playback, the
@@ -31,6 +32,8 @@ pub struct HostFigures {
     pub hook_percent: u32,
     pub dsp_percent: u32,
     pub draw_percent: u32,
+    /// The part of `draw_percent` spent copying the finished frame to the display.
+    pub copy_percent: u32,
     /// Changes each time the host publishes new shares.
     pub window: u32,
     pub dry: u32,
@@ -48,6 +51,10 @@ pub struct RowResult {
     pub dsp_percent: u32,
     pub dsp_max: u32,
     pub draw_percent: u32,
+    pub copy_percent: u32,
+    /// Share of the CPU in each stage of the app's processing, in percent, when the host
+    /// lends the app a clock (see [`Stage`]).
+    pub stages: Option<[u32; Stage::COUNT]>,
     pub dry: u32,
     pub lost: u32,
     pub dropped: u32,
@@ -96,8 +103,18 @@ struct Sums {
     hook: u32,
     dsp: u32,
     draw: u32,
+    copy: u32,
     dsp_max: u32,
     waiting_most: u32,
+}
+
+/// Which table the CPU test shows.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum View {
+    /// The shares of CPU, and input lost.
+    Totals,
+    /// The app's processing by stage, and the drawing split from the copy to the display.
+    Stages,
 }
 
 pub(crate) struct CpuTest {
@@ -107,11 +124,13 @@ pub(crate) struct CpuTest {
     pub(crate) at: usize,
     pub(crate) running: bool,
     pub(crate) test_calls: bool,
+    pub(crate) view: View,
     pub(crate) saved: Option<Saved>,
     row_start: u64,
     measuring: bool,
     start_figures: HostFigures,
     start_skipped: u32,
+    start_stages: [u64; Stage::COUNT],
     sums: Sums,
     last_window: u32,
     /// The state at the start of the measuring, and whether it has stayed the same.
@@ -127,6 +146,7 @@ impl CpuTest {
             at: 0,
             running: false,
             test_calls: true,
+            view: View::Totals,
             saved: None,
             row_start: 0,
             measuring: false,
@@ -135,6 +155,7 @@ impl CpuTest {
                 hook_percent: 0,
                 dsp_percent: 0,
                 draw_percent: 0,
+                copy_percent: 0,
                 window: 0,
                 dry: 0,
                 lost: 0,
@@ -142,7 +163,8 @@ impl CpuTest {
                 waiting_most: 0,
             },
             start_skipped: 0,
-            sums: Sums { windows: 0, irq: 0, hook: 0, dsp: 0, draw: 0, dsp_max: 0, waiting_most: 0 },
+            start_stages: [0; Stage::COUNT],
+            sums: Sums { windows: 0, irq: 0, hook: 0, dsp: 0, draw: 0, copy: 0, dsp_max: 0, waiting_most: 0 },
             last_window: 0,
             recorder: None,
             calls: TestCalls::new(),
@@ -198,13 +220,22 @@ impl CpuTest {
     }
 
     /// Take the host's figures. Returns true when the row has finished.
-    pub(crate) fn figures(&mut self, figures: HostFigures, recorder: Recorder, skipped: u32, now: u64, rate_hz: u64) -> bool {
+    pub(crate) fn figures(
+        &mut self,
+        figures: HostFigures,
+        recorder: Recorder,
+        skipped: u32,
+        stages: &StageClock,
+        now: u64,
+        rate_hz: u64,
+    ) -> bool {
         let elapsed = now.saturating_sub(self.row_start);
         if !self.measuring {
             if elapsed >= SETTLE_S * rate_hz {
                 self.measuring = true;
                 self.start_figures = figures;
                 self.start_skipped = skipped;
+                self.start_stages = stages.totals;
                 self.sums = Sums::default();
                 self.last_window = figures.window;
                 self.recorder = Some(recorder);
@@ -223,6 +254,7 @@ impl CpuTest {
             sums.hook += figures.hook_percent;
             sums.dsp += figures.dsp_percent;
             sums.draw += figures.draw_percent;
+            sums.copy += figures.copy_percent;
             sums.dsp_max = sums.dsp_max.max(figures.dsp_percent);
         }
         if elapsed < (SETTLE_S + MEASURE_S) * rate_hz {
@@ -233,12 +265,22 @@ impl CpuTest {
         let measured_frames = (elapsed - SETTLE_S * rate_hz).max(1);
         let skipped_frames = skipped.wrapping_sub(self.start_skipped) as u64 * SKIP_CHUNK_FRAMES;
         let from = self.start_figures;
+        // Ticks in a stage, against the ticks in the measured time.
+        let stage_shares = stages.running().then(|| {
+            let ticks_measured = (measured_frames * stages.per_second as u64 / rate_hz).max(1);
+            core::array::from_fn(|i| {
+                let ticks = stages.totals[i].wrapping_sub(self.start_stages[i]);
+                ((ticks * 100 + ticks_measured / 2) / ticks_measured).min(100) as u32
+            })
+        });
         let result = RowResult {
             irq_percent: average(sums.irq),
             hook_percent: average(sums.hook),
             dsp_percent: average(sums.dsp),
             dsp_max: sums.dsp_max,
             draw_percent: average(sums.draw),
+            copy_percent: average(sums.copy),
+            stages: stage_shares,
             dry: figures.dry.wrapping_sub(from.dry),
             lost: figures.lost.wrapping_sub(from.lost),
             dropped: figures.dropped.wrapping_sub(from.dropped),

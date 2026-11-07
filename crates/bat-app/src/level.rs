@@ -56,6 +56,12 @@ const HOLD_S: f32 = 1.5;
 /// the change.
 const FALL_S: f32 = 0.001;
 const RISE_S: f32 = 0.5;
+/// The gain is worked out once per this many samples, from the block's loudest sample,
+/// and moves in a straight line across the block. Per sample it cost a division, which
+/// the X8's processor does slowly and cannot overlap with other work: Auto volume added
+/// 9 to 13 `dsp` points while recording on B239. 8 samples is 42 us at 192 kHz, against
+/// the fastest time constant, `FALL_S`, of 192 samples.
+const GAIN_BLOCK: usize = 8;
 
 /// How far below the target the noise floor may be lifted. A sound this far above the
 /// floor reaches the target; a sound closer to the floor comes out below the target by
@@ -121,9 +127,12 @@ pub(crate) struct AutoLevel {
     target: f32,
     envelope: f32,
     gain: f32,
-    keep: f32,
-    fall: f32,
-    rise: f32,
+    /// Per block of n samples, at index n: the envelope's decay, the share of the way
+    /// to the wanted gain at the fast and slow rates, and 1 / n.
+    keep: [f32; GAIN_BLOCK + 1],
+    fall: [f32; GAIN_BLOCK + 1],
+    rise: [f32; GAIN_BLOCK + 1],
+    per_sample: [f32; GAIN_BLOCK + 1],
 
     /// The most the noise floor may come out at, in dB.
     ceiling_db: f32,
@@ -149,14 +158,17 @@ impl AutoLevel {
         let per_window = |seconds: f32| 1.0 - expf(-FLOOR_WINDOW_S / seconds);
         let window_len = ((FLOOR_WINDOW_S * sample_rate) as u32).max(1);
         let target = 0.25;
+        // n samples at a rate r per sample leave (1 - r)^n of the way to go.
+        let per_block = |rate: f32| core::array::from_fn(|n| 1.0 - libm::powf(1.0 - rate, n as f32));
         Self {
             volume: AutoVolume::Off,
             target,
             envelope: 0.0,
             gain: 1.0,
-            keep: 1.0 - per_sample(HOLD_S),
-            fall: per_sample(FALL_S),
-            rise: per_sample(RISE_S),
+            keep: core::array::from_fn(|n| libm::powf(1.0 - per_sample(HOLD_S), n as f32)),
+            fall: per_block(per_sample(FALL_S)),
+            rise: per_block(per_sample(RISE_S)),
+            per_sample: core::array::from_fn(|n| if n == 0 { 0.0 } else { 1.0 / n as f32 }),
             ceiling_db: ceiling_db(target),
             floor_db: None,
             floor_gain: MAX_GAIN,
@@ -231,10 +243,19 @@ impl AutoLevel {
             let mut rest = &mut *out;
             while !rest.is_empty() {
                 let n = rest.len().min(self.window_left as usize);
-                let (block, later) = rest.split_at_mut(n);
-                for sample in block {
-                    self.sum += *sample * *sample;
-                    *sample *= self.next_gain(sample.abs());
+                let (window_part, later) = rest.split_at_mut(n);
+                for block in window_part.chunks_mut(GAIN_BLOCK) {
+                    let (mut sum, mut peak) = (0.0f32, 0.0f32);
+                    for &x in block.iter() {
+                        sum += x * x;
+                        peak = peak.max(x.abs());
+                    }
+                    self.sum += sum;
+                    let (mut gain, step) = self.block_gain(block.len(), peak);
+                    for x in block {
+                        gain += step;
+                        *x *= gain;
+                    }
                 }
                 self.window_advance(n as u32, use_floor);
                 rest = later;
@@ -251,14 +272,23 @@ impl AutoLevel {
             let (mut rest_left, mut rest_right) = (&mut *left, &mut *right);
             while !rest_left.is_empty() {
                 let n = rest_left.len().min(self.window_left as usize);
-                let (block_left, later_left) = rest_left.split_at_mut(n);
-                let (block_right, later_right) = rest_right.split_at_mut(n);
-                for (l, r) in block_left.iter_mut().zip(block_right.iter_mut()) {
-                    self.sum += *l * *l;
-                    self.sum_right += *r * *r;
-                    let gain = self.next_gain(l.abs().max(r.abs()));
-                    *l *= gain;
-                    *r *= gain;
+                let (part_left, later_left) = rest_left.split_at_mut(n);
+                let (part_right, later_right) = rest_right.split_at_mut(n);
+                for (block_left, block_right) in part_left.chunks_mut(GAIN_BLOCK).zip(part_right.chunks_mut(GAIN_BLOCK)) {
+                    let (mut sum_left, mut sum_right, mut peak) = (0.0f32, 0.0f32, 0.0f32);
+                    for (&l, &r) in block_left.iter().zip(block_right.iter()) {
+                        sum_left += l * l;
+                        sum_right += r * r;
+                        peak = peak.max(l.abs()).max(r.abs());
+                    }
+                    self.sum += sum_left;
+                    self.sum_right += sum_right;
+                    let (mut gain, step) = self.block_gain(block_left.len(), peak);
+                    for (l, r) in block_left.iter_mut().zip(block_right.iter_mut()) {
+                        gain += step;
+                        *l *= gain;
+                        *r *= gain;
+                    }
                 }
                 self.window_advance(n as u32, use_floor);
                 (rest_left, rest_right) = (later_left, later_right);
@@ -284,16 +314,20 @@ impl AutoLevel {
         use_floor
     }
 
-    /// The gain for the next sample, whose level is `peak`.
+    /// The gain for the next block of `n` samples (1 to `GAIN_BLOCK`), whose loudest
+    /// sample is `peak`: the gain before the block, and the step per sample that takes it
+    /// to the gain at the block's end.
     #[inline]
-    fn next_gain(&mut self, peak: f32) -> f32 {
-        self.envelope = if peak > self.envelope { peak } else { self.envelope * self.keep };
+    fn block_gain(&mut self, n: usize, peak: f32) -> (f32, f32) {
+        let decayed = self.envelope * self.keep[n];
+        self.envelope = if peak > decayed { peak } else { decayed };
         let for_target = self.target / self.envelope.max(1e-9);
         // The fast rate is only for a sound louder than the gain allows for.
-        let rate = if for_target < self.gain { self.fall } else { self.rise };
+        let rate = if for_target < self.gain { self.fall[n] } else { self.rise[n] };
         let wanted = for_target.min(self.floor_gain).clamp(MIN_GAIN, MAX_GAIN);
-        self.gain += (wanted - self.gain) * rate;
-        self.gain
+        let start = self.gain;
+        self.gain += (wanted - start) * rate;
+        (start, (self.gain - start) * self.per_sample[n])
     }
 
     /// `n` samples of the floor's window have been added to `sum`.

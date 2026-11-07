@@ -59,6 +59,9 @@ pub(super) static DSP_BLOCKS: AtomicU32 = AtomicU32::new(0);
 pub(super) static DRAW_BLOCKS: AtomicU32 = AtomicU32::new(0);
 pub(super) static DSP_PERMILLE: AtomicU32 = AtomicU32::new(0);
 pub(super) static DRAW_PERMILLE: AtomicU32 = AtomicU32::new(0);
+/// The part of the drawing spent copying the frame to the display.
+pub(super) static COPY_BLOCKS: AtomicU32 = AtomicU32::new(0);
+pub(super) static COPY_PERMILLE: AtomicU32 = AtomicU32::new(0);
 pub(super) static LOAD_SECOND: AtomicU32 = AtomicU32::new(0);
 /// When the window of the latest published CPU share began, in blocks.
 pub(super) static LOAD_WINDOW_START: AtomicU32 = AtomicU32::new(0);
@@ -127,6 +130,8 @@ pub(super) static TEST_DSP_MAX: AtomicU32 = AtomicU32::new(0);
 pub(super) static CYCLES_PER_S: AtomicU32 = AtomicU32::new(0);
 pub(super) static STOCK_CYCLES_PER_S: AtomicU32 = AtomicU32::new(0);
 pub(super) static HOOK_CYCLES_PER_S: AtomicU32 = AtomicU32::new(0);
+/// The audio hook that ran last was its copy in ITCM (see `use_itcm_hook`).
+pub(super) static HOOK_IN_ITCM: AtomicBool = AtomicBool::new(false);
 pub(super) static CYCLES_AT_SECOND: AtomicU32 = AtomicU32::new(0);
 pub(super) static BLOCKS_AT_SECOND: AtomicU32 = AtomicU32::new(0);
 pub(super) static STOCK_CYCLES: AtomicU32 = AtomicU32::new(0);

@@ -24,6 +24,7 @@ mod level;
 pub mod palette;
 mod remote;
 mod screen;
+mod stages;
 
 use bat_dsp::classify::{CallClassifier, DEFAULT_TRAIN_MIN_DB};
 pub use bat_dsp::classify::CallKind;
@@ -39,6 +40,7 @@ pub use fb::Rgb565Buffer;
 use layout::{SNAP_H, SNAP_W, WF_H, WF_W};
 pub use level::AutoVolume;
 pub use remote::{RemoteCommand, RemoteResult};
+pub use stages::Stage;
 
 /// Screen size in pixels.
 pub const WIDTH: usize = 320;
@@ -493,6 +495,7 @@ pub struct BatApp<'a> {
     debug_info: bool,
     /// The host's build number, for the CPU test's results.
     host_build: Option<u32>,
+    stages: stages::StageClock,
     mix_file_available: bool,
     mix_file: bool,
     /// The mode buttons, left to right.
@@ -631,6 +634,7 @@ impl<'a> BatApp<'a> {
             field!((*this).debug_available).write(false);
             field!((*this).debug_info).write(false);
             field!((*this).host_build).write(None);
+            field!((*this).stages).write(stages::StageClock::new());
             field!((*this).mix_file_available).write(false);
             field!((*this).mix_file).write(true);
             field!((*this).modes).write(&Mode::ALL);
@@ -788,7 +792,7 @@ impl<'a> BatApp<'a> {
             return;
         }
         let recorder = self.recorder().0;
-        let finished = self.cpu_test.figures(figures, recorder, self.skipped_chunks, self.samples, self.sample_rate as u64);
+        let finished = self.cpu_test.figures(figures, recorder, self.skipped_chunks, &self.stages, self.samples, self.sample_rate as u64);
         if finished {
             self.cpu_test.at += 1;
             self.begin_cpu_test_row();
@@ -1063,6 +1067,16 @@ impl<'a> BatApp<'a> {
         self.host_build
     }
 
+    /// A counter that the host's clock moves on, `ticks_per_second` times a second, for the
+    /// CPU test's Stages table. See [`Stage`].
+    pub fn set_stage_clock(&mut self, ticks: &'static core::sync::atomic::AtomicU32, ticks_per_second: u32) {
+        self.stages.set(ticks, ticks_per_second);
+    }
+
+    pub(crate) fn stages_available(&self) -> bool {
+        self.stages.running()
+    }
+
     pub fn debug_info(&self) -> bool {
         self.debug_info
     }
@@ -1223,6 +1237,11 @@ impl<'a> BatApp<'a> {
                     self.start_cpu_test();
                 } else if layout::CPU_TEST_CALLS.contains(p) {
                     self.cpu_test.test_calls = !self.cpu_test.test_calls;
+                } else if layout::CPU_TEST_VIEW.contains(p) && self.stages.running() {
+                    self.cpu_test.view = match self.cpu_test.view {
+                        cpu_test::View::Totals => cpu_test::View::Stages,
+                        cpu_test::View::Stages => cpu_test::View::Totals,
+                    };
                 }
                 return;
             }
@@ -1415,8 +1434,10 @@ impl<'a> BatApp<'a> {
         let len = first.len();
         let chunk_s = len as f32 / self.sample_rate;
         let peak = |x: &[f32]| x.iter().fold(0.0f32, |m, v| m.max(v.abs()));
+        self.stages.start();
         self.meters[0].update(peak(first), chunk_s);
         self.meters[1].update(peak(second), chunk_s);
+        self.stages.lap(Stage::Input);
 
         if self.screen == Screen::ChimeTest {
             let channels = self.chime_channels();
@@ -1427,6 +1448,7 @@ impl<'a> BatApp<'a> {
         } else {
             self.remote.sleep_if_done(self.samples);
         }
+        self.stages.lap(Stage::Decoders);
 
         let source = self.source();
         let mono = &mut self.mono[..len];
@@ -1438,6 +1460,7 @@ impl<'a> BatApp<'a> {
             };
         }
 
+        self.stages.lap(Stage::Input);
         self.detected = false;
         self.analyse(len);
 
@@ -1448,6 +1471,7 @@ impl<'a> BatApp<'a> {
             self.trigger_te();
         }
 
+        self.stages.lap(Stage::Analysis);
         let analysis_runs = self.analysis_runs();
         let stereo = self.wants_stereo();
         if stereo && !self.stereo {
@@ -1476,8 +1500,10 @@ impl<'a> BatApp<'a> {
         add_fading_step(mono, self.join_step, join_left);
         self.join_left = join_left.saturating_sub(len as u32);
         self.last_mono = mono[len - 1];
+        self.stages.lap(Stage::Input);
         let mono = &self.mono[..len];
         self.te.process(mono, &mut self.te_out[..len]);
+        self.stages.lap(Stage::TeRecord);
         if stereo {
             // The two inputs go straight to the modes, except in a chunk with a join fade.
             let (left, right) = if join_left > 0 {
@@ -1499,7 +1525,9 @@ impl<'a> BatApp<'a> {
                     out_r.copy_from_slice(right);
                 }
             }
+            self.stages.lap(Stage::Mode);
             self.level.apply_stereo(out_l, out_r, self.mode, analysis_runs);
+            self.stages.lap(Stage::Volume);
         } else {
             // The time expansion recording has had its copy, so this does not reach it.
             if join_left > 0 && self.join_step_filter != 0.0 {
@@ -1515,7 +1543,9 @@ impl<'a> BatApp<'a> {
                 Mode::Pitch => self.pitch.process(mono, out),
                 Mode::Thru => out.copy_from_slice(mono),
             }
+            self.stages.lap(Stage::Mode);
             self.level.apply(out, self.mode, analysis_runs);
+            self.stages.lap(Stage::Volume);
             out_l.copy_from_slice(out);
             out_r.copy_from_slice(out);
             self.last_ears = [mono[len - 1]; 2];
@@ -1538,6 +1568,7 @@ impl<'a> BatApp<'a> {
             self.remote.add_beep(out_l, out_r);
         }
         self.last_out = [out_l[len - 1], out_r[len - 1]];
+        self.stages.lap(Stage::Output);
 
         self.samples += len as u64;
         if self.recording {
@@ -1758,7 +1789,10 @@ impl<'a> BatApp<'a> {
                     || (self.remote.available && layout::TOOLS_REMOTE_ROW.contains(p));
             }
             Screen::CpuTest => {
-                return layout::CPU_TEST_BACK.contains(p) || layout::CPU_TEST_START.contains(p) || layout::CPU_TEST_CALLS.contains(p);
+                return layout::CPU_TEST_BACK.contains(p)
+                    || layout::CPU_TEST_START.contains(p)
+                    || layout::CPU_TEST_CALLS.contains(p)
+                    || (self.stages.running() && layout::CPU_TEST_VIEW.contains(p));
             }
             _ => {}
         }

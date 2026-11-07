@@ -3,7 +3,7 @@
 use embedded_graphics::pixelcolor::Rgb565;
 
 use super::{BODY_BOLD, CENTER, Fb, LEFT, RIGHT, SMALL, hline, no_input_notice, rate_warning, rounded, switch_control, text};
-use crate::cpu_test::Row;
+use crate::cpu_test::{Row, RowResult, View};
 use crate::layout::*;
 use crate::palette::*;
 use crate::{AutoVolume, BatApp, Recorder};
@@ -45,6 +45,27 @@ pub(super) const COLUMNS: [(&str, i32); 10] = [
     ("ring", RING_X),
     ("skip%", SKIP_X),
 ];
+
+/// The Stages table: `dsp` again, the app's stages in the order they run (see `Stage`), the rest
+/// of the DSP task's time, and `draw` split into drawing the frame and copying it to the
+/// display. Laid out as the Totals table is, with more room after `dsp` and before `frame`.
+const FRAME_X: i32 = 288;
+const FRAME_LEFT: i32 = FRAME_X - 26;
+pub(super) const STAGE_COLUMNS: [(&str, i32); 11] = [
+    ("dsp", DSP_X),
+    ("in", 116),
+    ("dec", 135),
+    ("ana", 154),
+    ("te", 169),
+    ("mode", 197),
+    ("vol", 214),
+    ("out", 232),
+    ("rest", 253),
+    ("frame", FRAME_X),
+    ("copy", SKIP_X),
+];
+pub(super) const VIEW_STAGES: &str = "Stages";
+pub(super) const VIEW_TOTALS: &str = "Totals";
 
 /// What the recorder was doing for every row.
 fn every_row(state: Recorder) -> &'static str {
@@ -150,8 +171,18 @@ fn table(app: &BatApp, fb: Fb) {
         text(fb, &SMALL, format_args!("{BUILD_PREFIX}{build}"), LABEL_X, CPU_TEST_GROUPS, LEFT, TEXT);
     }
     text(fb, &SMALL, "% of CPU", GROUPS_X, CPU_TEST_GROUPS, LEFT, TEXT_MUTED);
-    text(fb, &SMALL, "frames", LOST_X - 18, CPU_TEST_GROUPS, LEFT, TEXT_MUTED);
-    for (name, x) in COLUMNS {
+    let view = if app.stages_available() { app.cpu_test.view } else { View::Totals };
+    let columns: &[(&str, i32)] = match view {
+        View::Totals => {
+            text(fb, &SMALL, "frames", LOST_X - 18, CPU_TEST_GROUPS, LEFT, TEXT_MUTED);
+            &COLUMNS
+        }
+        View::Stages => {
+            text(fb, &SMALL, "draw", FRAME_LEFT, CPU_TEST_GROUPS, LEFT, TEXT_MUTED);
+            &STAGE_COLUMNS
+        }
+    };
+    for &(name, x) in columns {
         text(fb, &SMALL, name, x, CPU_TEST_COLUMNS, RIGHT, TEXT_MUTED);
     }
     hline(fb, LABEL_X, SKIP_X, CPU_TEST_COLUMNS + 2, LINE);
@@ -173,23 +204,42 @@ fn table(app: &BatApp, fb: Fb) {
             if result.recorder != first_state {
                 text(fb, &SMALL, "*", x + 1, y, LEFT, METER_YELLOW);
             }
-            for (value, column) in [
-                (result.dsp_percent, DSP_X),
-                (result.dsp_max, MAX_X),
-                (result.draw_percent, DRAW_X),
-                (result.irq_percent, IRQ_X),
-                (result.hook_percent, HOOK_X),
-            ] {
-                text(fb, &SMALL, format_args!("{value}"), column, y, RIGHT, TEXT);
+            match view {
+                View::Totals => totals_row(fb, &result, y),
+                View::Stages => stages_row(fb, &result, y),
             }
-            problem_count(fb, result.dry, DRY_X, y);
-            problem_count(fb, result.lost, LOST_X, y);
-            problem_count(fb, result.dropped, DROP_X, y);
-            let ring = Count { n: result.waiting_most, full_below: RING_FULL_BELOW };
-            text(fb, &SMALL, format_args!("{ring}"), RING_X, y, RIGHT, TEXT_MUTED);
-            problem_count(fb, result.skip_percent, SKIP_X, y);
         }
         y += CPU_TEST_ROW_H;
+    }
+}
+
+fn totals_row(fb: Fb, result: &RowResult, y: i32) {
+    for (value, column) in [
+        (result.dsp_percent, DSP_X),
+        (result.dsp_max, MAX_X),
+        (result.draw_percent, DRAW_X),
+        (result.irq_percent, IRQ_X),
+        (result.hook_percent, HOOK_X),
+    ] {
+        text(fb, &SMALL, format_args!("{value}"), column, y, RIGHT, TEXT);
+    }
+    problem_count(fb, result.dry, DRY_X, y);
+    problem_count(fb, result.lost, LOST_X, y);
+    problem_count(fb, result.dropped, DROP_X, y);
+    let ring = Count { n: result.waiting_most, full_below: RING_FULL_BELOW };
+    text(fb, &SMALL, format_args!("{ring}"), RING_X, y, RIGHT, TEXT_MUTED);
+    problem_count(fb, result.skip_percent, SKIP_X, y);
+}
+
+/// A row of the Stages table. `rest` is the DSP task's time outside the app's processing:
+/// reading the input ring, queueing the output and the phone remote's buttons.
+fn stages_row(fb: Fb, result: &RowResult, y: i32) {
+    let Some(stages) = result.stages else { return };
+    let rest = result.dsp_percent.saturating_sub(stages.iter().sum());
+    let frame = result.draw_percent.saturating_sub(result.copy_percent);
+    let values = [result.dsp_percent].into_iter().chain(stages).chain([rest, frame, result.copy_percent]);
+    for (value, &(_, x)) in values.zip(STAGE_COLUMNS.iter()) {
+        text(fb, &SMALL, format_args!("{value}"), x, y, RIGHT, TEXT);
     }
 }
 
@@ -213,6 +263,14 @@ pub(super) fn draw(app: &BatApp, fb: Fb) {
     text(fb, &SMALL, CALLS_LINES[1], x, y + 25, LEFT, TEXT_MUTED);
     switch_control(fb, CPU_TEST_CALLS_SWITCH, app.cpu_test.test_calls);
 
+    if app.stages_available() {
+        rounded(fb, CPU_TEST_VIEW, 4, BUTTON);
+        let label = match app.cpu_test.view {
+            View::Totals => VIEW_STAGES,
+            View::Stages => VIEW_TOTALS,
+        };
+        text(fb, &BODY_BOLD, label, CPU_TEST_VIEW.center().x, CPU_TEST_VIEW.top_left.y + 28, CENTER, TEXT);
+    }
     rounded(fb, CPU_TEST_START, 4, ACCENT);
     let has_results = app.cpu_test.has_results();
     text(fb, &BODY_BOLD, if has_results { START_AGAIN } else { START }, CPU_TEST_START.center().x, CPU_TEST_START.top_left.y + 28, CENTER, TEXT);
@@ -239,13 +297,14 @@ pub(super) fn running_line(app: &BatApp, fb: Fb) {
 /// Test helpers: each column's right edge, and the widest heading or value it can show. The
 /// shares of CPU stay below 100, since the DSP task sleeps after every pass.
 #[cfg(test)]
-pub(crate) fn column_contents() -> std::vec::Vec<(i32, std::vec::Vec<std::string::String>)> {
+/// For the Totals table, then the Stages table.
+pub(crate) fn column_contents() -> std::vec::Vec<std::vec::Vec<(i32, std::vec::Vec<std::string::String>)>> {
     use std::string::ToString;
     use std::vec;
     use std::format;
 
     let problem = |n| format!("{}", Count { n, full_below: PROBLEM_FULL_BELOW });
-    COLUMNS
+    let totals = COLUMNS
         .iter()
         .map(|&(name, x)| {
             let values = match name {
@@ -257,7 +316,9 @@ pub(crate) fn column_contents() -> std::vec::Vec<(i32, std::vec::Vec<std::string
             };
             (x, std::iter::once(name.to_string()).chain(values).collect())
         })
-        .collect()
+        .collect();
+    let stages = STAGE_COLUMNS.iter().map(|&(name, x)| (x, vec![name.to_string(), "99".to_string()])).collect();
+    vec![totals, stages]
 }
 
 /// Test helpers: each line that has a limit, with its width and the room for it.

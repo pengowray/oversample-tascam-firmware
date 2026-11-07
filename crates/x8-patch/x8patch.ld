@@ -27,7 +27,12 @@ SECTIONS
      that the compiler does not inline, its meters, Auto volume (module level, also
      inlined at present), the DSP library it inlines from, the FFT, libm, the snapshot
      builder, the patch's input loop and the part of the chime decoder that runs for
-     every sample. The rest of the decoder does not fit. */
+     every sample. The rest of the decoder does not fit. Also the audio hook, which
+     runs 48,000 times a second inside the audio interrupt: from SDRAM it cost about
+     900 cycles a call on B239 (`hook` 7 to 9% of the CPU), which fits refilling the
+     instruction cache each time. Only its copy `audio_hook_itcm`, which the bat
+     screen switches to after loading ITCM; the one installed at start-up stays in
+     SDRAM. And memcpy and memset, which the app calls for every chunk. */
   .itcm : ALIGN(8)
   {
     __itcm_start = .;
@@ -41,6 +46,13 @@ SECTIONS
     *(.text.*build_snapshot*)
     *(.text.*process_input*)
     *(.text.*FrontEnd4push*)
+    *(.text.*5audio15audio_hook_itcm*)
+    *(.text.*compiler_builtins3mem6memcpy*)
+    *(.text.*compiler_builtins3mem6memset*)
+    *(.text.__aeabi_memcpy*)
+    *(.text.__aeabi_memset*)
+    *(.text.__aeabi_memclr*)
+    *(.text.__aeabi_memmove*)
     . = ALIGN(8);
     __itcm_end = .;
   } > ITCM AT> PATCH
