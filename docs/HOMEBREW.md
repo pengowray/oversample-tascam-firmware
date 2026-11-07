@@ -1912,16 +1912,16 @@ button and turn REC READY off. The Reference Manual (Rev H, page 93, "A master f
 function has been added") says the project then has only track files. I read the code path in V2.03
 and it matches the manual. Nothing here has run on a unit, and no test file was built.
 
-The estimated saving is 6 to 9 points of CPU while recording, so the app's budget of about 42% would
-become about 48 to 51%. The card also receives 1.536 MB/s less, about 5.5 GB less per hour.
+The estimated saving is 6 to 9 percentage points of CPU while recording, so the app's budget of about
+42% would become about 48 to 51%. The card also receives 1.536 MB/s less, about 5.5 GB less per hour.
 
 **What to try first, on the firmware that is installed now.** None of these steps needs a new build:
 
 1. Turn REC READY off in MANUAL. Open a bat tile, turn Debug info on, and record for about a minute
-   in HET and in COMB. Compare `irq`, `dsp`, `draw`, `dry` and `lost` with the same take with REC READY
-   on. This measurement replaces the estimate below.
+   in HET and in COMB. Compare the Debug info figures `irq`, `dsp`, `draw`, `dry` and `lost` with the
+   same take with REC READY on. This measurement replaces the estimate below.
 2. Check the card for a `_MIX.wav` file. Then change app, power off, power on, and record again. A
-   `_MIX.wav` file in the second take means the setting was not kept (see "Will the setting stay off?").
+   `_MIX.wav` file in the second take means the setting was not kept (see "Will the setting stay off?" below).
 3. Play the take with PLAY in MANUAL and on the BAT PLAYBACK tile. Then try the checks in "What
    changes without a MIX file". A project whose MIX file you deleted on a computer should behave the
    same way, as long as its `.bin` file is still there, so those checks can use old recordings.
@@ -1944,8 +1944,8 @@ settings+0x269 = 1 selects stereo. The recorder treats the master file like any 
 
 Three other cases set the master bits:
 
-- **MP3.** `FUN_80db63d0` forces the mask to the master alone when settings+0x188 is 6 or more, and
-  `FUN_80da70c4` refuses the toggle. The manual says the same.
+- **MP3.** `FUN_80db63d0` forces the mask to the master alone when settings+0x188 (the file format)
+  is 6 or more. The manual says the same.
 - **The other recording apps.** ASMR, MUSIC, VOICE and FIELD also get the master alone from
   `FUN_80db63d0`, so REC READY applies only to MANUAL and POCKET STUDIO.
 - **Overdub, punch and mix down.** `FUN_80db6594` saves the on/off words, changes them for the
@@ -1953,16 +1953,18 @@ Three other cases set the master bits:
 
 ### Will the setting stay off?
 
-Probably yes. The stock STEREO/MONO setting is not kept, according to the manual, but REC READY uses
-a different store:
+Probably yes. The manual says the unit does not retain the master file's STEREO/MONO setting. REC
+READY is stored separately:
 
-- Each toggle in MANUAL stores the inverted on/off words at settings+0xa90 and settings+0xa94 (only
-  when settings+0x265 is 0, which means outside overdub).
-- Opening an app (message 0xd04, `FUN_80dbe324`) loads the default words with operation 3 of
-  `FUN_80da70c4`, and later in the same handler applies the stored words with operation 2. So the
+- Each toggle in MANUAL stores the bitwise NOT of settings+0x200 and settings+0x204 at settings+0xa90
+  and settings+0xa94, so a set bit there means the track is off. The toggle skips this store during
+  overdub (settings+0x265 non-zero).
+- Opening an app (message 0xd04, `FUN_80dbe324`) calls `FUN_80da70c4` with first argument 3, which
+  returns the default on/off words. Later in the same handler it calls `FUN_80da70c4` with first
+  argument 2, which clears the bits stored at settings+0xa90 and settings+0xa94. So the
   master stays off after an app change, in either mono or stereo.
 - These words are in the `DR-TURBO` settings record, which the firmware saves at power-off, so the
-  setting should also survive a power cycle. Step 2 of the test above checks this.
+  setting should also survive a power cycle. Item 2 under "What to try first" checks this.
 
 ### Proposed hook: none
 
@@ -1970,25 +1972,28 @@ If the test shows that REC READY stays off, nothing should change. If it does no
 the smallest patch:
 
 - **Where.** In the bat app's RTOS task, once each time a bat tile opens MANUAL.
-- **Conditions.** All of these must be true: the system mode byte allows it, the app byte 0x81E8CA90
+- **Conditions.** All of these must be true: the system mode byte 0x81969DD9 is 0 or 1, the app byte 0x81E8CA90
   is 2, the recorder state byte 0x8196A3E5 is 0, settings+0x265 is 0, settings+0x188 is below 6, and
   (settings+0x200 & 0x40) or (settings+0x204 & 0xc0) is non-zero.
-- **What it does.** It posts key code 0x70 with `FUN_80d6c058`, so task 1 runs the stock toggle.
+- **What it does.** It posts key code 0x70 with `FUN_80d6c058(type, code)`, so RTOS task 1 runs the
+  stock toggle. The event type the stock path uses was not traced. The patch's key handler wrapper
+  must pass 0x70 on to the stock handler `FUN_80dac0d4`, because that wrapper is installed while a
+  bat tile is open.
 
 Risks of that patch:
 
-- The code is a toggle, so a second post before task 1 has run would turn the master back on. The
+- Code 0x70 is a toggle, so a second post before task 1 has run would turn the master back on. The
   patch must post once and must not retry from the bits.
 - It changes a setting that the unit saves at power-off, as the stock toggle does. The patch itself
   writes nothing to flash.
-- It must never run in an interrupt. `FUN_80dd4cac` calls `FUN_80da5e94`, which changes the input power.
+- It must never run in an interrupt. `FUN_80dd4cac` calls `FUN_80da5e94`, which switches power to the inputs.
 - The Qt code that sends 0x70 was not traced. The bits and the handler were read, but posting 0x70
   from a patch has not been tried.
 
 Two other hooks are rejected:
 
 - **Clearing the bit at the end of `FUN_80db63d0` (0x80db64de).** The screen would show REC READY on
-  while no MIX file is written. Overdub and mix down also pass through this function and need the bit.
+  while no MIX file is written. Overdub and mix down also pass through this function and need bit 19 of the file mask.
 - **Skipping slots in `FUN_80db19b8` or the writers.** The mask already does this. These functions
   call the SD card and FAT code, and `x8fw.py pack --base` does not protect that code yet (rule 1
   under "Keeping the bricking risk low"), so a mistake here carries more risk than a mistake in an app
@@ -2008,20 +2013,21 @@ matters if a project stays on the card.
 | PLAY in MANUAL | Plays the track files through the mixer. `FUN_80daf4d8` loads only the files that exist | Code and manual, page 53 |
 | BAT PLAYBACK tile | Should work, because it plays through MANUAL's PLAY and reads the output words | Reasoned from the patch, not run |
 | PLAY in BROWSE, and PLAY in ASMR, MUSIC, VOICE and FIELD | The manual says these cannot play the project. `FUN_80daf4d8` has a branch that picks the first track file when `_MIX` is missing, so the code may behave differently from the manual. Test this | Manual, code not settled |
-| NORMALIZE | Applies only to master files (manual, page 64). Pop-up CAUTION 18 "NO MASTER TRACK" (code 0x16) exists, and task 1 (`FUN_80d6c9f0`) shows it for events 0xaf and 0xb0 when the project has no stereo `_MIX`. Those events are probably NORMALIZE (medium confidence) | Manual and code |
-| MIX DOWN | No refusal was found. With no master file open, `FUN_80db63d0` falls through to slot 19, so mix down should write a new stereo master file | Code, medium confidence, not run |
+| NORMALIZE | Refused with pop-up CAUTION 18 "NO MASTER TRACK" (code 0x16). Task 1 (`FUN_80d6c9f0`) shows it for event 0xaf when the project has no stereo `_MIX`. Event 0xaf is probably NORMALIZE: it passes argument 2, the value that selects the `NORMALIZE` file name in `FUN_80dd14e8`. The manual (page 64) says NORMALIZE applies only to master files | Manual and code, not run |
+| MIX DOWN | Should work. Event 0xb0, probably MIX DOWN because only MANUAL and POCKET STUDIO accept it, does not check for a `_MIX` file. Its "NO MASTER TRACK" branch never runs, because the stub `FUN_80da959a` returns 0. With no master file open, `FUN_80db63d0` selects slot 19, so mix down should write a new stereo master file | Code, medium confidence, not run |
 | Overdub and punch | The master file is not rebuilt afterwards. `FUN_80dce6a8` at 0x80dceb88 rebuilds it only when bit 6 of either word is set | Code |
 | Computer | Track files are ordinary WAV files | No change |
 
 ### CPU estimate
 
-These are estimates from Step 14's B231 table (stereo tracks 3 and 4, 192 kHz, MIX file on), which
-has the only `irq` figures taken while recording:
+These are estimates from the table of B231 figures in Step 14 (stereo tracks 3 and 4, 192 kHz, MIX
+file on). That table has the only `irq` figures taken while recording. Points are percentage points
+of CPU time:
 
 | Part | Figure from B231 | Share that goes away | Points of CPU saved |
 |---|---|---|---|
 | Audio interrupt | `irq` 31 on standby, 43 while recording: 12 points for the recording | 2 of the 4 channels converted per frame. The loops over the slots stay | 3 to 5 |
-| SD card write task | About 8 points left over: 100 - 50 (interrupt and hook) - 42 (app). This also includes other tasks | Half of the bytes, and one file fewer for the file system to extend | 3 to 4 |
+| SD card write task | About 8 points left over: 100 - 50 (`irq` 43 + `hook` 7) - 42 (the app's estimated share). This also includes other tasks | Half of the bytes, and one file fewer for the file system to extend | 3 to 4 |
 | Total | | | 6 to 9 |
 
 The mixer, the meters and the hook keep running. If the card writes use DMA, the write task's share
