@@ -1607,7 +1607,7 @@ The emulator page has no MANUAL's mix, so none of this has been played there.
   the left ear and the right ear should play different sound. With one track on, both ears should play the
   same sound. Is the return to the bat screen free of clicks?
 
-## Step 17 test file: the chime test screen (built 2026-11-07, not yet installed)
+## Step 17 test file: the chime test screen (installed 2026-11-07: keeps up while recording, chime test reads the time)
 
 `work/patch17/#PortaX8_0235.203` (B235, SHA-256 `8649341c…8a744013`). Includes steps 11 to 16. Install this file in
 place of B234. No stock hook site or header field changed, so `BUILDS` in `tools/x8patch.py` needs no
@@ -1734,6 +1734,39 @@ setup by sound`, and press `Play chimes for 1 minute` on the `Tascam X8` tab.
   chimes that read on standby fail while recording?
 - **Going back.** Tap `Back` and `Done`. Does the waterfall show grey columns for the period on the test screen, and does
   detection restart? Does a recording made during the test sound the same as one made with the screen closed?
+
+**Results on a unit (2026-11-07).** Read from photos of the debug strip. All are at 192 kHz, with Listen to on `MANUAL's
+mix`, both sides, two inputs on (`on 0c`) and Auto volume off, so HET, COMB and 1:1 ran in stereo. These are the first
+figures from a unit since Step 13.
+
+| Mode, state | irq | hook | dsp (max) | draw | dry | lost | skip | ring in / out | Predicted dsp (Step 15) |
+|---|---|---|---|---|---|---|---|---|---|
+| HET, recording | 43 | 9 | 41 (43) | 13 | 0 | 0 | 16 in 10 s | 2,592 / 5,680 | about 35, up to 40 |
+| COMB, recording | 43 | 9 | 55 (56) | 12 | 0 | 0 | 120 in 8 s | 2,364 / 5,308 | about 50, up to 55 |
+| 1:1, recording | 43 | 9 | 35 (39) | 13 | 0 | 0 | 24 in 15 s | 2,544 / 5,728 | about 31, up to 36 |
+| 1:1, recording, 5 s later | 43 | 9 | 37 (40) | 12 | 0 | 0 | 24 in 20 s | 2,964 / 5,308 | about 31, up to 36 |
+| HET, standby | 31 | 8 | 29 (30) | 18 | 0 | 0 | 0 in 22 s | 2,012 / 6,260 | |
+| COMB, standby | 31 | 8 | 39 (40) | 18 | 0 | 0 | 0 in 9 s | 2,032 / 6,240 | |
+
+- `drop` did not appear in any photo. The strip shows it only when it is above 0, so no input was dropped.
+- B231's HET while recording, in Step 14's table, read dsp 72, draw 18, dry 53 and lost 458,564. So Step 14's analysis cuts
+  and its skip work on the unit, and the estimates in Steps 14 and 15 were about right. `dsp` is at or just above the top of each predicted
+  range. `hook` is 9, against a predicted 7 or 8.
+- `skip` counts chunks of at most 256 frames, so COMB, the highest here, skipped at most about 2% of the time. Skips come in
+  bursts: 1:1 added none in the 5 s between its two photos. The waterfall showed them as thin grey columns.
+- These runs say the patch kept up. They do not explain clicks, if any were heard during them. CPU overload shows in these
+  counts, so a click with all of them at 0 has another cause.
+
+Not tested yet: runs longer than 48 s, FD, TE, Auto volume on or `Bats only`, one input on, and a busy bat pass. The
+tightest estimate is still COMB with Auto volume on during a busy pass (Step 15). Takes have not been checked for clicks in
+the WAV (Step 14's list).
+
+**Chime test on the unit.** With Listen to on the mix, the screen showed a date, a time zone and a time that ticked. It
+read 10 chimes and failed 22 on the left side, and read 16 and failed 15 on the right. The last chime read had a carrier at
+-77.9 and -73.9 dBFS and an SNR of +18 and +21 dB. The last failure was `carrier stopped after 1 complete byte` on the
+right side. It was not lost frames, so that failure does not point to the CPU. Why about half of the chimes failed is not
+known: the carrier was quiet, and the phone's distance and volume were not noted. The other questions in this step's list
+are still open.
 
 ## Firmware map (V2.03, in progress)
 
