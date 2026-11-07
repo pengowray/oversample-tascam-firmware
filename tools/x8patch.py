@@ -131,8 +131,11 @@ HEADER_FIELDS = ["magic", "version", "key_hook", "rec_key_hook", "touch_hook", "
                  "line5_hook", "line6_hook", "label_hook", "title_y_hook", "delete_mode_hook", "delete_hook",
                  "badge2_hook", "badge3_hook", "icon2_hook", "icon3_hook", "icon_image2_hook", "icon_image3_hook",
                  "icon_height2_hook", "icon_height3_hook", "icon_width2_hook", "icon_width3_hook",
-                 "power_off_save_hook", "open_take_hook", "file_mask_hook"]
-HEADER_FORMAT = "<4s31I"
+                 "power_off_save_hook", "open_take_hook", "file_mask_hook", "build"]
+HEADER_FORMAT = "<4s32I"
+# The packer writes the update file's build number here, for the CPU test to show.
+BUILD_OFFSET = struct.calcsize(HEADER_FORMAT) - 4
+HEADER_VERSION = 17
 
 B_W, BL = 0x9000, 0xD000   # bits 15, 14 and 12 of the second halfword
 
@@ -284,6 +287,13 @@ def main(argv):
         return 1
     fields = dict(zip(HEADER_FIELDS, struct.unpack_from(HEADER_FORMAT, patch, 0)))
     print(f"patch: {len(patch):,} bytes at 0x{PATCH_BASE:08x}, header version {fields['version']}")
+    if fields["version"] != HEADER_VERSION or fields["build"] != 0:
+        print(f"the patch header is version {fields['version']}, and this packer reads version {HEADER_VERSION}")
+        return 1
+    patch = bytearray(patch)
+    struct.pack_into("<I", patch, BUILD_OFFSET, args.build)
+    patch = bytes(patch)
+    print(f"patch: build {args.build} written into the header")
 
     image = bytearray(image)
     try:

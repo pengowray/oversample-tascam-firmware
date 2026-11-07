@@ -138,8 +138,18 @@ fn summary(app: &BatApp, fb: Fb) {
     }
 }
 
+/// Above the row names, with the build number, so a photo of the results says which build
+/// measured them.
+const BUILD_PREFIX: &str = "Firmware B";
+
+/// Where "% of CPU" starts.
+const GROUPS_X: i32 = DSP_X - 16;
+
 fn table(app: &BatApp, fb: Fb) {
-    text(fb, &SMALL, "% of CPU", DSP_X - 16, CPU_TEST_GROUPS, LEFT, TEXT_MUTED);
+    if let Some(build) = app.host_build() {
+        text(fb, &SMALL, format_args!("{BUILD_PREFIX}{build}"), LABEL_X, CPU_TEST_GROUPS, LEFT, TEXT);
+    }
+    text(fb, &SMALL, "% of CPU", GROUPS_X, CPU_TEST_GROUPS, LEFT, TEXT_MUTED);
     text(fb, &SMALL, "frames", LOST_X - 18, CPU_TEST_GROUPS, LEFT, TEXT_MUTED);
     for (name, x) in COLUMNS {
         text(fb, &SMALL, name, x, CPU_TEST_COLUMNS, RIGHT, TEXT_MUTED);
@@ -281,6 +291,8 @@ pub(crate) fn lines_with_widths() -> std::vec::Vec<(std::string::String, i32, i3
         add(&SMALL, &format!("{name} mono*"), NAME_ROOM);
     }
     add(&SMALL, "COMB stereo, Auto volume off, decoders, 8 s left", full);
+    // Room for builds up to 999.
+    add(&SMALL, &format!("{BUILD_PREFIX}999"), GROUPS_X - 4 - LABEL_X);
     add(&SMALL, RUNNING_HELP, full);
     lines
 }

@@ -491,6 +491,8 @@ pub struct BatApp<'a> {
     /// Whether the host draws figures for testing, and whether it has any.
     debug_available: bool,
     debug_info: bool,
+    /// The host's build number, for the CPU test's results.
+    host_build: Option<u32>,
     mix_file_available: bool,
     mix_file: bool,
     /// The mode buttons, left to right.
@@ -628,6 +630,7 @@ impl<'a> BatApp<'a> {
             field!((*this).level).write(level::AutoLevel::new(sample_rate));
             field!((*this).debug_available).write(false);
             field!((*this).debug_info).write(false);
+            field!((*this).host_build).write(None);
             field!((*this).mix_file_available).write(false);
             field!((*this).mix_file).write(true);
             field!((*this).modes).write(&Mode::ALL);
@@ -1048,6 +1051,16 @@ impl<'a> BatApp<'a> {
 
     pub fn debug_available(&self) -> bool {
         self.debug_available
+    }
+
+    /// The host's build number, such as the X8 patch's B240. The CPU test shows it beside its
+    /// results, so a photo of them says which build measured them. 0 means unknown.
+    pub fn set_host_build(&mut self, build: u32) {
+        self.host_build = (build != 0).then_some(build);
+    }
+
+    pub fn host_build(&self) -> Option<u32> {
+        self.host_build
     }
 
     pub fn debug_info(&self) -> bool {

@@ -2045,20 +2045,49 @@ stopped for every row (the check above asked for recording). `dsp (max)`:
   `hook` 7). `dsp` plus `draw` is the share of each second that the task was busy: 45 to 64% in these rows, and 79% with COMB
   stereo and the decoders.
 - Step 17's standby figures, in stereo with Auto volume off and no synthetic calls, were HET 29 and COMB 39, against 32 and 34 here.
-- **Not measured: the decoders while recording.** In Step 17, recording raised `irq` from 31 to 43 and `dsp` by 12 to 16 points,
-  and FD with Bats only read 66 to 70. If the decoders stretch the same way, to about 35 points, a phone stop command in FD or COMB
-  with Auto volume on needs about 100% of the task for the 6 s that the decoders listen. Expect lost input and skipped analysis
-  then, and maybe a chime that is not read. The recording itself is written by the stock code.
 - **FD in stereo**, by the same sums: FD costs 12 points more than 1:1 mono, so stereo FD would read about 51 with Auto volume
   off and 58 with it on, with the recorder stopped. It fits without the decoders, and not with them.
 
-## Step 22 test file: CPU test decoder rows and column spacing (built 2026-11-08, not yet installed)
+**CPU test while recording (2026-11-08).** B239 again, read from a second photo. The recorder was recording for every row, and
+the synthetic calls were off. `dsp (max)`:
 
-`work/patch22/#PortaX8_0240.203` (B240, SHA-256 `531cd7c7…6f364143a81`). Includes steps 11 to 21. Install this file in place of
-B239. All the checks in `tools/x8patch.py` pass on this file. No stock hook site or header field changed (header version 16).
+| Mode | Auto volume off | On | Bats only |
+|---|---|---|---|
+| HET stereo | 42 (44) | 52 (53) | 52 (52) |
+| HET mono | 37 (38) | 46 (47) | 46 (48) |
+| COMB stereo | 44 (45) | 56 (57) | 56 (58) |
+| COMB mono | 42 (42) | 52 (53) | 50 (51) |
+| FD | 52 (52) | 61 (62) | 61 (63) |
+| TE | 38 (41) | 49 (49) | 49 (51) |
+| 1:1 stereo | 37 (38) | 46 (47) | 47 (50) |
+| 1:1 mono | 36 (37) | 45 (46) | 44 (45) |
+| COMB stereo, chime decoders running | 77 (79) | | |
+| TE, chime decoders running | 74 (75) | | |
 
+- Every row read `irq` 42 and `draw` 12 or 13. `hook` was 9, and 8 in the decoder rows. `dry` and `drop` were 0 in every row.
+- Recording adds 9 to 13 `dsp` points, as in Step 17.
+- **The decoders do not fit while recording.** They added 33 points to COMB stereo and 36 to TE. COMB stereo with the decoders
+  lost 80 frames and filled the ring (8,192 frames), and the analysis skipped up to 12% of the time (10% for TE). FD with Auto
+  volume on, at 61, would need about 95 with them. So a phone stop command can cost the headphones and the detector a gap, and
+  the chime may not be read.
+- **`ring` came close to full without the decoders.** It reached 4,272 to 7,688 frames, against 2,528 to 2,832 with the
+  recorder stopped. The highest were in rows with low `dsp`: HET mono 7,436 at 37, TE 7,468 at 38, FD 7,688 at 52. So while
+  recording something holds up the DSP task for up to about 40 ms at a time (8,192 frames is 42.7 ms at 192 kHz), whatever the
+  mode costs. `skip%` was 0 to 3.
+- The ring is 64 KB in DTCM, which has 12.6 KB free, so it cannot grow there. `.noinit` (cached SDRAM) has 84 KB free below
+  0x81900000, enough for a ring of twice the size, at the cost of slower access from the interrupt. Not tried.
+
+## Step 22 test file: build number on the CPU test, decoder rows, column spacing (built 2026-11-08, not yet installed)
+
+`work/patch22/#PortaX8_0240.203` (B240, SHA-256 `5f367997…c98b4e9a`). Includes steps 11 to 21. Install this file in place of
+B239. All the checks in `tools/x8patch.py` pass on this file. No stock hook site changed.
+
+- **Build number.** The CPU test shows `Firmware B240` above the row names, so a photo of the results says which build measured
+  them. The patch header has a new last word, `build`, and is now version 17. The ELF has 0 there, and `tools/x8patch.py` writes
+  its `--build` number into it before packing. The patch reads it with a volatile load (`patch_build`), since the compiler only
+  sees the 0. The packer refuses a patch whose header is not version 17.
 - **Decoder rows.** The CPU test's two rows with the chime decoders running are now FD and COMB stereo with Auto volume on, the
-  two heaviest rows in B239's run. They were COMB stereo and TE with Auto volume off. Their heading reads `Auto volume on, chime
+  two heaviest rows in B239's runs. They were COMB stereo and TE with Auto volume off. Their heading reads `Auto volume on, chime
   decoders running`. With two inputs on the test still has 26 rows.
 - **Columns.** In B239's photo the `max` heading ran into `draw`, and `drop`'s 0 ran into `ring`'s 2644. Each column is now as wide
   as its heading or its widest value, with at least 3 px between columns, and a test measures this. Counts that should be 0 use
@@ -2066,15 +2095,15 @@ B239. All the checks in `tools/x8patch.py` pass on this file. No stock hook site
 
 | Item | B239 | B240 | Limit |
 |---|---|---|---|
-| ITCM | 75.7 KB | 75.7 KB | 89.2 KB |
+| ITCM | 75.7 KB | 75.0 KB | 89.2 KB |
 | DTCM | 140.2 KB | 140.2 KB | 152.8 KB |
-| `.noinit`, the end of the patch's memory | ends at 0x818eb630 | ends at 0x818eb720 | 0x81900000 |
+| `.noinit`, the end of the patch's memory | ends at 0x818eb630 | ends at 0x818eb710 | 0x81900000 |
 
 **What to check.**
 
-- **CPU test while recording.** Press REC twice so that the X8 records, then SETTINGS, Tools, CPU test, Start test. The line above
-  the table should read `Recorder was recording for every row.` Photograph the table when it ends. The two decoder rows answer
-  whether the phone remote can stop a take in FD or COMB without losing input.
+- Does the CPU test show `Firmware B240`?
+- **CPU test while recording**, synthetic calls on. Press REC twice so that the X8 records, then SETTINGS, Tools, CPU test, Start
+  test. Photograph the table when it ends. The FD decoder row is the heaviest case for the phone remote.
 - Do all the columns read apart?
 
 ## Checking takes for cuts in the WAV (2026-11-07)

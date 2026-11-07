@@ -90,6 +90,7 @@ pub(super) extern "C" fn enter_work() {
         app.set_modes(&Mode::WITHOUT_PITCH);
         app.set_recorder(Recorder::Stopped, 0);
         app.set_debug_available(true);
+        app.set_host_build(super::patch_build());
         app.set_auto_level_target(AUTO_LEVEL_OUTPUT / OUTPUT_GAIN);
         app.set_mix_available(true);
         app.set_feed(Feed::Mix);

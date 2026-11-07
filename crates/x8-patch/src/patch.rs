@@ -89,13 +89,16 @@ pub struct Header {
     open_take_hook: Handler,
     /// Replaces the file mask function's call to the remaining time function.
     file_mask_hook: Handler,
+    /// The build number on the update screen. 0 here: `tools/x8patch.py` writes it into the
+    /// update file, so read it with [`patch_build`].
+    build: u32,
 }
 
 #[unsafe(no_mangle)]
 #[unsafe(link_section = ".header")]
 pub static X8_PATCH_HEADER: Header = Header {
     magic: *b"BATX",
-    version: 16,
+    version: 17,
     key_hook,
     rec_key_hook,
     touch_hook,
@@ -116,7 +119,15 @@ pub static X8_PATCH_HEADER: Header = Header {
     power_off_save_hook,
     open_take_hook,
     file_mask_hook,
+    build: 0,
 };
+
+/// The build number `tools/x8patch.py` wrote into the header, as the update screen shows it.
+fn patch_build() -> u32 {
+    // SAFETY: a word of the patch's own header. Volatile, because the compiler sees only the 0
+    // above, and the packer changes it after linking.
+    unsafe { ptr::read_volatile(&raw const X8_PATCH_HEADER.build) }
+}
 
 /// Statics written by one context at a time, as the comments on each use say.
 struct Slot<T>(UnsafeCell<MaybeUninit<T>>);

@@ -16,6 +16,7 @@
 //! buttons, and the X8's recorder in that state at 1 min 15 s.
 //! `RATE=48000` shows the warning for an input at that rate.
 //! `PLAYBACK=1` shows the screen as BAT PLAYBACK shows it on the X8.
+//! `BUILD=240` gives the app the X8 patch's build number, for the CPU test.
 //! `INPUTS=5,6` or `INPUTS=5` names the inputs for the meters and settings;
 //! `INPUTS=none` shows the notice for no input.
 //! `SKIP=8.2-8.25,8.6-8.8` skips the analysis in those times, in seconds, as the
@@ -153,6 +154,9 @@ fn main() {
     }
     let debug = std::env::var("DEBUG").is_ok();
     app.set_debug_available(debug);
+    if let Ok(build) = std::env::var("BUILD") {
+        app.set_host_build(build.parse().unwrap());
+    }
     app.set_mix_file_available(debug && std::env::var("PLAYBACK").is_err());
     if let Ok(inputs) = std::env::var("INPUTS") {
         let name = |n: &str| {
