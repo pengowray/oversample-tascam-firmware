@@ -1890,14 +1890,15 @@ about 80, and its `skip` from about 200 a second? Does TE sound the same, and do
 Files from B231 (`to-2026-11-06`, 13.8 minutes in 9 takes) and B235 (`to-2026-11-07`, 5.7 minutes in 6 takes). Scripts were
 not kept: they are short NumPy checks.
 
-- **Repeats, gaps and bad values:** no sample run repeated elsewhere and no NaN in the B235 takes. Runs of equal samples, up
-  to 223 long, are at the +9 dBFS limit or at other high levels in the loud repeller takes.
+- **Repeats, gaps and bad values:** no sample run repeated elsewhere and no NaN in the B235 takes. The longest run of equal samples
+  is 223, in the loud repeller takes, and these files reach the +9 dBFS limit. Not every run was checked against the level.
 - **Fake cuts:** cutting frames out of a quiet real take and scoring the join with a linear predictor, in both channels at the
   same sample, gave 1 to 5 for 4 frames, 2 to 30 for 64, 4 to 63 for 256, 2 to 174 for 1,072 and 5 to 216 for 4,096. So a short
   cut in quiet sound can pass unseen, and one take cannot prove there are none.
 - **Result:** B231's strip showed 14,000 to 24,000 frames lost a second and 2.4 to 2.8 underruns a second. If those reached the
-  file, each take would have hundreds of cuts, and many would score above 20. Takes have 0 or 1, apart from loud repeller
-  sound in B235. So the patch's lost input did not reach the file in bulk.
+  file, each take would have hundreds of cuts, and many would score above 20. B231's takes have 0 or 1 above 20. So the
+  patch's lost input did not reach the file in bulk. B235's takes have 0 to 6, except 30 in the 92 s TE take, all of those near
+  loud repeller sound. Four in `261107_0099` are in quiet sound, scoring 22 to 32, and have not been looked at.
 - **One clear jump:** `261106_0091_3-4.wav` at 112.392 s, in both channels at the same sample: left 0.0064 to 0.0363 and right
   -0.0126 to 0.0112, and the signal carries on from the new level. Its cause is not known.
 - **No clear detector yet:** a large one-sample change in both channels also occurs in stock recordings from March, with scores
