@@ -2126,6 +2126,45 @@ position), EXT IN shares the input 5/6 slots, and the raw words of inputs 3 and
 first nears -3 dBFS, so the first is the high-gain path at normal settings
 (fairly sure, not certain).
 
+**Merge checked against recordings.** On 7 November 2026 we measured about 280
+channels of recorded tracks and MIX files (firmware 2.03), using the float grid
+detector in Oversample (`oversample-core/src/dsp/float_grid.rs`). The firmware
+reading of the merge, `out = A*(1-w) + B*10^(D/20)*w`, predicts these results:
+
+- **Word width.** Both gain paths have a step of 2^-21 of full scale, so the low
+  10 bits of each signed 32-bit word are always zero and the words carry 22 bits.
+  The firmware alone could not show this. Of 144 EXT MIC channels, 96.5% have a
+  step within 0.01% of 2^-21. The step is about 0.99998 x 2^-21 and differs
+  slightly between takes. The firmware doesn't explain this factor; the one-pole
+  smoothing of the gains stalling just short of its target is one possibility,
+  not checked.
+- **Gap D.** The ratio of the coarse step to the fine step equals D, and D is
+  LEVEL/2 dB: 67 of 71 two-step EXT MIC channels are within 0.05 dB of the LEVEL in
+  the `bext` chunk. Takes `260209_0019_3` and `260209_0020_3` disagree with their
+  own LEVEL but match the LEVEL of the take before, which suggests that `bext`
+  stores the LEVEL at a different moment from the start of the take (not checked).
+- **Ceiling.** B clips exactly 2^21 coarse steps from zero, D dB above 1.0.
+- **Fade length.** At 192 kHz the samples are on neither grid for about 1920
+  samples, or 10 ms, in the two clean coarse-to-fine switches measured. So the step
+  of 4/(fs/100) at +0x40 is applied once per block of 4 frames, not once per sample.
+- **Thresholds.** In `260430_0073_3-4` the highest peak in any 512-sample block on
+  the fine grid is 0.34, just under the -9 dBFS (0.355) switch-back point. The
+  switches up in `260209_0018_3` happen around peaks of 0.90 and 1.00, above the
+  -3 dBFS (0.71) point. This is 2 takes, so it is a consistency check only.
+- **Inputs 1 and 2.** With the plug-in mic source, the fine step is (gain - 20) dB
+  from 2^-21: -2.0 dB at LEVEL 36 and -2.5 dB at LEVEL 35. This fits c = 10^(-20/20)
+  with g from the gain formula. The ceilings on these inputs are not explained.
+- **Built-in mics.** All 30 INT MIC channels have no fixed step, which fits the
+  2-band biquad on channels 0 and 1 being the built-in mic EQ. The biquad is what
+  removes the grid, if this is right.
+- **EXT IN.** The channels measured have one step and no second grid, which fits
+  the merge being skipped.
+- **Negative zeros.** Inputs 3 and 4 have a negative input gain, so a zero word
+  becomes -0.0 and the sum stays -0.0 only when B*w is also -0.0. Across recordings,
+  -0.0 is 61% of the zero samples on inputs 3 and 4 and under 8% on inputs 1 and 2,
+  and it never appears in MIX files (0 of 82 channels). 120 of 130 channels on inputs
+  3 and 4 have some, and 4 of 58 on inputs 1 and 2.
+
 **Output block layout.** A frame is 2 words, left then right (left/right fairly
 sure), 2 or 4 frames per block like the input. The stock code clamps to plus or
 minus 1, scales by 2^31 - 1 and multiplies by a negative output gain. The
