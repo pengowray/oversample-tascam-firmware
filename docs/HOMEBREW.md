@@ -1810,7 +1810,7 @@ are still open.
 
 ## Step 18 test file: start on the LAUNCHER after using a bat tile (built 2026-11-07, not yet installed)
 
-`work/patch18/#PortaX8_0236.203` (B236, SHA-256 `fbf2ba14…3f900f18ee`). Includes steps 11 to 17. Install this file in
+`work/patch18/#PortaX8_0236.203` (B236, SHA-256 `fbf2ba14…900f18ee`). Includes steps 11 to 17. Install this file in
 place of B235. All the checks in `tools/x8patch.py` pass on this file. This step's change has not run on a real recorder.
 
 **The problem.** The bat tiles open MANUAL with the bat screen over it, so the settings record is saved with MANUAL as the
