@@ -1885,6 +1885,59 @@ uncached region.
 while calls or the dog repeller play, about a minute each, and note `dsp`, `dry`, `lost` and `skip`. Does TE's `dsp` fall from
 about 80, and its `skip` from about 200 a second? Does TE sound the same, and does COMB, after a change of tuning?
 
+## Step 20 test file: a MIX file switch for takes from BAT DETECTOR (built 2026-11-07, not yet installed)
+
+`work/patch20/#PortaX8_0238.203` (B238, SHA-256 `877da5fc…8879f414`). Includes steps 11 to 19. Install this file in place of
+B237. All the checks in `tools/x8patch.py` pass on this file. Nothing in this step has run on a real recorder.
+
+**What changed.** SETTINGS on BAT DETECTOR has a new switch, MIX file, on by default. With it off, takes started from BAT
+DETECTOR write only the track files. This should save 6 to 9 points of CPU while recording (an estimate, see "Turning off the MIX
+file while recording"). MANUAL opened from its own tile, and BAT PLAYBACK, always write the MIX file as stock. Like the other
+settings, the switch goes back to on when the recorder is turned off. A change applies from the next press of REC from stop.
+
+**Without a MIX file, some stock functions stop working for that take**, as the manual says for stock REC READY off:
+
+- PLAY in BROWSE and in ASMR, MUSIC, VOICE and FIELD cannot play the project (manual, page 93).
+- NORMALIZE shows "NO MASTER TRACK".
+- PLAY in MANUAL, the BAT PLAYBACK tile and MIX DOWN should still work. MIX DOWN should write a new stereo master file.
+
+**The hooks.** Both are `bl` calls retargeted in `tools/x8patch.py`, and the code is in `crates/x8-patch/src/patch/mix_file.rs`.
+MANUAL's on/off words (settings+0x200 and +0x204) are not touched, so nothing new is saved to flash.
+
+| Hook | Site | What it does |
+|---|---|---|
+| `open_take_hook` | `bl 0x80db19b8` at 0x80DC9AFE, in `FUN_80dc99dc`, the only call that opens a take's files for recording | If a bat tile opened the app and the switch is off, rebuilds the mask with the stock `FUN_80db63d0`, removes bits 6 and 19, and notes that this take has no master |
+| `file_mask_hook` | `bl 0x80db1dc8` at 0x80DB6532, at the end of `FUN_80db63d0` | Removes the same bits each time the stock code rebuilds the mask during that take: the stock open function rebuilds it right after opening the files. Clears the note once the take's files are closed |
+
+Points that need care:
+
+- **The first slot byte.** The mask has a companion byte at 0x81CBE6A8 that names its lowest slot, and `FUN_80db2102` stops closing
+  the take early if that slot has no open file. A mono MIX (slot 6) comes before stereo tracks (slots 16 to 18), so that byte has
+  to move when the MIX is removed. `without_master` in `crates/x8-patch/src/file_mask.rs` does this and has host tests.
+- **A mask must stay the same while files are open.** A mask that names an unopened file would give the writers a null file handle.
+  The decision is made once, before the files open, and only when the byte at 0x81CBE672 says no files are open.
+- **Takes left unchanged.** A master on its own, MP3 (settings+0x188 is 6 or more), file modes 1 and 2 (settings+0x215), and overdub
+  and mix down (recorder+0x654 is non-zero), which write the master on purpose.
+- **Update mode.** Both hooks check the system mode byte first and call the stock function otherwise. The recording functions are not
+  known to run in update mode, but this is the same rule as the other hooks.
+
+**Layout.** SETTINGS had no spare height. The gaps between the top panels went from 8 to 4 px, and the rows with a name and help line
+went from 38 to 33 px high, so that the new row fits above the "Sounds to mark" heading. Those rows still meet the 24 px target size. BAT
+PLAYBACK and the web emulator do not write takes, so they leave the row empty.
+
+**Sizes.** ITCM 74.9 KB of 89.2 KB and DTCM 141.8 KB of 152.8 KB, the same as B237. Header version 16.
+
+**What to check.**
+
+1. With Debug info on and mics on inputs 3 and 4, record for about a minute in HET and in COMB with MIX file on, then off. Note
+   `irq`, `dsp`, `draw`, `dry` and `lost`. The figures start again when the switch changes.
+2. Look at the card. Is the `_MIX.wav` missing from the second take only? Do `_3-4.wav` and the `.bin` file open normally on a computer?
+   Is the WAV length right, including after a take long enough to split into a second file?
+3. Turn MIX file off and record a take. Press and hold HOME, open MANUAL from its own tile and record. Does this take have a `_MIX.wav`?
+   Does MANUAL's REC READY still show on?
+4. Play the take without a MIX file in MANUAL and on BAT PLAYBACK. Try PLAY in BROWSE, NORMALIZE and MIX DOWN, and note what each one does.
+5. Stop a take straight after REC, and press STOP from record standby. Do the next takes open and close normally, with MIX file off?
+
 ## Checking takes for cuts in the WAV (2026-11-07)
 
 Files from B231 (`to-2026-11-06`, 13.8 minutes in 9 takes) and B235 (`to-2026-11-07`, 5.7 minutes in 6 takes). Scripts were
@@ -1907,10 +1960,10 @@ not kept: they are short NumPy checks.
 
 ## Turning off the MIX file while recording (2026-11-07)
 
-**The stock firmware already has this setting, so no patch is needed.** In MANUAL, tap the MASTER
+**The stock firmware already has this setting for MANUAL as a whole.** In MANUAL, tap the MASTER
 button and turn REC READY off. The Reference Manual (Rev H, page 93, "A master file recording on/off
 function has been added") says the project then has only track files. I read the code path in V2.03
-and it matches the manual. Nothing here has run on a unit, and no test file was built.
+and it matches the manual. Nothing here has run on a unit. Step 20 adds a switch for bat tile takes only.
 
 The estimated saving is 6 to 9 percentage points of CPU while recording, so the app's budget of about
 42% would become about 48 to 51%. The card also receives 1.536 MB/s less, about 5.5 GB less per hour.
@@ -1966,38 +2019,21 @@ READY is stored separately:
 - These words are in the `DR-TURBO` settings record, which the firmware saves at power-off, so the
   setting should also survive a power cycle. Item 2 under "What to try first" checks this.
 
-### Proposed hook: none
+### The hook
 
-If the test shows that REC READY stays off, nothing should change. If it does not stay off, this is
-the smallest patch:
-
-- **Where.** In the bat app's RTOS task, once each time a bat tile opens MANUAL.
-- **Conditions.** All of these must be true: the system mode byte 0x81969DD9 is 0 or 1, the app byte 0x81E8CA90
-  is 2, the recorder state byte 0x8196A3E5 is 0, settings+0x265 is 0, settings+0x188 is below 6, and
-  (settings+0x200 & 0x40) or (settings+0x204 & 0xc0) is non-zero.
-- **What it does.** It posts key code 0x70 with `FUN_80d6c058(type, code)`, so RTOS task 1 runs the
-  stock toggle. The event type the stock path uses was not traced. The patch's key handler wrapper
-  must pass 0x70 on to the stock handler `FUN_80dac0d4`, because that wrapper is installed while a
-  bat tile is open.
-
-Risks of that patch:
-
-- Code 0x70 is a toggle, so a second post before task 1 has run would turn the master back on. The
-  patch must post once and must not retry from the bits.
-- It changes a setting that the unit saves at power-off, as the stock toggle does. The patch itself
-  writes nothing to flash.
-- It must never run in an interrupt. `FUN_80dd4cac` calls `FUN_80da5e94`, which switches power to the inputs.
-- The Qt code that sends 0x70 was not traced. The bits and the handler were read, but posting 0x70
-  from a patch has not been tried.
+The owner asked for a switch that applies only to bat tile takes, so MANUAL opened from its own tile
+keeps its MIX file. The stock toggle cannot do that, because MANUAL saves its state. [Step
+20](#step-20-test-file-a-mix-file-switch-for-takes-from-bat-detector-built-2026-11-07-not-yet-installed)
+builds it by changing the file mask for the take and leaving MANUAL's on/off words alone.
 
 Two other hooks are rejected:
 
-- **Clearing the bit at the end of `FUN_80db63d0` (0x80db64de).** The screen would show REC READY on
-  while no MIX file is written. Overdub and mix down also pass through this function and need bit 19 of the file mask.
+- **Using the stock toggle when a bat tile opens.** The off state would be saved in the settings record,
+  and MANUAL's own tile would inherit it after a crash or a power cut during a bat session.
 - **Skipping slots in `FUN_80db19b8` or the writers.** The mask already does this. These functions
   call the SD card and FAT code, and `x8fw.py pack --base` does not protect that code yet (rule 1
-  under "Keeping the bricking risk low"), so a mistake here carries more risk than a mistake in an app
-  screen hook.
+  under "Keeping the bricking risk low"), so a mistake here carries more risk than a mistake in the
+  recorder's mask.
 
 ### What changes without a MIX file
 

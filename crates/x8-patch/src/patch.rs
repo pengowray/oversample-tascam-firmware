@@ -15,6 +15,8 @@ mod itcm;
 mod keys;
 /// The bat tiles on the LAUNCHER: slots, texts, title position, delete mode, badges and icons.
 mod launcher;
+/// Leaves the MIX file out of takes from a bat tile, when the app's switch is off.
+mod mix_file;
 /// BAT PLAYBACK's launcher glyph.
 mod play_glyph;
 /// Opening and closing the bat screen, and drawing it with the debug strips.
@@ -34,6 +36,7 @@ mod stock;
 mod task;
 
 use keys::{key_hook, rec_key_hook, touch_hook};
+use mix_file::{file_mask_hook, open_take_hook};
 use launcher::{
     badge_hook, delete_hook, delete_mode_hook, free_slot_hook, icon_height_hook, icon_hook, icon_image_hook,
     icon_width_hook, power_off_save_hook, slot_hook, text_hook, tile_hook, title_y_hook,
@@ -80,13 +83,17 @@ pub struct Header {
     icon_width_hooks: [Handler; 2],
     /// Replaces the power-off sequence's call that saves the settings.
     power_off_save_hook: Handler,
+    /// Replaces the call that opens a take's files for recording.
+    open_take_hook: Handler,
+    /// Replaces the file mask function's call to the remaining time function.
+    file_mask_hook: Handler,
 }
 
 #[unsafe(no_mangle)]
 #[unsafe(link_section = ".header")]
 pub static X8_PATCH_HEADER: Header = Header {
     magic: *b"BATX",
-    version: 15,
+    version: 16,
     key_hook,
     rec_key_hook,
     touch_hook,
@@ -105,6 +112,8 @@ pub static X8_PATCH_HEADER: Header = Header {
     icon_height_hooks: [icon_height_hook::<0>, icon_height_hook::<1>],
     icon_width_hooks: [icon_width_hook::<0>, icon_width_hook::<1>],
     power_off_save_hook,
+    open_take_hook,
+    file_mask_hook,
 };
 
 /// Statics written by one context at a time, as the comments on each use say.

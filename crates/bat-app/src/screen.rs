@@ -638,7 +638,9 @@ fn settings(app: &BatApp, fb: Fb) {
         let selected = app.selected_setting() == *setting;
         if i >= Setting::STEPPED {
             // The hosts without figures to show get no switch for them.
-            if *setting == Setting::DebugInfo && !app.debug_available() {
+            if (*setting == Setting::DebugInfo && !app.debug_available())
+                || (*setting == Setting::MixFile && !app.mix_file_available())
+            {
                 continue;
             }
             let r = switch_row(i - Setting::STEPPED);
@@ -649,9 +651,9 @@ fn settings(app: &BatApp, fb: Fb) {
             let (x, y) = (r.top_left.x, r.top_left.y);
             let on = match *setting {
                 Setting::Mark(kind) => {
-                    fill(fb, Rectangle::new(Point::new(x + 8, y + 7), Size::new(4, 24)), tick_colour(kind));
-                    text(fb, &BODY, mark_name(kind), x + 18, y + 16, LEFT, TEXT);
-                    let (hx, hy) = (x + 18, y + 31);
+                    fill(fb, Rectangle::new(Point::new(x + 8, y + 5), Size::new(4, 23)), tick_colour(kind));
+                    text(fb, &BODY, mark_name(kind), x + 18, y + 14, LEFT, TEXT);
+                    let (hx, hy) = (x + 18, y + 28);
                     match kind {
                         CallKind::Bat => text(fb, &SMALL, "Similar calls repeated several times a second.", hx, hy, LEFT, TEXT_MUTED),
                         CallKind::Tone => text(fb, &SMALL, "150 ms or longer, like a rat's 22 kHz alarm call.", hx, hy, LEFT, TEXT_MUTED),
@@ -671,6 +673,11 @@ fn settings(app: &BatApp, fb: Fb) {
                 Setting::AutoLevel => {
                     auto_volume_row(app, fb, i - Setting::STEPPED);
                     continue;
+                }
+                Setting::MixFile => {
+                    text(fb, &BODY, "MIX file", x + 10, y + 14, LEFT, TEXT);
+                    text(fb, &SMALL, "Needed to play a take from BROWSE.", x + 10, y + 28, LEFT, TEXT_MUTED);
+                    app.mix_file()
                 }
                 _ => {
                     text(fb, &BODY, "Debug info", x + 10, y + 16, LEFT, TEXT);

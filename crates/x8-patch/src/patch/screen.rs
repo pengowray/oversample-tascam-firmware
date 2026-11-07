@@ -17,7 +17,7 @@ use super::state::{
     APP, APP_READY, AUDIO_INSTALLED, AUDIO_SLOT_UNEXPECTED, AUDIO_STATE, BACKLOG_DROPPED,
     BAT_ACTIVE, BLOCKS, BUFFERS, CALLS_PER_S, CYCLES_PER_S, DEBUG_SHOWN, DRAW_PERMILLE, DSP_PERMILLE,
     DUMMY_LCDIF, FRAME, HEAR_MIX, HEARD_WORDS, HOOK_CYCLES_PER_S, IN_DROPPED, IN_READ, IN_WRITE,
-    LAST_EVENT, LAUNCH_AT, LOAD_WINDOW_START, LAUNCH_FROM, LAUNCHING, MUTE_SEEN, MUTE_SEEN_AT, NO_APP, NO_INPUT_WORDS, OUT_LAST, OUT_READ,
+    LAST_EVENT, LAUNCH_AT, MIX_FILE_OFF, LOAD_WINDOW_START, LAUNCH_FROM, LAUNCHING, MUTE_SEEN, MUTE_SEEN_AT, NO_APP, NO_INPUT_WORDS, OUT_LAST, OUT_READ,
     OUT_WRITE, PENDING, PLAYBACK, POPUP_HIDDEN, PRIMED, SAVED_BUFFER, SAVED_LITERAL, SCREEN_APP, SESSION,
     SOURCE_PEAK, STOCK_CYCLES_PER_S, TASK, TEST_DSP_MAX, TEST_SETTINGS, TEST_START_BLOCKS, TEST_START_DRY,
     TEST_START_BACKLOG, TEST_START_LOST, TEST_START_SKIPPED, UNDERRUNS, WORD_PEAKS, WORK_ENTER,
@@ -216,6 +216,7 @@ fn draw_debug(fb: &mut Rgb565Buffer<'_>, app: &BatApp<'static>) {
     let settings = app.mode() as u32
         | (app.auto_volume() as u32) << 4
         | ((app.screen() == Screen::ChimeTest) as u32) << 6
+        | (app.mix_file() as u32) << 7
         | (app.feed() as u32) << 8
         | (app.source() as u32) << 10
         | (PLAYBACK.load(Relaxed) as u32) << 13
@@ -376,10 +377,14 @@ fn update_status(app: &mut BatApp<'static>) {
     if PLAYBACK.load(Relaxed) {
         app.set_input_kind(InputKind::Playback);
         app.set_mix_available(false);
+        app.set_mix_file_available(false);
+        MIX_FILE_OFF.store(false, Relaxed);
         app.set_inputs([Some(PLAYBACK_LEFT), Some(PLAYBACK_RIGHT)]);
     } else {
         app.set_input_kind(InputKind::Live);
         app.set_mix_available(true);
+        app.set_mix_file_available(true);
+        MIX_FILE_OFF.store(!app.mix_file(), Relaxed);
         let [first, second] = selected_inputs();
         let words = first.map_or(NO_INPUT_WORDS, |first| first.word | second.unwrap_or(first).word << 8);
         HEARD_WORDS.store(words, Relaxed);

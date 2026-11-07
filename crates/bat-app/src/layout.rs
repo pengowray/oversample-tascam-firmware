@@ -92,29 +92,35 @@ pub const MENU: Rectangle = Rectangle::new(Point::new(0, 0), Size::new(40, TITLE
 /// name and value on the left, - and + buttons on the right, and a line
 /// saying what the setting does. Below them, under a heading, come the
 /// switches: one compact row each, with a colour swatch, a name and a line of
-/// help on the left and the switch on the right. Between them, two settings
-/// that are not about marking share one row, half the width each: Auto volume, with
-/// its three choices, and the Debug info switch.
+/// help on the left and the switch on the right. Between them come the settings
+/// that are not about marking: Auto volume, with its three choices, and the Debug
+/// info switch share one row, half the width each, and the MIX file switch has a
+/// full row, above the heading because it is not a sound to mark. The screen has
+/// no spare height, so the gaps and rows are as small as the text allows.
 pub const SETTINGS_TOP: i32 = 34;
 pub const SETTING_H: i32 = 66;
-const SETTING_GAP: i32 = 8;
+const SETTING_GAP: i32 = 4;
 const STEP_W: u32 = 48;
 const STEP_H: u32 = 40;
 /// The row of two half-width switches, below the two stepped settings.
-const HALF_ROW_TOP: i32 = 180;
+const HALF_ROW_TOP: i32 = 173;
 const HALF_ROW_W: i32 = 150;
 const HALF_ROW_GAP: i32 = 8;
 const HALF_ROWS: usize = 2;
+/// The MIX file row, under the half-width row: switch row `HALF_ROWS`.
+const MIX_FILE_ROW_TOP: i32 = 214;
 /// Baselines of the switches' heading and its help line.
-pub const SWITCHES_HEADING: i32 = 233;
-pub const SWITCHES_HELP: i32 = 246;
-const SWITCHES_TOP: i32 = 252;
-pub const SWITCH_ROW_H: i32 = 38;
-const SWITCH_ROW_GAP: i32 = 3;
+pub const SWITCHES_HEADING: i32 = 260;
+pub const SWITCHES_HELP: i32 = 272;
+const SWITCHES_TOP: i32 = 276;
+/// The half-width rows, whose choices need more height than a name and a help line.
+const HALF_ROW_H: i32 = 38;
+pub const SWITCH_ROW_H: i32 = 33;
+const SWITCH_ROW_GAP: i32 = 2;
 const SWITCH_W: u32 = 44;
 const SWITCH_H: u32 = 24;
 /// Baseline of the note under the last switch.
-pub const SETTINGS_NOTE: i32 = 425;
+pub const SETTINGS_NOTE: i32 = 426;
 /// Opens the chime test, on the settings screen. It is beside Done because it is rarely
 /// used, and the settings screen has no other room for a control.
 pub const CHIME_TEST: Rectangle = Rectangle::new(Point::new(6, BUTTONS_Y), Size::new(112, BUTTON_H as u32));
@@ -142,10 +148,13 @@ pub fn setting_plus(i: usize) -> Rectangle {
 pub fn switch_row(j: usize) -> Rectangle {
     if j < HALF_ROWS {
         let x = 6 + j as i32 * (HALF_ROW_W + HALF_ROW_GAP);
-        return Rectangle::new(Point::new(x, HALF_ROW_TOP), Size::new(HALF_ROW_W as u32, SWITCH_ROW_H as u32));
+        return Rectangle::new(Point::new(x, HALF_ROW_TOP), Size::new(HALF_ROW_W as u32, HALF_ROW_H as u32));
+    }
+    if j == HALF_ROWS {
+        return Rectangle::new(Point::new(6, MIX_FILE_ROW_TOP), Size::new(308, SWITCH_ROW_H as u32));
     }
     Rectangle::new(
-        Point::new(6, SWITCHES_TOP + (j - HALF_ROWS) as i32 * (SWITCH_ROW_H + SWITCH_ROW_GAP)),
+        Point::new(6, SWITCHES_TOP + (j - HALF_ROWS - 1) as i32 * (SWITCH_ROW_H + SWITCH_ROW_GAP)),
         Size::new(308, SWITCH_ROW_H as u32),
     )
 }
@@ -182,7 +191,7 @@ pub fn auto_volume_at(x: i32, j: usize) -> AutoVolume {
 /// The switch itself, at the right of its row.
 pub fn switch(j: usize) -> Rectangle {
     let r = switch_row(j);
-    let y = r.top_left.y + (SWITCH_ROW_H - SWITCH_H as i32) / 2;
+    let y = r.top_left.y + (r.size.height as i32 - SWITCH_H as i32) / 2;
     Rectangle::new(Point::new(r.top_left.x + r.size.width as i32 - 10 - SWITCH_W as i32, y), Size::new(SWITCH_W, SWITCH_H))
 }
 

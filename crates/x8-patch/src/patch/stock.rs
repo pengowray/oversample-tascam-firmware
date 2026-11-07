@@ -166,3 +166,22 @@ pub const TAKE_START: *const u32 = 0x8191_3f60 as *const u32;
 /// The rate the converters run at now (Hz), and the record rate setting.
 pub const CONVERTER_RATE: *const u32 = 0x8191_4120 as *const u32;
 pub const RECORD_RATE: *const u32 = 0x81cb_e678 as *const u32;
+/// The file mask, one bit for each file a take writes, built from the track on/off
+/// words by `FUN_80db63d0`, and the byte holding its lowest slot.
+pub const FILE_MASK: *mut u32 = 0x81cb_e698 as *mut u32;
+pub const FIRST_FILE_SLOT: *mut u8 = 0x81cb_e6a8 as *mut u8;
+/// Non-zero while a take's files are open (block 0x81cb7a48 + 0x6c2a).
+pub const FILES_OPEN: *const u8 = 0x81cb_e672 as *const u8;
+/// Settings + 0x188: the file format. 6 and above are MP3.
+pub const FILE_FORMAT: *const u8 = 0x81e8_ca04 as *const u8;
+pub const FIRST_MP3_FORMAT: u8 = 6;
+/// Settings + 0x215: 1 and 2 write a second file format beside the first.
+pub const FILE_MODE: *const u8 = 0x81e8_ca91 as *const u8;
+/// Recorder + 0x654: non-zero while overdub or mix down writes the master file.
+pub const RENDER_KIND: *const u8 = 0x8191_40ec as *const u8;
+/// `FUN_80db63d0()`: rebuilds the file mask (Thumb address).
+pub const BUILD_FILE_MASK: usize = 0x80db_63d1;
+/// `FUN_80db19b8(names)`: opens the files in the mask for a take (Thumb address).
+pub const OPEN_TAKE_FILES: usize = 0x80db_19b9;
+/// `FUN_80db1dc8()`: works out the remaining recording time (Thumb address).
+pub const UPDATE_REMAINING_TIME: usize = 0x80db_1dc9;

@@ -179,17 +179,21 @@ pub enum Setting {
     AutoLevel,
     /// Whether the host shows its figures for testing.
     DebugInfo,
+    /// Whether a take also writes the stock recorder's MIX file: see
+    /// [`BatApp::set_mix_file_available`].
+    MixFile,
     /// Whether detections of this kind are marked: a tick under the
     /// waterfall, the last-call panel, and time expansion. On or off.
     Mark(CallKind),
 }
 
 impl Setting {
-    pub const ALL: [Setting; 8] = [
+    pub const ALL: [Setting; 9] = [
         Setting::LowestBatCall,
         Setting::ListenTo,
         Setting::AutoLevel,
         Setting::DebugInfo,
+        Setting::MixFile,
         Setting::Mark(CallKind::Bat),
         Setting::Mark(CallKind::Tone),
         Setting::Mark(CallKind::Audible),
@@ -477,6 +481,8 @@ pub struct BatApp<'a> {
     /// Whether the host draws figures for testing, and whether it has any.
     debug_available: bool,
     debug_info: bool,
+    mix_file_available: bool,
+    mix_file: bool,
     /// The mode buttons, left to right.
     modes: &'static [Mode],
     clock_s: u32,
@@ -610,6 +616,8 @@ impl<'a> BatApp<'a> {
             field!((*this).level).write(level::AutoLevel::new(sample_rate));
             field!((*this).debug_available).write(false);
             field!((*this).debug_info).write(false);
+            field!((*this).mix_file_available).write(false);
+            field!((*this).mix_file).write(true);
             field!((*this).modes).write(&Mode::ALL);
             field!((*this).clock_s).write(0);
             fill(field!((*this).mono), 0.0);
@@ -764,6 +772,8 @@ impl<'a> BatApp<'a> {
             // Turning the wheel up switches on, down switches off.
             Setting::DebugInfo if steps != 0 => self.debug_info = steps > 0,
             Setting::DebugInfo => {}
+            Setting::MixFile if steps != 0 => self.mix_file = steps > 0,
+            Setting::MixFile => {}
             // Turning the wheel up switches on, down switches off.
             Setting::Mark(kind) if steps != 0 => self.set_marked(kind, steps > 0),
             Setting::Mark(_) => {}
@@ -915,6 +925,29 @@ impl<'a> BatApp<'a> {
         self.debug_info
     }
 
+    /// The host records takes with a MIX file it can leave out: offer the switch.
+    pub fn set_mix_file_available(&mut self, available: bool) {
+        self.mix_file_available = available;
+    }
+
+    pub fn mix_file_available(&self) -> bool {
+        self.mix_file_available
+    }
+
+    /// Whether takes should write the MIX file, which is the stock behaviour.
+    pub fn mix_file(&self) -> bool {
+        self.mix_file
+    }
+
+    /// Whether switch `i` of `Setting::ALL` is shown on this host.
+    fn setting_shown(&self, i: usize) -> bool {
+        match Setting::ALL[i] {
+            Setting::DebugInfo => self.debug_available,
+            Setting::MixFile => self.mix_file_available,
+            _ => true,
+        }
+    }
+
     /// The choices for Listen to, in order: the whole mix, its left and right,
     /// then the inputs.
     fn listen_choices(&self) -> ([(Feed, MonitorSource); 6], usize) {
@@ -1020,13 +1053,14 @@ impl<'a> BatApp<'a> {
         if self.screen == Screen::Settings {
             match layout::settings_hit(x, y, Setting::STEPPED, Setting::ALL.len()) {
                 Some(layout::SettingsHit::Row(i)) => self.setting = i,
-                Some(layout::SettingsHit::Switch(i)) if Setting::ALL[i] == Setting::DebugInfo && !self.debug_available => {}
+                Some(layout::SettingsHit::Switch(i)) if !self.setting_shown(i) => {}
                 Some(layout::SettingsHit::Switch(i)) => {
                     self.setting = i;
                     match Setting::ALL[i] {
                         Setting::Mark(kind) => self.set_marked(kind, !self.is_marked(kind)),
                         Setting::AutoLevel => self.level.set_volume(layout::auto_volume_at(x, i - Setting::STEPPED)),
                         Setting::DebugInfo => self.debug_info = !self.debug_info,
+                        Setting::MixFile => self.mix_file = !self.mix_file,
                         _ => {}
                     }
                 }
@@ -1518,7 +1552,7 @@ impl<'a> BatApp<'a> {
         }
         if self.screen == Screen::Settings {
             return match layout::settings_hit(x, y, Setting::STEPPED, Setting::ALL.len()) {
-                Some(layout::SettingsHit::Switch(i)) => Setting::ALL[i] != Setting::DebugInfo || self.debug_available,
+                Some(layout::SettingsHit::Switch(i)) => self.setting_shown(i),
                 Some(layout::SettingsHit::Minus(i) | layout::SettingsHit::Plus(i)) => {
                     Setting::ALL[i] != Setting::ListenTo || self.listen_has_choices()
                 }

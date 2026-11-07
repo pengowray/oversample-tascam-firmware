@@ -124,6 +124,7 @@ fn main() {
     }
     let debug = std::env::var("DEBUG").is_ok();
     app.set_debug_available(debug);
+    app.set_mix_file_available(debug);
     if let Ok(inputs) = std::env::var("INPUTS") {
         let name = |n: &str| {
             let short: &'static str = String::leak(n.to_string());

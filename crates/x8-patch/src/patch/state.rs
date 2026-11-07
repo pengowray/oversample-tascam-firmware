@@ -184,3 +184,8 @@ pub(super) static QT_PRESSED: AtomicBool = AtomicBool::new(false);
 /// drag tunes.
 pub(super) static TOUCH_DOWN: AtomicBool = AtomicBool::new(false);
 pub(super) static DRAGGING: AtomicBool = AtomicBool::new(false);
+/// The app's MIX file switch is off, while BAT DETECTOR is open. The context running
+/// the app sets it; `mix_file::open_take_hook` reads it when a take starts.
+pub(super) static MIX_FILE_OFF: AtomicBool = AtomicBool::new(false);
+/// The file mask has no master file for the take in progress (see `mix_file`).
+pub(super) static TAKE_WITHOUT_MIX: AtomicBool = AtomicBool::new(false);

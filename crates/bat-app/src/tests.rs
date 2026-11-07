@@ -995,13 +995,13 @@ fn switches_flip_on_a_tap_and_follow_the_wheel() {
     assert!(app.is_marked(CallKind::Bat));
     assert!(!app.is_marked(CallKind::Tone) && !app.is_marked(CallKind::Audible) && !app.is_marked(CallKind::Broadband));
     app.open_settings();
-    // Steady tones are the second marking switch, after the row of two other
+    // Steady tones are the second marking switch, after the three other
     // switches: tapping its row anywhere flips it.
-    let row = layout::switch_row(3);
+    let row = layout::switch_row(4);
     app.touch(row.top_left.x + 20, row.center().y);
     assert!(app.is_marked(CallKind::Tone));
     assert_eq!(app.selected_setting(), Setting::Mark(CallKind::Tone));
-    let sw = layout::switch(3).center();
+    let sw = layout::switch(4).center();
     assert!(app.is_tappable(sw.x, sw.y));
     app.touch(sw.x, sw.y);
     assert!(!app.is_marked(CallKind::Tone));
@@ -1013,7 +1013,7 @@ fn switches_flip_on_a_tap_and_follow_the_wheel() {
     app.wheel(-2);
     assert!(!app.is_marked(CallKind::Tone));
     // Bat calls can be switched off too.
-    let bats = layout::switch(2).center();
+    let bats = layout::switch(3).center();
     app.touch(bats.x, bats.y);
     assert!(!app.is_marked(CallKind::Bat));
     run(&mut app, &signal(), 4096);
@@ -1452,4 +1452,28 @@ fn history_covers_the_longest_call_and_its_snapshot_margins() {
     // The longest call reported is 100 ms, and it is reported 2 ms after its end.
     let columns_needed = (100.0 + 2.0 + 2.0 * SNAP_MARGIN_MS) * 0.001 * FS / FFT_HOP as f32;
     assert!(HISTORY as f32 >= columns_needed, "{HISTORY} columns, {columns_needed} needed");
+}
+
+/// The MIX file switch: on by default, offered only by a host that asks for it,
+/// and flipped by a tap on its row or by the wheel.
+#[test]
+fn mix_file_switch() {
+    let mut storage = vec![0.0f32; 1024];
+    let mut app = BatApp::new(FS, &mut storage, buffers());
+    let index = Setting::ALL.iter().position(|&s| s == Setting::MixFile).unwrap();
+    let row = layout::switch_row(index - Setting::STEPPED).center();
+    app.open_settings();
+    assert!(app.mix_file());
+    assert!(!app.is_tappable(row.x, row.y));
+    app.touch(row.x, row.y);
+    assert!(app.mix_file());
+    app.set_mix_file_available(true);
+    assert!(app.is_tappable(row.x, row.y));
+    app.touch(row.x, row.y);
+    assert!(!app.mix_file());
+    assert_eq!(app.selected_setting(), Setting::MixFile);
+    app.wheel(1);
+    assert!(app.mix_file());
+    app.wheel(-1);
+    assert!(!app.mix_file());
 }

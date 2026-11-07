@@ -102,6 +102,12 @@ BUILDS = {
             # The power-off sequence FUN_80dca8b8's settings save, between
             # `cpsid i` and `cpsie i`. The save function's other callers are left alone.
             ("power-off settings save", 0x80DCA996, 0x80DA2778, "power_off_save_hook"),
+            # The only call that opens a take's files for recording, in FUN_80dc99dc.
+            # The file open function's other caller writes the master for overdub.
+            ("open take files", 0x80DC9AFE, 0x80DB19B8, "open_take_hook"),
+            # FUN_80db63d0's call to the remaining time function, straight after it
+            # has rebuilt the file mask. That function's other callers are left alone.
+            ("file mask built", 0x80DB6532, 0x80DB1DC8, "file_mask_hook"),
         ],
         "facts": [
             # The veneer FUN_80e06310 goes to ITCM 0x1e484, which returns 0x1e498,
@@ -125,8 +131,8 @@ HEADER_FIELDS = ["magic", "version", "key_hook", "rec_key_hook", "touch_hook", "
                  "line5_hook", "line6_hook", "label_hook", "title_y_hook", "delete_mode_hook", "delete_hook",
                  "badge2_hook", "badge3_hook", "icon2_hook", "icon3_hook", "icon_image2_hook", "icon_image3_hook",
                  "icon_height2_hook", "icon_height3_hook", "icon_width2_hook", "icon_width3_hook",
-                 "power_off_save_hook"]
-HEADER_FORMAT = "<4s29I"
+                 "power_off_save_hook", "open_take_hook", "file_mask_hook"]
+HEADER_FORMAT = "<4s31I"
 
 B_W, BL = 0x9000, 0xD000   # bits 15, 14 and 12 of the second halfword
 
