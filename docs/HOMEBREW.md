@@ -1757,8 +1757,9 @@ figures from a unit since Step 13.
 - These runs say the patch kept up. They do not explain clicks, if any were heard during them. CPU overload shows in these
   counts, so a click with all of them at 0 has another cause.
 
-**Results with Auto volume on `Bats only` (2026-11-07).** The same setup, read from a second set of photos. Calls were on
-screen in most of them, so these runs include busy moments. Pairs of rows are the same take, except standby.
+**Results with Auto volume on `Bats only` (2026-11-07).** The same setup, read from a second set of photos. The sound was a
+dog repeller, pressed on and off, not bat calls. The owner reports that the audio seemed fine. Pairs of rows are the same
+take, except standby.
 
 | Mode, state, take time | irq | hook | dsp (max) | draw | dry | lost | skip | ring in / out |
 |---|---|---|---|---|---|---|---|---|
@@ -1772,14 +1773,14 @@ screen in most of them, so these runs include busy moments. Pairs of rows are th
 
 - `drop` did not appear in any photo. `lost` is input that did not fit in the ring.
 - TE analysed about 72 to 76% of the time: `skip` is about 200 chunks a second, at most 256 frames each. It also lost about
-  0.5% of its input and ran the headphones dry 5 times in 30 s, so clicks are expected here. TE does not auto-trigger during
-  a skip, so it can miss calls too.
+  0.5% of its input and ran the headphones dry 5 times in 30 s, and this was not heard as a problem. TE does not auto-trigger
+  during a skip, so it can miss calls.
 - COMB skipped about 4 to 5% of the time. Between the two photos it lost 1,072 frames, and it had one underrun in the take.
 - FD skipped about 3.5% of the time and lost nothing.
 
 Bats only costs more than Step 14's estimate of 3 to 4% of CPU. COMB's `dsp` goes from 39 to 48 on standby and from 55 to 71
 while recording. Taking out the interrupt and hook's share, that is about 5.5 and 7.7 points of CPU. The recording figure
-includes calls, and the Auto volume off runs had almost none, so it is a high estimate.
+includes the dog repeller, and the Auto volume off runs had almost no loud sound, so it is a high estimate.
 
 Host cost, in ms per second of audio with auto-vectorisation off, best of 5 runs on `260223_0048_3-4 -- small selection`
 (1.3 s, X8 inputs 3 and 4), at 256 frames a call, both sides:
