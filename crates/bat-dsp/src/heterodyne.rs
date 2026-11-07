@@ -10,6 +10,11 @@
 //! retuning. With the LOs spaced about 2 × the cutoff apart, the audible bands
 //! meet with little overlap.
 //!
+//! The voices of a comb all use one low-pass. A filter is linear, so filtering each
+//! voice and adding the results gives the same sound as adding the oscillators and
+//! filtering once, apart from rounding. The comb does the second, which costs about one
+//! filter per channel, however many voices there are.
+//!
 //! Stereo runs two channels against one oscillator, each with its own low-pass.
 //! With a shared oscillator, the phase difference between the channels at the output
 //! is the phase difference at the input, so a sound equally loud and in phase on both
@@ -140,8 +145,13 @@ impl Heterodyne {
 /// of active LOs), so changing the count does not change the loudness.
 #[derive(Clone, Debug)]
 pub struct HetComb<const N: usize> {
-    voices: [Heterodyne; N],
+    sample_rate: f32,
+    oscillators: [Nco; N],
     active: usize,
+    /// The low-pass of each channel. The mono path uses only the first.
+    lowpass: [Butterworth4; 2],
+    /// 2 × the user gain: mixing halves the amplitude of the difference tone.
+    out_gain: f32,
 }
 
 impl<const N: usize> HetComb<N> {
@@ -149,8 +159,11 @@ impl<const N: usize> HetComb<N> {
     /// (at most `N`), with the cutoff set to half the spacing.
     pub fn new(sample_rate: f32, first_lo_hz: f32, spacing_hz: f32, count: usize) -> Self {
         let mut comb = Self {
-            voices: core::array::from_fn(|_| Heterodyne::new(sample_rate, first_lo_hz)),
+            sample_rate,
+            oscillators: core::array::from_fn(|_| Nco::new(sample_rate, first_lo_hz)),
             active: 0,
+            lowpass: [Butterworth4::lowpass(sample_rate, DEFAULT_CUTOFF_HZ); 2],
+            out_gain: 2.0,
         };
         comb.set_evenly_spaced(first_lo_hz, spacing_hz, count);
         comb
@@ -160,30 +173,29 @@ impl<const N: usize> HetComb<N> {
     /// that stay active keep their phase, so the change does not click.
     pub fn set_los(&mut self, los_hz: &[f32]) {
         self.active = los_hz.len().min(N);
-        for (v, &lo) in self.voices.iter_mut().zip(los_hz) {
-            v.set_lo(lo);
+        for (oscillator, &lo) in self.oscillators.iter_mut().zip(los_hz) {
+            oscillator.set_freq(lo);
         }
     }
 
-    /// Evenly spaced LOs, with each voice's cutoff at half the spacing.
+    /// Evenly spaced LOs, with the cutoff at half the spacing.
     pub fn set_evenly_spaced(&mut self, first_lo_hz: f32, spacing_hz: f32, count: usize) {
         self.active = count.min(N);
-        for (i, v) in self.voices.iter_mut().take(self.active).enumerate() {
-            v.set_lo(first_lo_hz + spacing_hz * i as f32);
-            v.set_cutoff(spacing_hz / 2.0);
+        for (i, oscillator) in self.oscillators.iter_mut().take(self.active).enumerate() {
+            oscillator.set_freq(first_lo_hz + spacing_hz * i as f32);
         }
+        self.set_cutoff(spacing_hz / 2.0);
     }
 
     pub fn set_cutoff(&mut self, cutoff_hz: f32) {
-        for v in &mut self.voices {
-            v.set_cutoff(cutoff_hz);
+        let filter = Butterworth4::lowpass(self.sample_rate, cutoff_hz);
+        for lowpass in &mut self.lowpass {
+            lowpass.set_coefficients(&filter);
         }
     }
 
     pub fn set_gain(&mut self, gain: f32) {
-        for v in &mut self.voices {
-            v.set_gain(gain);
-        }
+        self.out_gain = 2.0 * gain;
     }
 
     pub fn active(&self) -> usize {
@@ -191,43 +203,60 @@ impl<const N: usize> HetComb<N> {
     }
 
     pub fn reset(&mut self) {
-        for v in &mut self.voices {
-            v.reset();
+        for oscillator in &mut self.oscillators {
+            oscillator.reset_phase();
+        }
+        for lowpass in &mut self.lowpass {
+            lowpass.reset();
         }
     }
 
     /// See [`Heterodyne::copy_filter_to_second_channel`].
     pub fn copy_filter_to_second_channel(&mut self) {
-        for v in &mut self.voices {
-            v.copy_filter_to_second_channel();
+        self.lowpass[1] = self.lowpass[0];
+    }
+
+    /// The active oscillators added together, for the next sample.
+    #[inline(always)]
+    fn next_lo(oscillators: &mut [Nco]) -> f32 {
+        let mut sum = 0.0;
+        for oscillator in oscillators {
+            sum += oscillator.tick().0;
         }
+        sum
     }
 
     pub fn process(&mut self, input: &[f32], output: &mut [f32]) {
         debug_assert_eq!(input.len(), output.len());
-        output.fill(0.0);
         if self.active == 0 {
+            output.fill(0.0);
             return;
         }
-        let scale = 1.0 / self.active as f32;
-        for v in &mut self.voices[..self.active] {
-            v.process_add(input, output, scale);
+        let gain = self.out_gain / self.active as f32;
+        let oscillators = &mut self.oscillators[..self.active];
+        let lowpass = &mut self.lowpass[0];
+        for (o, &x) in output.iter_mut().zip(input) {
+            *o = lowpass.process_sample(x * Self::next_lo(oscillators)) * gain;
         }
     }
 
-    /// Both channels, with one oscillator per voice. All four slices must have the
-    /// same length.
+    /// Both channels, with one set of oscillators. All four slices must have the same
+    /// length.
     pub fn process_stereo(&mut self, left: &[f32], right: &[f32], out_left: &mut [f32], out_right: &mut [f32]) {
         debug_assert_eq!(left.len(), out_left.len());
         debug_assert_eq!(right.len(), out_right.len());
-        out_left.fill(0.0);
-        out_right.fill(0.0);
         if self.active == 0 {
+            out_left.fill(0.0);
+            out_right.fill(0.0);
             return;
         }
-        let scale = 1.0 / self.active as f32;
-        for v in &mut self.voices[..self.active] {
-            v.process_add_stereo(left, right, out_left, out_right, scale);
+        let gain = self.out_gain / self.active as f32;
+        let oscillators = &mut self.oscillators[..self.active];
+        let [filter_left, filter_right] = &mut self.lowpass;
+        for (((ol, or), &l), &r) in out_left.iter_mut().zip(out_right.iter_mut()).zip(left).zip(right) {
+            let lo = Self::next_lo(oscillators);
+            *ol = filter_left.process_sample(l * lo) * gain;
+            *or = filter_right.process_sample(r * lo) * gain;
         }
     }
 }
@@ -291,6 +320,48 @@ mod tests {
             assert!((l - levels[0]).abs() / levels[0] < 0.05, "levels {levels:?}");
         }
         assert!(levels[0] > 0.5 / core::f32::consts::SQRT_2 / 3.0 * 0.9);
+    }
+
+    #[test]
+    fn comb_sounds_the_same_as_a_filter_for_each_voice() {
+        let x = noise_for_comb();
+        let y: Vec<f32> = x.iter().rev().copied().collect();
+        let mut comb: HetComb<3> = HetComb::new(FS, 15_000.0, DEFAULT_COMB_SPACING_HZ, 3);
+        comb.set_gain(3.0);
+        let (l, r) = stereo(&x, &y, |a, b, ol, or| comb.process_stereo(a, b, ol, or));
+        let mut mono: HetComb<3> = HetComb::new(FS, 15_000.0, DEFAULT_COMB_SPACING_HZ, 3);
+        mono.set_gain(3.0);
+        let mono_out = run_blocks(&x, 256, |i, o| mono.process(i, o));
+
+        // The same three LOs and filters, one chain for each voice.
+        let mut voices: Vec<Heterodyne> = [15_000.0, 45_000.0, 75_000.0]
+            .iter()
+            .map(|&lo| {
+                let mut voice = Heterodyne::new(FS, lo);
+                voice.set_cutoff(DEFAULT_COMB_SPACING_HZ / 2.0);
+                voice.set_gain(3.0);
+                voice
+            })
+            .collect();
+        let (mut want_l, mut want_r) = (std::vec![0.0f32; x.len()], std::vec![0.0f32; x.len()]);
+        for voice in &mut voices {
+            let (a, b) = stereo(&x, &y, |p, q, ol, or| voice.process_stereo(p, q, ol, or));
+            for i in 0..x.len() {
+                want_l[i] += a[i] / 3.0;
+                want_r[i] += b[i] / 3.0;
+            }
+        }
+        // More than 100 dB below the sound itself, on either ear and on the mono path.
+        for (got, want) in [(&l, &want_l), (&r, &want_r), (&mono_out, &want_l)] {
+            let difference: Vec<f32> = got.iter().zip(want.iter()).map(|(a, b)| a - b).collect();
+            let db = 20.0 * (rms(&difference) / rms(want)).log10();
+            assert!(db < -100.0, "difference {db} dB");
+        }
+    }
+
+    /// Noise, for a signal with something in every voice's band.
+    fn noise_for_comb() -> Vec<f32> {
+        crate::test_util::noise(0.3, 96_000, 7)
     }
 
     #[test]

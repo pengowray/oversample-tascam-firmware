@@ -65,6 +65,10 @@ pub struct TimeExpander<'a> {
     len: usize,
     /// Playback position in window samples, fixed point.
     pos: u64,
+    /// The four window samples around `pos`: one before it, the one at it and two after.
+    /// The X8 keeps the ring in uncached SDRAM, where a read is slow, so playback reads the
+    /// ring only when `pos` moves on to the next window sample.
+    taps: [f32; 4],
 }
 
 impl<'a> TimeExpander<'a> {
@@ -84,6 +88,7 @@ impl<'a> TimeExpander<'a> {
             start: 0,
             len: 0,
             pos: 0,
+            taps: [0.0; 4],
         };
         te.set_factor(DEFAULT_FACTOR);
         te
@@ -222,6 +227,7 @@ impl<'a> TimeExpander<'a> {
     fn start_playback(&mut self) {
         self.phase = Phase::Playing;
         self.pos = 0;
+        self.taps = [self.window_sample(0), self.window_sample(0), self.window_sample(1), self.window_sample(2)];
     }
 
     fn record(&mut self, mut x: &[f32]) {
@@ -248,7 +254,13 @@ impl<'a> TimeExpander<'a> {
         let mut k = 0;
         while k < out.len() && self.pos < end {
             out[k] = self.interpolate();
+            let index = self.pos >> FRAC_BITS;
             self.pos += self.step;
+            // `step` is at most one window sample, so `pos` moves on by one at most.
+            if self.pos >> FRAC_BITS != index {
+                let [_, x0, x1, x2] = self.taps;
+                self.taps = [x0, x1, x2, self.window_sample(index as usize + 3)];
+            }
             k += 1;
         }
         if self.pos >= end {
@@ -264,23 +276,18 @@ impl<'a> TimeExpander<'a> {
     /// Neighbours outside the window repeat its first or last sample.
     #[inline]
     fn interpolate(&self) -> f32 {
-        let i = (self.pos >> FRAC_BITS) as usize;
         let t = (self.pos as u32) as f32 * (1.0 / ONE as f32);
-        let last = self.len - 1;
-        let xm1 = self.tap(i.saturating_sub(1));
-        let x0 = self.tap(i);
-        let x1 = self.tap((i + 1).min(last));
-        let x2 = self.tap((i + 2).min(last));
+        let [xm1, x0, x1, x2] = self.taps;
         let c1 = 0.5 * (x1 - xm1);
         let c2 = xm1 - 2.5 * x0 + 2.0 * x1 - 0.5 * x2;
         let c3 = 0.5 * (x2 - xm1) + 1.5 * (x0 - x1);
         ((c3 * t + c2) * t + c1) * t + x0
     }
 
-    /// Window sample `i`.
+    /// Window sample `i`. Past the end, the last sample.
     #[inline]
-    fn tap(&self, i: usize) -> f32 {
-        let j = self.start + i;
+    fn window_sample(&self, i: usize) -> f32 {
+        let j = self.start + i.min(self.len - 1);
         let cap = self.ring.len();
         self.ring[if j >= cap { j - cap } else { j }]
     }
@@ -312,6 +319,58 @@ mod tests {
         let mut y = std::vec![0.0; n];
         te.process(&x, &mut y);
         y
+    }
+
+    /// Catmull-Rom at `pos`, reading all four samples from the ring.
+    fn from_the_ring(te: &TimeExpander, pos: u64) -> f32 {
+        let i = (pos >> FRAC_BITS) as usize;
+        let t = (pos as u32) as f32 * (1.0 / ONE as f32);
+        let last = te.len - 1;
+        let at = |i: usize| te.ring[(te.start + i) % te.ring.len()];
+        let (xm1, x0, x1, x2) = (at(i.saturating_sub(1)), at(i), at((i + 1).min(last)), at((i + 2).min(last)));
+        let c1 = 0.5 * (x1 - xm1);
+        let c2 = xm1 - 2.5 * x0 + 2.0 * x1 - 0.5 * x2;
+        let c3 = 0.5 * (x2 - xm1) + 1.5 * (x0 - x1);
+        ((c3 * t + c2) * t + c1) * t + x0
+    }
+
+    #[test]
+    fn playback_matches_reading_the_ring_for_every_sample() {
+        let x = noise(0.5, 40_000, 3);
+        // The storage is smaller than the audio, so the window crosses the end of the ring.
+        for (factor, block, change_to) in
+            [(10.0, 256, None), (10.0, 7, None), (1.0, 64, None), (1.5, 33, None), (7.3, 256, None), (20.0, 100, Some(3.0)), (2.0, 100, Some(16.0))]
+        {
+            let mut storage = std::vec![0.0; 9_000];
+            let mut te = TimeExpander::new(FS, &mut storage);
+            te.set_factor(factor);
+            te.set_pre_ms(10.0);
+            te.set_post_ms(20.0);
+            run_blocks(&x, 256, |i, o| te.process(i, o));
+            te.trigger();
+            run_blocks(&x[..3_840], 256, |i, o| te.process(i, o));
+            assert!(matches!(te.state(), ExpanderState::Playing { .. }));
+            let mut played = 0;
+            let mut out = std::vec![0.0; block];
+            while matches!(te.state(), ExpanderState::Playing { .. }) {
+                if played == 1_000 && let Some(factor) = change_to {
+                    te.set_factor(factor);
+                }
+                let (pos, step) = (te.pos, te.step);
+                te.process(&std::vec![0.0; block], &mut out);
+                let mut pos_now = pos;
+                for &y in &out {
+                    if pos_now >= (te.len as u64) << FRAC_BITS {
+                        break;
+                    }
+                    let want = from_the_ring(&te, pos_now);
+                    assert_eq!(y.to_bits(), want.to_bits(), "factor {factor}, block {block}, at {pos_now}");
+                    pos_now += step;
+                    played += 1;
+                }
+            }
+            assert!(played > 5_000);
+        }
     }
 
     #[test]

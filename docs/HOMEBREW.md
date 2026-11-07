@@ -1848,6 +1848,62 @@ powered off on the LAUNCHER, and factory settings also use 0.
 **If it goes wrong.** A hang at power-off needs the battery taken out. The next start then opens MANUAL, from the last
 periodic save. Recover as in "If it goes wrong" in the earlier steps.
 
+## Step 19 test file: TE reads its buffer less often, COMB uses one filter per ear (built 2026-11-07, not yet installed)
+
+`work/patch19/#PortaX8_0237.203` (B237, SHA-256 `5e97cb7d…8a174d69`). Includes steps 11 to 18. Install this file in place of
+B236. All the checks in `tools/x8patch.py` pass on this file. Nothing in this step has run on a real recorder.
+
+**TE.** Playback kept reading 4 samples from the ring for every output sample, and the ring is in uncached SDRAM (Step 17).
+It now keeps the 4 samples in `TimeExpander`, which is in DTCM, and reads one new sample when the position moves on. At 10x
+that is 19,200 ring reads a second in place of 768,000. A test compares the output bit for bit with reading the ring for
+every sample, at factors from 1 to 20, across the end of the ring, and with the factor changed during playback. The 192,000
+uncached writes a second in every mode are unchanged.
+
+**COMB.** All three voices use the same low-pass, and a filter is linear, so the comb now adds its oscillators and runs one
+filter per ear. This sounds the same apart from rounding: a test finds the difference from one filter per voice more than
+100 dB below the sound.
+
+Host cost, ms per second of audio, auto-vectorisation off, `bench` run from the commit before this one and from this one:
+
+| COMB, both sides | Before | B237 |
+|---|---|---|
+| Auto volume off | 8.30 | 6.75 |
+| Auto volume on | 9.29 | 7.93 |
+| Analysis skipped, Auto volume off | 3.67 | 2.17 |
+
+HET and 1:1 do not use this code. The saving is about 1.5 ms, or about 4.5 points of CPU at Step 15's 2.93 points per ms (an
+estimate). While recording that is about 9 points of `dsp`: predicted COMB about 46 with Auto volume off, against 55 in
+Step 17, and about 62 with `Bats only`, against 71. The host cannot show what the TE change saves, because its memory has no
+uncached region.
+
+| Item | B235 | B237 | Limit |
+|---|---|---|---|
+| ITCM | 73.8 KB | 74.9 KB | 89.2 KB |
+| DTCM | 142.1 KB | 141.8 KB | 152.8 KB |
+
+**What to check.** With Auto volume on `Bats only`, Listen to on `MANUAL's mix` and two inputs on, record in COMB and in TE
+while calls or the dog repeller play, about a minute each, and note `dsp`, `dry`, `lost` and `skip`. Does TE's `dsp` fall from
+about 80, and its `skip` from about 200 a second? Does TE sound the same, and does COMB, after a change of tuning?
+
+## Checking takes for cuts in the WAV (2026-11-07)
+
+Files from B231 (`to-2026-11-06`, 13.8 minutes in 9 takes) and B235 (`to-2026-11-07`, 5.7 minutes in 6 takes). Scripts were
+not kept: they are short NumPy checks.
+
+- **Repeats, gaps and bad values:** no sample run repeated elsewhere and no NaN in the B235 takes. Runs of equal samples, up
+  to 223 long, are at the +9 dBFS limit or at other high levels in the loud repeller takes.
+- **Fake cuts:** cutting frames out of a quiet real take and scoring the join with a linear predictor, in both channels at the
+  same sample, gave 1 to 5 for 4 frames, 2 to 30 for 64, 4 to 63 for 256, 2 to 174 for 1,072 and 5 to 216 for 4,096. So a short
+  cut in quiet sound can pass unseen, and one take cannot prove there are none.
+- **Result:** B231's strip showed 14,000 to 24,000 frames lost a second and 2.4 to 2.8 underruns a second. If those reached the
+  file, each take would have hundreds of cuts, and many would score above 20. Takes have 0 or 1, apart from loud repeller
+  sound in B235. So the patch's lost input did not reach the file in bulk.
+- **One clear jump:** `261106_0091_3-4.wav` at 112.392 s, in both channels at the same sample: left 0.0064 to 0.0363 and right
+  -0.0126 to 0.0112, and the signal carries on from the new level. Its cause is not known.
+- **No clear detector yet:** a large one-sample change in both channels also occurs in stock recordings from March, with scores
+  up to 95, in bat calls and handling noise. Only the jump above scores higher, at 176. To find real clicks, we need the time of
+  a click someone heard.
+
 ## Firmware map (V2.03, in progress)
 
 Found with `tools/x8ram.py` (unpacks the RAM runs) and a headless Ghidra 10.4
