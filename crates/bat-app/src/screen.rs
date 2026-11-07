@@ -20,8 +20,14 @@ use bat_dsp::heterodyne::DEFAULT_COMB_SPACING_HZ;
 use bat_dsp::time_expansion::{DEFAULT_POST_MS, DEFAULT_PRE_MS};
 
 mod chime_screen;
+mod cpu_test_screen;
+mod tools_screen;
 #[cfg(test)]
 pub(crate) use chime_screen::{CLOCK_Y, COLUMN_X, FAILURE_Y, ROW_H, ROW_Y, chime_text, columns as chime_columns, lines_with_widths as chime_test_lines};
+#[cfg(test)]
+pub(crate) use cpu_test_screen::lines_with_widths as cpu_test_lines;
+#[cfg(test)]
+pub(crate) use tools_screen::lines_with_widths as tools_lines;
 
 /// The width of the chime test's clock, for tests.
 #[cfg(test)]
@@ -88,11 +94,30 @@ pub fn draw(app: &BatApp, fb: Fb) {
         chime_screen::draw(app, fb);
         return;
     }
+    if app.screen == Screen::Tools {
+        title_bar(fb, "TOOLS", false);
+        tools_screen::draw(app, fb);
+        return;
+    }
+    if app.screen == Screen::CpuTest {
+        title_bar(fb, cpu_test_screen::TITLE, false);
+        cpu_test_screen::draw(app, fb);
+        return;
+    }
     let title = match app.input_kind() {
         InputKind::Live => "BAT DETECTOR",
         InputKind::Playback => "BAT PLAYBACK",
     };
-    title_bar(fb, title, true);
+    if app.cpu_test.running {
+        let (at, count) = (app.cpu_test.at + 1, app.cpu_test.count);
+        title_bar(fb, format_args!("{} row {at}/{count}", cpu_test_screen::TITLE), true);
+    } else {
+        title_bar(fb, title, true);
+    }
+    if app.remote_on() {
+        let colour = if app.remote.listening(app.samples) { ACCENT } else { TEXT_MUTED };
+        text(fb, &SMALL, tools_screen::TITLE_LABEL, 284, 16, RIGHT, colour);
+    }
     status_bar(app, fb);
     meters(app, fb);
     waterfall(app, fb);
@@ -100,15 +125,21 @@ pub fn draw(app: &BatApp, fb: Fb) {
         rate_warning(fb, rate, app.input_kind());
     } else if app.inputs()[0].is_none() {
         no_input_notice(fb);
+    } else if let Some(result) = app.remote.result_shown(app.samples) {
+        corner_notice_lines(fb, tools_screen::result_lines(result));
     } else if let Some(silence) = app.mix_silence() {
         mix_silence_notice(fb, silence);
     }
     snapshot(app, fb);
-    value_line(app, fb);
+    if app.cpu_test.running {
+        cpu_test_screen::running_line(app, fb);
+    } else {
+        value_line(app, fb);
+    }
     mode_buttons(app, fb);
 }
 
-fn title_bar(fb: Fb, title: &str, menu: bool) {
+fn title_bar(fb: Fb, title: impl u8g2_fonts::Content, menu: bool) {
     fill(fb, Rectangle::new(Point::zero(), Size::new(320, TITLE_H as u32)), TITLE);
     text(fb, &BODY_BOLD, title, 160, 17, CENTER, TEXT);
     if menu {
@@ -218,7 +249,11 @@ fn notice_lines(fb: Fb, x: i32, heading_y: i32, lines: &[&str]) {
 /// the right. White on `PANEL` has a contrast of 12:1, whatever the waterfall shows.
 /// The waterfall's grey columns are also `PANEL`, so the box has a border.
 fn mix_silence_notice(fb: Fb, silence: MixSilence) {
-    let lines = mix_silence_lines(silence);
+    corner_notice_lines(fb, mix_silence_lines(silence));
+}
+
+/// A small notice in the top left corner of the waterfall.
+fn corner_notice_lines(fb: Fb, lines: &[&str]) {
     let width = |line: &&str| BODY.get_rendered_dimensions(*line, Point::zero(), VerticalPosition::Baseline).map_or(0, |d| d.advance.x);
     let panel = corner_notice(lines.iter().map(width).max().unwrap_or(0), lines.len());
     rounded(fb, panel, 3, PANEL);
@@ -633,6 +668,16 @@ fn auto_volume_row(app: &BatApp, fb: Fb, j: usize) {
     }
 }
 
+/// A switch. On: blue track, knob at the right. Off: grey track, knob at the left.
+fn switch_control(fb: Fb, sw: Rectangle, on: bool) {
+    let h = sw.size.height;
+    let _ = RoundedRectangle::new(sw, CornerRadii::new(Size::new(h / 2, h / 2)))
+        .into_styled(PrimitiveStyle::with_fill(if on { ACCENT } else { LINE }))
+        .draw(fb);
+    let knob_x = if on { sw.top_left.x + sw.size.width as i32 - h as i32 / 2 } else { sw.top_left.x + h as i32 / 2 };
+    let _ = Circle::with_center(Point::new(knob_x, sw.center().y), h - 6).into_styled(PrimitiveStyle::with_fill(TEXT)).draw(fb);
+}
+
 fn settings(app: &BatApp, fb: Fb) {
     for (i, setting) in Setting::ALL.iter().enumerate() {
         let selected = app.selected_setting() == *setting;
@@ -685,17 +730,7 @@ fn settings(app: &BatApp, fb: Fb) {
                     app.debug_info()
                 }
             };
-            // On: blue track, knob at the right. Off: grey track, knob at
-            // the left. The white knob's position shows the state.
-            let sw = switch(i - Setting::STEPPED);
-            let h = sw.size.height;
-            let _ = RoundedRectangle::new(sw, CornerRadii::new(Size::new(h / 2, h / 2)))
-                .into_styled(PrimitiveStyle::with_fill(if on { ACCENT } else { LINE }))
-                .draw(fb);
-            let knob_x = if on { sw.top_left.x + sw.size.width as i32 - h as i32 / 2 } else { sw.top_left.x + h as i32 / 2 };
-            let _ = Circle::with_center(Point::new(knob_x, sw.center().y), h - 6)
-                .into_styled(PrimitiveStyle::with_fill(TEXT))
-                .draw(fb);
+            switch_control(fb, switch(i - Setting::STEPPED), on);
             continue;
         }
         let r = setting_row(i);
@@ -756,8 +791,8 @@ fn settings(app: &BatApp, fb: Fb) {
     text(fb, &BODY_BOLD, "Sounds to mark", 16, SWITCHES_HEADING, LEFT, TEXT);
     text(fb, &SMALL, "Marked on waterfall, played in TE and Auto volume Bats only.", 16, SWITCHES_HELP, LEFT, TEXT_MUTED);
     text(fb, &SMALL, "These settings reset when the recorder is turned off.", 16, SETTINGS_NOTE, LEFT, TEXT_MUTED);
-    rounded(fb, CHIME_TEST, 4, BUTTON);
-    text(fb, &BODY_BOLD, "Chime test", CHIME_TEST.center().x, CHIME_TEST.top_left.y + 28, CENTER, TEXT);
+    rounded(fb, TOOLS, 4, BUTTON);
+    text(fb, &BODY_BOLD, "Tools", TOOLS.center().x, TOOLS.top_left.y + 28, CENTER, TEXT);
     rounded(fb, DONE, 4, ACCENT);
     text(fb, &BODY_BOLD, "Done", DONE.center().x, DONE.top_left.y + 28, CENTER, TEXT);
 }

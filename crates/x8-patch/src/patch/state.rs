@@ -189,3 +189,6 @@ pub(super) static DRAGGING: AtomicBool = AtomicBool::new(false);
 pub(super) static MIX_FILE_OFF: AtomicBool = AtomicBool::new(false);
 /// The file mask has no master file for the take in progress (see `mix_file`).
 pub(super) static TAKE_WITHOUT_MIX: AtomicBool = AtomicBool::new(false);
+/// The most input frames waiting at the start of a chunk since the CPU test last read this.
+/// The context running the app both writes and reads it.
+pub(super) static IN_WAITING_MOST: AtomicU32 = AtomicU32::new(0);

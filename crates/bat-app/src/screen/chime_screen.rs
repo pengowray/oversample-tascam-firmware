@@ -263,6 +263,5 @@ pub(crate) fn lines_with_widths() -> std::vec::Vec<(std::string::String, i32, i3
         let failure = Failure { channel: 0, reason, bytes: 22 };
         add(&SMALL, &FailureLine("Mix, right side", failure).to_string(), full);
     }
-    add(&BODY_BOLD, "Chime test", crate::layout::CHIME_TEST.size.width as i32 - 8);
     lines
 }

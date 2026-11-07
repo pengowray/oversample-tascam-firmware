@@ -5,6 +5,8 @@ use super::*;
 use bat_dsp::spectrum::SpectrumAnalyzer;
 
 mod chime_test;
+mod cpu_test;
+mod remote;
 mod stereo;
 
 const FS: f32 = 192_000.0;

@@ -17,10 +17,12 @@
 extern crate std;
 
 mod chime_test;
+mod cpu_test;
 pub mod fb;
 mod layout;
 mod level;
 pub mod palette;
+mod remote;
 mod screen;
 
 use bat_dsp::classify::{CallClassifier, DEFAULT_TRAIN_MIN_DB};
@@ -32,9 +34,11 @@ use bat_dsp::pitch_shift::PitchShifter;
 use bat_dsp::spectrum::{Column, SpectrumAnalyzer};
 use bat_dsp::time_expansion::{ExpanderState, TimeExpander};
 
+pub use cpu_test::{HostFigures, Row as CpuTestRow, RowResult as CpuTestResult};
 pub use fb::Rgb565Buffer;
 use layout::{SNAP_H, SNAP_W, WF_H, WF_W};
 pub use level::AutoVolume;
+pub use remote::{RemoteCommand, RemoteResult};
 
 /// Screen size in pixels.
 pub const WIDTH: usize = 320;
@@ -165,6 +169,10 @@ pub enum Screen {
     Settings,
     /// Shows what the chime decoders read, while they listen: see [`chime_test`].
     ChimeTest,
+    /// The phone remote's switch, and the way to the two test screens.
+    Tools,
+    /// The CPU test's results: see [`cpu_test`]. The test itself runs on the main screen.
+    CpuTest,
 }
 
 /// Rows of the settings screen, top to bottom.
@@ -423,6 +431,8 @@ pub struct BatApp<'a> {
     /// [`set_skip_analysis`](Self::set_skip_analysis).
     skip_analysis: bool,
     chime: chime_test::ChimeTest,
+    cpu_test: cpu_test::CpuTest,
+    remote: remote::Remote,
     skipped_chunks: u32,
     /// The next chunk does not follow on from the last one.
     input_gap: bool,
@@ -586,6 +596,8 @@ impl<'a> BatApp<'a> {
             field!((*this).snapshot_hz).write((VIEW_LO_HZ, VIEW_HI_HZ));
             field!((*this).skip_analysis).write(false);
             field!((*this).chime).write(chime_test::ChimeTest::new());
+            field!((*this).cpu_test).write(cpu_test::CpuTest::new());
+            field!((*this).remote).write(remote::Remote::new());
             field!((*this).skipped_chunks).write(0);
             field!((*this).input_gap).write(false);
             field!((*this).lost_frames).write(0);
@@ -625,6 +637,7 @@ impl<'a> BatApp<'a> {
             fill(field!((*this).te_out), 0.0);
 
             let app = &mut *this;
+            app.remote.configure(sample_rate as u32, bin_hz);
             // Each call reaches about one of the comb's oscillators, and the comb
             // scales its sum by 1 / count, so restore that to match HET's level.
             app.comb.set_gain(COMB_COUNT as f32);
@@ -706,7 +719,123 @@ impl<'a> BatApp<'a> {
     /// Show the chime test, which starts listening with nothing read.
     pub fn open_chime_test(&mut self) {
         self.screen = Screen::ChimeTest;
+        self.remote.decoders_taken();
         self.chime.restart(&mut self.bufs.chime, self.sample_rate as u32);
+    }
+
+    /// Show the tools screen.
+    pub fn open_tools(&mut self) {
+        self.screen = Screen::Tools;
+    }
+
+    /// Show the CPU test's screen, which offers the test and shows the latest results.
+    pub fn open_cpu_test(&mut self) {
+        self.screen = Screen::CpuTest;
+        if self.cpu_test.count == 0 || !self.cpu_test.has_results() {
+            self.cpu_test.plan(self.modes, self.inputs[1].is_some());
+        }
+    }
+
+    /// Whether the CPU test is running.
+    pub fn cpu_test_running(&self) -> bool {
+        self.cpu_test.running
+    }
+
+    /// The CPU test's rows: each one's settings, and its figures if it has run.
+    pub fn cpu_test_rows(&self) -> &[cpu_test::Row] {
+        &self.cpu_test.rows[..self.cpu_test.count]
+    }
+
+    /// Run the CPU test from its first row, on the main screen.
+    pub fn start_cpu_test(&mut self) {
+        self.cpu_test.plan(self.modes, self.inputs[1].is_some());
+        self.cpu_test.saved = Some(cpu_test::Saved { mode: self.mode, volume: self.level.volume(), source: self.source() });
+        self.cpu_test.running = true;
+        self.screen = Screen::Main;
+        self.begin_cpu_test_row();
+    }
+
+    fn begin_cpu_test_row(&mut self) {
+        let Some(row) = self.cpu_test.current().copied() else {
+            self.stop_cpu_test();
+            return;
+        };
+        self.set_mode(row.mode);
+        self.level.set_volume(row.volume);
+        self.set_source(row.source());
+        self.remote.set_forced(row.decoders);
+        self.cpu_test.begin_row(self.samples);
+    }
+
+    /// End the CPU test and show what it has measured so far.
+    fn stop_cpu_test(&mut self) {
+        self.cpu_test.running = false;
+        self.remote.set_forced(false);
+        if let Some(saved) = self.cpu_test.saved.take() {
+            self.set_mode(saved.mode);
+            self.level.set_volume(saved.volume);
+            self.set_source(saved.source);
+        }
+        self.screen = Screen::CpuTest;
+    }
+
+    /// The host's figures, at each redraw while the CPU test runs.
+    pub fn cpu_test_figures(&mut self, figures: HostFigures) {
+        if !self.cpu_test.running {
+            return;
+        }
+        let recorder = self.recorder().0;
+        let finished = self.cpu_test.figures(figures, recorder, self.skipped_chunks, self.samples, self.sample_rate as u64);
+        if finished {
+            self.cpu_test.at += 1;
+            self.begin_cpu_test_row();
+        }
+    }
+
+    /// Whether the host should pass its input through [`add_test_calls`](Self::add_test_calls).
+    pub fn test_calls_on(&self) -> bool {
+        self.cpu_test.running && self.cpu_test.test_calls
+    }
+
+    /// Add the CPU test's synthetic bat calls to the blocks about to be passed to
+    /// [`process`](Self::process). They reach the headphones and the waterfall, and not a
+    /// recorder outside the app.
+    pub fn add_test_calls(&mut self, first: &mut [f32], second: &mut [f32]) {
+        self.cpu_test.add_calls(self.sample_rate, first, second);
+    }
+
+    /// The host can start and stop its recorder: offer the phone remote.
+    pub fn set_remote_available(&mut self, available: bool) {
+        self.remote.available = available;
+    }
+
+    pub fn remote_available(&self) -> bool {
+        self.remote.available
+    }
+
+    /// Whether the phone remote's switch is on, and the host offers the remote.
+    pub fn remote_on(&self) -> bool {
+        self.remote.enabled()
+    }
+
+    /// Turn the phone remote on or off.
+    pub fn set_remote_on(&mut self, on: bool) {
+        self.remote.on = on;
+    }
+
+    /// Tones heard, chimes read and chimes that failed, since the host started.
+    pub fn remote_counts(&self) -> (u32, u32, u32) {
+        self.remote.counts()
+    }
+
+    /// A command from the phone that the host has not acted on yet.
+    pub fn take_remote_command(&mut self) -> Option<RemoteCommand> {
+        self.remote.take_command()
+    }
+
+    /// What came of a command: shows on the main screen and beeps in the headphones.
+    pub fn remote_result(&mut self, result: RemoteResult) {
+        self.remote.report(result, self.samples);
     }
 
     /// How many blocks of input the chime test listens to: with one input on, both blocks
@@ -1015,7 +1144,12 @@ impl<'a> BatApp<'a> {
             }
             // HOME closes the settings screen; on the main screen it belongs to
             // the X8's launcher.
-            Button::Home => self.screen = Screen::Main,
+            Button::Home => {
+                if self.cpu_test.running {
+                    self.stop_cpu_test();
+                }
+                self.screen = Screen::Main;
+            }
             Button::Play => {}
         }
     }
@@ -1027,7 +1161,7 @@ impl<'a> BatApp<'a> {
             self.change_setting(self.selected_setting(), steps);
             return;
         }
-        if self.screen == Screen::ChimeTest {
+        if matches!(self.screen, Screen::ChimeTest | Screen::Tools | Screen::CpuTest) || self.cpu_test.running {
             return;
         }
         let step = |i: usize, len: usize| (i as i32 + steps).clamp(0, len as i32 - 1) as usize;
@@ -1044,11 +1178,42 @@ impl<'a> BatApp<'a> {
 
     /// A tap on the touchscreen, in screen pixels.
     pub fn touch(&mut self, x: i32, y: i32) {
-        if self.screen == Screen::ChimeTest {
-            if layout::BACK.contains(embedded_graphics::prelude::Point::new(x, y)) {
-                self.screen = Screen::Settings;
-            }
+        // A tap anywhere stops the CPU test, so a tap cannot change a setting under it.
+        if self.cpu_test.running {
+            self.stop_cpu_test();
             return;
+        }
+        let p = embedded_graphics::prelude::Point::new(x, y);
+        match self.screen {
+            Screen::ChimeTest => {
+                if layout::BACK.contains(p) {
+                    self.screen = Screen::Tools;
+                }
+                return;
+            }
+            Screen::Tools => {
+                if layout::BACK.contains(p) {
+                    self.screen = Screen::Settings;
+                } else if layout::TOOLS_CHIME_TEST.contains(p) {
+                    self.open_chime_test();
+                } else if layout::TOOLS_CPU_TEST.contains(p) && self.debug_available {
+                    self.open_cpu_test();
+                } else if layout::TOOLS_REMOTE.contains(p) && self.remote.available {
+                    self.remote.on = !self.remote.on;
+                }
+                return;
+            }
+            Screen::CpuTest => {
+                if layout::CPU_TEST_BACK.contains(p) {
+                    self.screen = Screen::Tools;
+                } else if layout::CPU_TEST_START.contains(p) && self.inputs[0].is_some() && self.rate_warning.is_none() {
+                    self.start_cpu_test();
+                } else if layout::CPU_TEST_CALLS.contains(p) {
+                    self.cpu_test.test_calls = !self.cpu_test.test_calls;
+                }
+                return;
+            }
+            _ => {}
         }
         if self.screen == Screen::Settings {
             match layout::settings_hit(x, y, Setting::STEPPED, Setting::ALL.len()) {
@@ -1073,7 +1238,7 @@ impl<'a> BatApp<'a> {
                     self.change_setting(Setting::ALL[i], 1);
                 }
                 Some(layout::SettingsHit::Done) => self.screen = Screen::Main,
-                Some(layout::SettingsHit::ChimeTest) => self.open_chime_test(),
+                Some(layout::SettingsHit::Tools) => self.open_tools(),
                 None => {}
             }
             return;
@@ -1100,6 +1265,7 @@ impl<'a> BatApp<'a> {
     /// Whether a touch down at (x, y) starts a drag that tunes.
     pub fn is_draggable(&self, x: i32, y: i32) -> bool {
         self.screen == Screen::Main
+            && !self.cpu_test.running
             && matches!(self.mode, Mode::Het | Mode::Comb)
             && layout::waterfall_freq_at(x, y).is_some()
     }
@@ -1217,6 +1383,10 @@ impl<'a> BatApp<'a> {
             self.join_left = JOIN_FADE_SAMPLES;
             self.chime.input_jumped(self.samples);
         } else {
+            // The host paused, so the CPU test's row has a hole in it.
+            if self.cpu_test.running {
+                self.stop_cpu_test();
+            }
             // If the number of chains changes next, its fade has to start from what is
             // heard, which is silence and not the last sample from before the pause.
             self.last_out = [0.0; 2];
@@ -1238,6 +1408,11 @@ impl<'a> BatApp<'a> {
         if self.screen == Screen::ChimeTest {
             let channels = self.chime_channels();
             self.chime.listen(&mut self.bufs.chime, [first, second], channels, self.samples);
+        } else if self.remote.wants_decoders(self.samples) {
+            let channels = self.chime_channels();
+            self.remote.listen(&mut self.bufs.chime, [first, second], channels, self.samples);
+        } else {
+            self.remote.sleep_if_done(self.samples);
         }
 
         let source = self.source();
@@ -1346,6 +1521,9 @@ impl<'a> BatApp<'a> {
         add_fading_step(out_l, self.switch_step[0], self.switch_left);
         add_fading_step(out_r, self.switch_step[1], self.switch_left);
         self.switch_left = self.switch_left.saturating_sub(len as u32);
+        if self.remote.beeping() {
+            self.remote.add_beep(out_l, out_r);
+        }
         self.last_out = [out_l[len - 1], out_r[len - 1]];
 
         self.samples += len as u64;
@@ -1389,6 +1567,7 @@ impl<'a> BatApp<'a> {
             input_gap,
             lost_frames,
             level: auto_level,
+            remote,
             ..
         } = self;
         let Buffers { wf, history, history_centre, snapshot, .. } = &mut **bufs;
@@ -1498,7 +1677,13 @@ impl<'a> BatApp<'a> {
             return;
         }
 
+        // Also while the decoders run: the phone's second tone has to keep them running if its
+        // first chime was not read.
+        let looks_for_tone = remote.enabled();
         analyzer.push(&mono[..len], |col: &Column<'_>| {
+            if looks_for_tone {
+                remote.column(col.db);
+            }
             if let Some(event) = detector.process(col) {
                 mark(&event, history, history_centre);
             }
@@ -1547,8 +1732,22 @@ impl<'a> BatApp<'a> {
     /// button, the waterfall in HET or COMB mode (where a tap tunes), or a
     /// control on the settings screen.
     pub fn is_tappable(&self, x: i32, y: i32) -> bool {
-        if self.screen == Screen::ChimeTest {
-            return layout::BACK.contains(embedded_graphics::prelude::Point::new(x, y));
+        if self.cpu_test.running {
+            return true;
+        }
+        let p = embedded_graphics::prelude::Point::new(x, y);
+        match self.screen {
+            Screen::ChimeTest => return layout::BACK.contains(p),
+            Screen::Tools => {
+                return layout::BACK.contains(p)
+                    || layout::TOOLS_CHIME_TEST.contains(p)
+                    || (self.debug_available && layout::TOOLS_CPU_TEST.contains(p))
+                    || (self.remote.available && layout::TOOLS_REMOTE.contains(p));
+            }
+            Screen::CpuTest => {
+                return layout::CPU_TEST_BACK.contains(p) || layout::CPU_TEST_START.contains(p) || layout::CPU_TEST_CALLS.contains(p);
+            }
+            _ => {}
         }
         if self.screen == Screen::Settings {
             return match layout::settings_hit(x, y, Setting::STEPPED, Setting::ALL.len()) {

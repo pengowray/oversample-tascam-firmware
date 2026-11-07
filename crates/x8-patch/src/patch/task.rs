@@ -5,6 +5,7 @@ use bat_app::BatApp;
 use super::audio::{ANALYSIS_OFF_ABOVE, process_input};
 use super::itcm::itcm_still_ok;
 use super::keys::{apply_actions, apply_touches};
+use super::remote::run_remote;
 use super::screen::{draw_frame, hide_for_popup, render, show_frame};
 use super::state::{
     ACTIONS_READ, ACTIONS_WRITE, APP, BACKLOG_DROPPED, BAT_ACTIVE, BLOCKS, DRAW_BLOCKS,
@@ -238,6 +239,7 @@ extern "C" fn dsp_task(_: isize) {
         new_session(app);
         apply_actions(app);
         apply_touches(app);
+        run_remote(app);
         let start = BLOCKS.load(Relaxed);
         process_input(app, u32::MAX, PASS_BLOCKS);
         drop_backlog(app);
@@ -285,6 +287,7 @@ pub(super) extern "C" fn tick_work() {
     new_session(app);
     apply_actions(app);
     apply_touches(app);
+    run_remote(app);
     process_input(app, MAX_FRAMES_PER_CALL, PASS_BLOCKS);
     let now = BLOCKS.load(Relaxed);
     if render_due(now) {

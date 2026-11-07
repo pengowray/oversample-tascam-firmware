@@ -6,7 +6,7 @@ use bat_app::BatApp;
 use super::state::{
     AUDIO_INSTALLED, AUDIO_SLOT_UNEXPECTED, AUDIO_STATE, BAT_ACTIVE, BLOCKS, BLOCKS_AT_SECOND,
     CYCLE_COUNTER_ON, CYCLES_AT_SECOND, CYCLES_PER_S, DEBUG_SHOWN, HEAR_MIX, HEARD_WORDS, HOOK_CYCLES, HOOK_CYCLES_PER_S,
-    IN_DROPPED, IN_DROPPED_SEEN, IN_HOLE_AT, IN_READ, IN_RING, IN_WRITE, NO_INPUT_WORDS, OUT_FADE_IN, OUT_LAST, OUT_READ, OUT_WRITE,
+    IN_DROPPED, IN_DROPPED_SEEN, IN_HOLE_AT, IN_READ, IN_RING, IN_WAITING_MOST, IN_WRITE, NO_INPUT_WORDS, OUT_FADE_IN, OUT_LAST, OUT_READ, OUT_WRITE,
     PLAYBACK, PRIMED, SOURCE_PEAK, STOCK_CYCLES, STOCK_CYCLES_PER_S, UNDERRUNS, WORD_PEAKS,
 };
 use super::{Handler, blocks_per_second, rate_class, spare, stock};
@@ -94,6 +94,9 @@ pub(super) fn process_input(app: &mut BatApp<'static>, budget: u32, time_blocks:
     while done < budget && BLOCKS.load(Relaxed).wrapping_sub(start) < time_blocks {
         let read = IN_READ.load(Relaxed);
         let available = IN_WRITE.load(Acquire).wrapping_sub(read);
+        if available > IN_WAITING_MOST.load(Relaxed) {
+            IN_WAITING_MOST.store(available, Relaxed);
+        }
         if available > ANALYSIS_OFF_ABOVE {
             app.set_skip_analysis(true);
         } else if available < ANALYSIS_ON_BELOW {
@@ -134,6 +137,9 @@ pub(super) fn process_input(app: &mut BatApp<'static>, budget: u32, time_blocks:
             second[i] = b as f32 * SCALE;
         }
         IN_READ.store(read.wrapping_add(n as u32), Release);
+        if app.test_calls_on() {
+            app.add_test_calls(&mut first[..n], &mut second[..n]);
+        }
         app.process(&first[..n], &second[..n], &mut left[..n], &mut right[..n]);
         let mut at = (write % spare::OUT_FRAMES) as usize;
         for (&l, &r) in left[..n].iter().zip(&right[..n]) {

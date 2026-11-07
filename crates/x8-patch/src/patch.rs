@@ -21,6 +21,8 @@ mod mix_file;
 mod play_glyph;
 /// Opening and closing the bat screen, and drawing it with the debug strips.
 mod screen;
+/// Carries out the phone remote's commands by posting button presses to task 1.
+mod remote;
 /// SDRAM after Qt's framebuffers, 0x87ea6004 to 0x87ffffff: zeroed by no init
 /// table entry and referred to by no stock code (checked in Ghidra). Mapped
 /// uncached, so the display controller sees what is written without cache

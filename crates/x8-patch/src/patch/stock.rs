@@ -183,5 +183,21 @@ pub const RENDER_KIND: *const u8 = 0x8191_40ec as *const u8;
 pub const BUILD_FILE_MASK: usize = 0x80db_63d1;
 /// `FUN_80db19b8(names)`: opens the files in the mask for a take (Thumb address).
 pub const OPEN_TAKE_FILES: usize = 0x80db_19b9;
+/// `FUN_80d70026(&block)`: takes a block from task 1's message ring, with interrupts off, and
+/// returns 0 in r0 if it did. +4 is then set to 1 and the message is copied to +8 (Thumb address).
+pub const NEW_MESSAGE: usize = 0x80d7_0027;
+/// The RTOS's `snd_mbx(mailbox, block)` (ITCM, Thumb address). Task 1 reads mailbox 1.
+pub const SND_MBX: usize = 0x0002_db05;
+pub const TASK_1_MAILBOX: i32 = 1;
+/// The bytes `FUN_80d6c058` copies to a block's +8.
+pub const MESSAGE_BYTES: usize = 0x14;
+pub const MESSAGE_CODE_OFFSET: usize = 8;
+/// REC in the app screens' and the recording screen's handlers.
+pub const REC: i32 = 0x07;
+/// `FUN_80daca30()`: non-zero while the HOLD switch is on. Task 1 then answers most buttons
+/// with the HOLD pop-up (Thumb address).
+pub const HOLD_ON: usize = 0x80da_ca31;
+/// Settings + 0x196: 1 when REC from stop in MANUAL opens the recording guide (transport 9).
+pub const RECORDING_GUIDE: *const u8 = 0x81e8_ca12 as *const u8;
 /// `FUN_80db1dc8()`: works out the remaining recording time (Thumb address).
 pub const UPDATE_REMAINING_TIME: usize = 0x80db_1dc9;

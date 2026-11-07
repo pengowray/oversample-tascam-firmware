@@ -3,7 +3,7 @@ use core::ptr;
 use core::sync::atomic::{Ordering::Acquire, Ordering::Relaxed, Ordering::Release};
 
 use bat_app::fb::Rgb565Buffer;
-use bat_app::{AutoVolume, BatApp, Feed, InputKind, MixSilence, Mode, MonitorSource, Recorder, Screen};
+use bat_app::{AutoVolume, BatApp, Feed, HostFigures, InputKind, MixSilence, Mode, MonitorSource, Recorder, Screen};
 use embedded_graphics::pixelcolor::Rgb565;
 use embedded_graphics::prelude::*;
 use embedded_graphics::primitives::Rectangle;
@@ -16,7 +16,7 @@ use super::itcm::load_itcm;
 use super::state::{
     APP, APP_READY, AUDIO_INSTALLED, AUDIO_SLOT_UNEXPECTED, AUDIO_STATE, BACKLOG_DROPPED,
     BAT_ACTIVE, BLOCKS, BUFFERS, CALLS_PER_S, CYCLES_PER_S, DEBUG_SHOWN, DRAW_PERMILLE, DSP_PERMILLE,
-    DUMMY_LCDIF, FRAME, HEAR_MIX, HEARD_WORDS, HOOK_CYCLES_PER_S, IN_DROPPED, IN_READ, IN_WRITE,
+    DUMMY_LCDIF, FRAME, HEAR_MIX, HEARD_WORDS, HOOK_CYCLES_PER_S, IN_DROPPED, IN_READ, IN_WAITING_MOST, IN_WRITE,
     LAST_EVENT, LAUNCH_AT, MIX_FILE_OFF, LOAD_WINDOW_START, LAUNCH_FROM, LAUNCHING, MUTE_SEEN, MUTE_SEEN_AT, NO_APP, NO_INPUT_WORDS, OUT_LAST, OUT_READ,
     OUT_WRITE, PENDING, PLAYBACK, POPUP_HIDDEN, PRIMED, SAVED_BUFFER, SAVED_LITERAL, SCREEN_APP, SESSION,
     SOURCE_PEAK, STOCK_CYCLES_PER_S, TASK, TEST_DSP_MAX, TEST_SETTINGS, TEST_START_BLOCKS, TEST_START_DRY,
@@ -185,10 +185,31 @@ pub(super) fn draw_frame() {
     // SAFETY: built by enter_work.
     let app = unsafe { app() };
     update_status(app);
+    if app.cpu_test_running() {
+        app.cpu_test_figures(host_figures());
+    }
     app.render(&mut fb);
-    DEBUG_SHOWN.store(app.debug_info(), Relaxed);
-    if app.debug_info() && app.screen() != Screen::Settings {
+    let show_figures = app.debug_info() || app.cpu_test_running();
+    DEBUG_SHOWN.store(show_figures, Relaxed);
+    if show_figures && matches!(app.screen(), Screen::Main | Screen::ChimeTest) {
         draw_debug(&mut fb, app);
+    }
+}
+
+/// The figures the CPU test keeps, as the debug strip shows them.
+fn host_figures() -> HostFigures {
+    let all = CYCLES_PER_S.load(Relaxed);
+    let percent = |part: u32| if all == 0 { 0 } else { (part as u64 * 100 / all as u64) as u32 };
+    HostFigures {
+        irq_percent: percent(STOCK_CYCLES_PER_S.load(Relaxed)),
+        hook_percent: percent(HOOK_CYCLES_PER_S.load(Relaxed)),
+        dsp_percent: DSP_PERMILLE.load(Relaxed) / 10,
+        draw_percent: DRAW_PERMILLE.load(Relaxed) / 10,
+        window: LOAD_WINDOW_START.load(Relaxed),
+        dry: UNDERRUNS.load(Relaxed),
+        lost: IN_DROPPED.load(Relaxed),
+        dropped: BACKLOG_DROPPED.load(Relaxed),
+        waiting_most: IN_WAITING_MOST.swap(0, Relaxed),
     }
 }
 
@@ -378,12 +399,14 @@ fn update_status(app: &mut BatApp<'static>) {
         app.set_input_kind(InputKind::Playback);
         app.set_mix_available(false);
         app.set_mix_file_available(false);
+        app.set_remote_available(false);
         MIX_FILE_OFF.store(false, Relaxed);
         app.set_inputs([Some(PLAYBACK_LEFT), Some(PLAYBACK_RIGHT)]);
     } else {
         app.set_input_kind(InputKind::Live);
         app.set_mix_available(true);
         app.set_mix_file_available(true);
+        app.set_remote_available(true);
         MIX_FILE_OFF.store(!app.mix_file(), Relaxed);
         let [first, second] = selected_inputs();
         let words = first.map_or(NO_INPUT_WORDS, |first| first.word | second.unwrap_or(first).word << 8);

@@ -121,12 +121,12 @@ const SWITCH_W: u32 = 44;
 const SWITCH_H: u32 = 24;
 /// Baseline of the note under the last switch.
 pub const SETTINGS_NOTE: i32 = 426;
-/// Opens the chime test, on the settings screen. It is beside Done because it is rarely
+/// Opens the tools screen, on the settings screen. It is beside Done because it is rarely
 /// used, and the settings screen has no other room for a control.
-pub const CHIME_TEST: Rectangle = Rectangle::new(Point::new(6, BUTTONS_Y), Size::new(112, BUTTON_H as u32));
+pub const TOOLS: Rectangle = Rectangle::new(Point::new(6, BUTTONS_Y), Size::new(112, BUTTON_H as u32));
 /// Closes the settings screen, where the mode buttons are on the main screen.
 pub const DONE: Rectangle = Rectangle::new(Point::new(126, BUTTONS_Y), Size::new(188, BUTTON_H as u32));
-/// Goes back to the settings screen from the chime test.
+/// Goes back from the chime test and the tools screen.
 pub const BACK: Rectangle = Rectangle::new(Point::new(6, BUTTONS_Y), Size::new(308, BUTTON_H as u32));
 
 /// Panel of stepped setting `i`.
@@ -204,7 +204,7 @@ pub enum SettingsHit {
     /// Anywhere on a switch's row; flips it. Numbered among all settings.
     Switch(usize),
     Done,
-    ChimeTest,
+    Tools,
 }
 
 /// What a tap at (x, y) hits, with `stepped` stepped settings followed by
@@ -214,8 +214,8 @@ pub fn settings_hit(x: i32, y: i32, stepped: usize, rows: usize) -> Option<Setti
     if DONE.contains(p) {
         return Some(SettingsHit::Done);
     }
-    if CHIME_TEST.contains(p) {
-        return Some(SettingsHit::ChimeTest);
+    if TOOLS.contains(p) {
+        return Some(SettingsHit::Tools);
     }
     (0..rows).find_map(|i| {
         if i >= stepped {
@@ -250,3 +250,23 @@ pub fn waterfall_freq_at(x: i32, y: i32) -> Option<f32> {
     let t = (y - WF_Y) as f32 / WF_H as f32;
     Some(VIEW_HI_HZ - t * (VIEW_HI_HZ - VIEW_LO_HZ))
 }
+
+/// Tools screen: the phone remote's panel, with its switch at the right, then a full-width
+/// button for each test, with its help inside the button.
+pub const TOOLS_REMOTE: Rectangle = Rectangle::new(Point::new(6, 32), Size::new(308, 118));
+pub const TOOLS_REMOTE_SWITCH: Rectangle = Rectangle::new(Point::new(260, 40), Size::new(SWITCH_W, SWITCH_H));
+pub const TOOLS_CHIME_TEST: Rectangle = Rectangle::new(Point::new(6, 158), Size::new(308, 48));
+pub const TOOLS_CPU_TEST: Rectangle = Rectangle::new(Point::new(6, 214), Size::new(308, 62));
+
+/// CPU test screen. Row pitch and baselines are as small as the text allows, because with two
+/// inputs on the table has 26 rows and 4 headings.
+pub const CPU_TEST_SUMMARY: i32 = 37;
+pub const CPU_TEST_GROUPS: i32 = 49;
+pub const CPU_TEST_COLUMNS: i32 = 60;
+pub const CPU_TEST_FIRST_ROW: i32 = 72;
+pub const CPU_TEST_ROW_H: i32 = 11;
+/// The test calls' switch, under the table. The whole row is the target.
+pub const CPU_TEST_CALLS: Rectangle = Rectangle::new(Point::new(6, 398), Size::new(308, 30));
+pub const CPU_TEST_CALLS_SWITCH: Rectangle = Rectangle::new(Point::new(264, 403), Size::new(40, 20));
+pub const CPU_TEST_BACK: Rectangle = Rectangle::new(Point::new(6, BUTTONS_Y), Size::new(112, BUTTON_H as u32));
+pub const CPU_TEST_START: Rectangle = Rectangle::new(Point::new(126, BUTTONS_Y), Size::new(188, BUTTON_H as u32));
