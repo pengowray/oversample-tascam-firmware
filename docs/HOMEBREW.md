@@ -2109,7 +2109,7 @@ B239. All the checks in `tools/x8patch.py` pass on this file. No stock hook site
 
 ## Step 23 test file: audio hook in ITCM, Auto volume per block, CPU test Stages table (built 2026-11-08, not yet installed)
 
-`work/patch23/#PortaX8_0241.203` (B241, SHA-256 `03651092…4397fe01fa`). Includes steps 11 to 22. Install this file in place of
+`work/patch23/#PortaX8_0241.203` (B241, SHA-256 `16a6affd…56589e9257`). Includes steps 11 to 22. Install this file in place of
 B240 or B239. All the checks in `tools/x8patch.py` pass on this file. No stock hook site changed (header version 17).
 
 The aim is headroom for the phone remote's decoders while recording: on B239 they needed about 11 `dsp` points more than FD
@@ -2152,9 +2152,9 @@ DSP task shows as about 2 `dsp` points.
 
 | Item | B240 | B241 | Limit |
 |---|---|---|---|
-| ITCM | 75.0 KB | 82.0 KB | 89.2 KB |
+| ITCM | 75.0 KB | 82.5 KB | 89.2 KB |
 | DTCM | 140.2 KB | 141.5 KB | 152.8 KB |
-| `.noinit`, the end of the patch's memory | ends at 0x818eb710 | ends at 0x818ed438 | 0x81900000 |
+| `.noinit`, the end of the patch's memory | ends at 0x818eb710 | ends at 0x818ed558 | 0x81900000 |
 
 **What to check.**
 

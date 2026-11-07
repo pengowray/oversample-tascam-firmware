@@ -128,6 +128,9 @@ pub(crate) struct CpuTest {
     pub(crate) saved: Option<Saved>,
     row_start: u64,
     measuring: bool,
+    /// Where the measuring started: the first figures after `SETTLE_S`, when the counts were
+    /// taken.
+    measure_start: u64,
     start_figures: HostFigures,
     start_skipped: u32,
     start_stages: [u64; Stage::COUNT],
@@ -150,6 +153,7 @@ impl CpuTest {
             saved: None,
             row_start: 0,
             measuring: false,
+            measure_start: 0,
             start_figures: HostFigures {
                 irq_percent: 0,
                 hook_percent: 0,
@@ -233,6 +237,7 @@ impl CpuTest {
         if !self.measuring {
             if elapsed >= SETTLE_S * rate_hz {
                 self.measuring = true;
+                self.measure_start = now;
                 self.start_figures = figures;
                 self.start_skipped = skipped;
                 self.start_stages = stages.totals;
@@ -262,7 +267,7 @@ impl CpuTest {
         }
         let sums = self.sums;
         let average = |sum: u32| if sums.windows == 0 { 0 } else { (sum + sums.windows / 2) / sums.windows };
-        let measured_frames = (elapsed - SETTLE_S * rate_hz).max(1);
+        let measured_frames = now.saturating_sub(self.measure_start).max(1);
         let skipped_frames = skipped.wrapping_sub(self.start_skipped) as u64 * SKIP_CHUNK_FRAMES;
         let from = self.start_figures;
         // Ticks in a stage, against the ticks in the measured time.
