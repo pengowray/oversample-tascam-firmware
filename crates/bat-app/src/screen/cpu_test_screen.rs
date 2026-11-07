@@ -10,17 +10,22 @@ use crate::{AutoVolume, BatApp, Recorder};
 
 pub(super) const TITLE: &str = "CPU TEST";
 
-/// The right edge of each column of figures, in table order.
-const DSP_X: i32 = 99;
-const MAX_X: i32 = 121;
-const DRAW_X: i32 = 145;
+/// The right edge of each column of figures, in table order. Each column is as wide as its
+/// heading or its widest value, whichever is wider, with `COLUMN_GAP` between columns. On B239's
+/// photo `max` ran into `draw`, and `drop`'s 0 into `ring`'s 2644. A test measures the widths.
+const DSP_X: i32 = 98;
+const MAX_X: i32 = 120;
+const DRAW_X: i32 = 146;
+/// The spare pixels go between columns whose values have two or more digits.
 const IRQ_X: i32 = 162;
 const HOOK_X: i32 = 188;
-const DRY_X: i32 = 207;
-const LOST_X: i32 = 232;
-const DROP_X: i32 = 257;
-const RING_X: i32 = 282;
-const SKIP_X: i32 = 312;
+const DRY_X: i32 = 209;
+const LOST_X: i32 = 230;
+const DROP_X: i32 = 255;
+const RING_X: i32 = 284;
+const SKIP_X: i32 = 314;
+#[cfg(test)]
+pub(crate) const COLUMN_GAP: i32 = 3;
 
 const LABEL_X: i32 = 6;
 const ROW_INDENT: i32 = 4;
@@ -56,7 +61,9 @@ const STATE_CHANGED: &str = "Recorder state changed. * differs from row 1.";
 
 fn group_heading(row: &Row) -> &'static str {
     match (row.decoders, row.volume) {
-        (true, _) => "Auto volume off, chime decoders running",
+        (true, AutoVolume::Off) => "Auto volume off, chime decoders running",
+        (true, AutoVolume::On) => "Auto volume on, chime decoders running",
+        (true, AutoVolume::BatsOnly) => "Auto volume Bats only, chime decoders running",
         (false, AutoVolume::Off) => "Auto volume off",
         (false, AutoVolume::On) => "Auto volume on",
         (false, AutoVolume::BatsOnly) => "Auto volume Bats only",
@@ -77,23 +84,32 @@ fn row_name(row: &Row) -> (&'static str, &'static str) {
 #[cfg(test)]
 pub(crate) const NAME_ROOM: i32 = DSP_X - 17 - LABEL_X - ROW_INDENT;
 
-/// A count in at most 5 characters, as a column's room allows.
-struct Count(u32);
+/// A count in full below `full_below`, then in thousands, then in millions. `ring` has room for 4
+/// digits, and the counts that should be 0 for 3 characters: `999`, `99k`, `.5M` or `3M`. Those
+/// reach a million frames only when a row loses most of its input.
+struct Count {
+    n: u32,
+    full_below: u32,
+}
 
 impl core::fmt::Display for Count {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
-        match self.0 {
-            n @ 0..10_000 => write!(f, "{n}"),
-            n @ 10_000..1_000_000 => write!(f, "{}k", n / 1_000),
+        match self.n {
+            n if n < self.full_below => write!(f, "{n}"),
+            n @ 0..100_000 => write!(f, "{}k", n / 1_000),
+            n @ 100_000..1_000_000 => write!(f, ".{}M", n / 100_000),
             n => write!(f, "{}M", n / 1_000_000),
         }
     }
 }
 
+const RING_FULL_BELOW: u32 = 10_000;
+const PROBLEM_FULL_BELOW: u32 = 1_000;
+
 /// A count of something that should be 0: yellow when it is not, so a row with a problem shows.
 fn problem_count(fb: Fb, value: u32, x: i32, y: i32) {
     let colour: Rgb565 = if value == 0 { TEXT_MUTED } else { METER_YELLOW };
-    text(fb, &SMALL, format_args!("{}", Count(value)), x, y, RIGHT, colour);
+    text(fb, &SMALL, format_args!("{}", Count { n: value, full_below: PROBLEM_FULL_BELOW }), x, y, RIGHT, colour);
 }
 
 /// The recorder's state for the whole test, or the first row's state if it changed.
@@ -128,7 +144,7 @@ fn table(app: &BatApp, fb: Fb) {
     for (name, x) in COLUMNS {
         text(fb, &SMALL, name, x, CPU_TEST_COLUMNS, RIGHT, TEXT_MUTED);
     }
-    hline(fb, LABEL_X, 314, CPU_TEST_COLUMNS + 2, LINE);
+    hline(fb, LABEL_X, SKIP_X, CPU_TEST_COLUMNS + 2, LINE);
     let rows = app.cpu_test_rows();
     let first_state = rows.iter().find_map(|row| row.result).and_then(|result| result.recorder);
     let mut y = CPU_TEST_FIRST_ROW;
@@ -159,7 +175,8 @@ fn table(app: &BatApp, fb: Fb) {
             problem_count(fb, result.dry, DRY_X, y);
             problem_count(fb, result.lost, LOST_X, y);
             problem_count(fb, result.dropped, DROP_X, y);
-            text(fb, &SMALL, format_args!("{}", Count(result.waiting_most)), RING_X, y, RIGHT, TEXT_MUTED);
+            let ring = Count { n: result.waiting_most, full_below: RING_FULL_BELOW };
+            text(fb, &SMALL, format_args!("{ring}"), RING_X, y, RIGHT, TEXT_MUTED);
             problem_count(fb, result.skip_percent, SKIP_X, y);
         }
         y += CPU_TEST_ROW_H;
@@ -207,6 +224,30 @@ pub(super) fn running_line(app: &BatApp, fb: Fb) {
     let line = format_args!("{mode}{suffix}, Auto volume {volume}{decoders}, {left} s left");
     text(fb, &SMALL, line, 8, VALUE_BASELINE - 12, LEFT, TEXT);
     text(fb, &SMALL, RUNNING_HELP, 8, VALUE_BASELINE, LEFT, TEXT_MUTED);
+}
+
+/// Test helpers: each column's right edge, and the widest heading or value it can show. The
+/// shares of CPU stay below 100, since the DSP task sleeps after every pass.
+#[cfg(test)]
+pub(crate) fn column_contents() -> std::vec::Vec<(i32, std::vec::Vec<std::string::String>)> {
+    use std::string::ToString;
+    use std::vec;
+    use std::format;
+
+    let problem = |n| format!("{}", Count { n, full_below: PROBLEM_FULL_BELOW });
+    COLUMNS
+        .iter()
+        .map(|&(name, x)| {
+            let values = match name {
+                "dsp" | "max" | "draw" | "irq" | "hook" => vec!["99".to_string()],
+                "ring" => vec![format!("{}", Count { n: 9_999, full_below: RING_FULL_BELOW })],
+                "skip%" => vec!["100".to_string()],
+                // 8 s of 192 kHz stereo is about 3 million frames.
+                _ => vec![problem(999), problem(99_999), problem(999_999), problem(9_999_999)],
+            };
+            (x, std::iter::once(name.to_string()).chain(values).collect())
+        })
+        .collect()
 }
 
 /// Test helpers: each line that has a limit, with its width and the room for it.

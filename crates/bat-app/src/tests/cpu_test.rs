@@ -3,7 +3,7 @@
 use std::boxed::Box;
 
 use super::*;
-use crate::screen::cpu_test_lines;
+use crate::screen::{CPU_TEST_COLUMN_GAP, cpu_test_columns, cpu_test_lines};
 use crate::{CallKind, HostFigures, Recorder, Screen};
 
 const SECOND: usize = FS as usize;
@@ -67,8 +67,8 @@ fn the_plan_has_a_row_for_each_combination() {
     let mut app = app_with_storage(&mut storage, &mut buffers);
     two_inputs(&mut app);
     app.open_cpu_test();
-    // HET, COMB and 1:1 twice and FD and TE once, for each Auto volume choice, and COMB and TE
-    // with the decoders.
+    // HET, COMB and 1:1 twice and FD and TE once, for each Auto volume choice, and FD and COMB
+    // stereo with Auto volume on and the decoders.
     assert_eq!(app.cpu_test_rows().len(), (3 * 2 + 2) * 3 + 2);
     // About 3.5 min, as the Tools screen says.
     assert_eq!(app.cpu_test_rows().len() * ROW_SECONDS, 208);
@@ -113,6 +113,8 @@ fn a_whole_run_fills_every_row_and_puts_the_settings_back() {
     assert_eq!(app.auto_volume(), AutoVolume::On);
     assert_eq!(app.source(), MonitorSource::Second);
     assert!(modes_seen.contains(&(Mode::Te, AutoVolume::BatsOnly, false)));
+    let last_two: std::vec::Vec<_> = modes_seen[rows - 2..].iter().map(|&(mode, volume, _)| (mode, volume)).collect();
+    assert_eq!(last_two, [(Mode::Fd, AutoVolume::On), (Mode::Comb, AutoVolume::On)]);
 
     for row in app.cpu_test_rows() {
         let result = row.result.expect("every row ran");
@@ -213,6 +215,30 @@ fn the_screen_text_fits() {
     for (line, width, room) in cpu_test_lines() {
         assert!(width <= room, "{line}: {width} px in {room} px");
     }
+}
+
+#[test]
+fn the_table_columns_keep_apart() {
+    use embedded_graphics::prelude::Point;
+    use u8g2_fonts::FontRenderer;
+    use u8g2_fonts::fonts::u8g2_font_helvR08_tf;
+    use u8g2_fonts::types::VerticalPosition;
+
+    let small = FontRenderer::new::<u8g2_font_helvR08_tf>();
+    let width = |s: &str| small.get_rendered_dimensions(s, Point::zero(), VerticalPosition::Baseline).unwrap().advance.x;
+    let columns = cpu_test_columns();
+    // The widest row name, with the `*` drawn 1 px after it, ends here. The `*` shows only when
+    // the recorder's state changed, and its glyph has room to its right.
+    let name_end = 4 + 6 + 1 + width("COMB stereo*");
+    let mut previous_right = None;
+    for (right, contents) in columns {
+        let widest = contents.iter().map(|s| width(s)).max().unwrap();
+        let (before, gap) = previous_right.map_or((name_end, 2), |x| (x, CPU_TEST_COLUMN_GAP));
+        assert!(right - widest >= before + gap, "{contents:?}: {} px from the column before", right - widest - before);
+        previous_right = Some(right);
+    }
+    let previous_right = previous_right.unwrap();
+    assert!(previous_right <= 314);
 }
 
 #[test]

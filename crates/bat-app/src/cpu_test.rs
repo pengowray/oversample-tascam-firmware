@@ -167,9 +167,11 @@ impl CpuTest {
                 }
             }
         }
-        for mode in [Mode::Comb, Mode::Te] {
+        // The decoders with the heaviest rows: on B239's unit run, FD and COMB stereo with Auto
+        // volume on. The decoders added the same 26 or 27 dsp points to COMB stereo and TE there.
+        for mode in [Mode::Fd, Mode::Comb] {
             if modes.contains(&mode) {
-                push(Row { mode, has_stereo: has_stereo(mode), decoders: true, ..EMPTY_ROW });
+                push(Row { mode, volume: AutoVolume::On, has_stereo: has_stereo(mode), decoders: true, ..EMPTY_ROW });
             }
         }
         self.count = count;

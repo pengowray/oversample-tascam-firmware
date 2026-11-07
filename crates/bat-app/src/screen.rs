@@ -25,7 +25,7 @@ mod tools_screen;
 #[cfg(test)]
 pub(crate) use chime_screen::{CLOCK_Y, COLUMN_X, FAILURE_Y, ROW_H, ROW_Y, chime_text, columns as chime_columns, lines_with_widths as chime_test_lines};
 #[cfg(test)]
-pub(crate) use cpu_test_screen::lines_with_widths as cpu_test_lines;
+pub(crate) use cpu_test_screen::{COLUMN_GAP as CPU_TEST_COLUMN_GAP, column_contents as cpu_test_columns, lines_with_widths as cpu_test_lines};
 #[cfg(test)]
 pub(crate) use tools_screen::lines_with_widths as tools_lines;
 
