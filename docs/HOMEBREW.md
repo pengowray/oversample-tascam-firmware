@@ -9,8 +9,8 @@ steps changed.
 on the owner's X8. Not every build in that range was installed: a step's heading
 says "installed" if its build ran on the unit, and "never installed" if a later
 build replaced it first. The last build installed is B239 (Step 21). The current
-build is B250 (Step 27 and the sections after it), which has not been installed
-yet, so GUANO metadata, setting the clock from phone chimes and the location log
+build is B251 (Step 28 and the sections after it), which has not been installed
+yet. B250 was installed and hung as soon as a bat screen opened (Step 28 says why), so GUANO metadata, setting the clock from phone chimes and the location log
 have not run on a unit.
 
 **Hardware tested.** One X8. Its Information screen (GENERAL SETTINGS > SYSTEM >
@@ -2356,7 +2356,7 @@ B241 or an earlier build. All the checks in `tools/x8patch.py` pass on this file
 1. **Start and stop.** With Phone remote on and the phone page reloaded, do `Start recording` and `Stop recording` work as before?
 2. **Old phone page.** If a phone still has the old page cached, its commands should do nothing at all. Reload the page.
 
-## Step 27 test file: PITCH in the CPU test, in stereo too (built 2026-11-08, not yet installed)
+## Step 27 test file: PITCH in the CPU test, in stereo too (built 2026-11-08, installed 2026-11-08: hangs when a bat screen opens, fixed in B251)
 
 `work/patch26/#PortaX8_0250.203` (B250, SHA-256 `4b73f77e…a35eca57`). Includes steps 11 to 26. Install this file in place of
 any earlier build. All the checks in `tools/x8patch.py` pass on this file. No new stock hook site (header version 18).
@@ -2394,6 +2394,44 @@ processing takes 3.5 times as long as FD's, by FD's 12 points on the unit.
 3. **Listening.** Not possible from the mode buttons yet. If the PITCH rows keep up, the next build can show PITCH again. If
    stereo PITCH fits only with the recorder stopped, options are to switch to mono PITCH or turn PITCH off while recording, or a
    setting that turns off headphone listening when recording starts.
+
+## Step 28 test file: B250's hang on opening a bat screen fixed (built 2026-11-08, not yet installed)
+
+`work/patch27/#PortaX8_0251.203` (B251, SHA-256 `fca5191c…f88bf6cbb`). Includes steps 11 to 27. Install this file in place of
+any earlier build. All the checks in `tools/x8patch.py` pass on this file. No new stock hook site (header version 18).
+
+**What happened on B250.** Opening BAT DETECTOR or BAT PLAYBACK left the stock loading screen (blue, with the app's icon) on
+the display, and the unit stopped responding until the battery was taken out. MANUAL opened normally. B241 to B249 have the
+same fault but were never installed, so B250 was the first build to show it.
+
+**Why.** B241 (Step 23) moved `memcpy` and `memset` into ITCM along with the audio hook. ITCM holds nothing until the bat screen
+first opens and `load_itcm` copies the code there, but every function in the patch that calls `memcpy` or `memset` goes to the
+ITCM copy. `load_itcm` itself copied ITCM with `copy_nonoverlapping`, which the compiler turned into a call to `memcpy`, so its
+first instruction jumped into empty ITCM. The same fault was waiting elsewhere: the key hooks, the GUANO writer and the location
+log call `memcpy` too, and they run in MANUAL as well, before any bat screen has opened.
+
+**Changes.**
+
+- `memcpy`, `memset` and the related `__aeabi_` functions are back in SDRAM, as on B239. The audio hook stays in ITCM, because
+  the patch switches to that copy only after loading ITCM.
+- `load_itcm` copies one word at a time with volatile reads and writes, which the compiler cannot turn into a `memcpy` call.
+- `tools/x8patch.py` now refuses a patch in which code outside ITCM can call into ITCM before `load_itcm` has run. It finds every
+  function outside ITCM that calls into ITCM, directly or through a linker thunk, and follows its callers upward. Each chain must
+  end at the bat screen's start-up (`enter_work`), the DSP task, the tick (`tick_work`, which returns until the bat screen is
+  open) or code in ITCM. Calls through function pointers are not followed. On B250 the check names the key hooks, the GUANO
+  writer, the location log and the bat screen's text drawing.
+
+| Item | B250 | B251 | Limit |
+|---|---|---|---|
+| ITCM | 82.3 KB | 80.6 KB | 89.2 KB |
+| DTCM | 141.1 KB | 141.1 KB | 152.8 KB |
+| `.noinit`, the end of the patch's memory | ends at 0x818f8f28 | ends at 0x818f8f88 | 0x81900000 |
+
+**What to check.**
+
+1. **Opening.** BAT DETECTOR and BAT PLAYBACK open, and MANUAL still works, including recording a take and the keys.
+2. **Everything from Steps 22 to 27**, none of which has run on a unit: the CPU test with PITCH (Step 27's checks), GUANO
+   metadata, settings in three tabs, phone chimes setting the clock, the location log and the phone remote.
 
 ## Checking takes for cuts in the WAV (2026-11-07)
 

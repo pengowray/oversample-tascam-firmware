@@ -7,8 +7,8 @@ replaced by measurements on a unit. For current results, see
 
 - **Live listening runs on the X8.** HET, COMB, FD, TE and 1:1 run on the owner's
   unit while it records, and the CPU test measured each of them there (Step 21 in HOMEBREW.md).
-  PITCH was too slow on the X8 and is hidden there. B250's CPU test measures it again, in stereo too
-  (Step 27 in HOMEBREW.md).
+  PITCH was too slow on the X8 and is hidden there. B251's CPU test measures it again, in stereo too
+  (Steps 27 and 28 in HOMEBREW.md).
 - **Recording works from the bat screen.** Takes are recorded by the stock recorder
   while the bat screen is open.
 - **Two launcher tiles open the bat app.** BAT DETECTOR and BAT PLAYBACK replace the

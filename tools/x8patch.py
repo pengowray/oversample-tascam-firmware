@@ -230,6 +230,79 @@ def elf_symbols(data, shoff, shentsize, shnum):
     return out
 
 
+# Functions that run only after `load_itcm` has filled ITCM: the bat screen's start-up,
+# which calls it first, the DSP task it starts, and the tick, which waits for the bat screen.
+ITCM_SAFE_ROOTS = ("6screen10enter_work", "4task8dsp_task", "4task9tick_work")
+
+
+def elf_functions(data, shoff, shentsize, shnum):
+    """(name, address, size) of the ELF file's functions, and a reader for bytes at an address."""
+    funcs, sections = [], []
+    for i in range(shnum):
+        _, kind, flags, addr, offset, size, link = struct.unpack_from("<IIIIIII", data, shoff + i * shentsize)
+        if kind == 1 and flags & 4:         # SHT_PROGBITS, SHF_EXECINSTR
+            sections.append((addr, offset, size))
+        if kind != 2:                       # SHT_SYMTAB
+            continue
+        strings = struct.unpack_from("<I", data, shoff + link * shentsize + 16)[0]
+        for k in range(size // 16):
+            name, value, length, info = struct.unpack_from("<IIIB", data, offset + k * 16)
+            if info & 0xF == 2 and length:  # STT_FUNC
+                funcs.append((data[strings + name:data.index(b"\0", strings + name)].decode(), value & ~1, length))
+
+    def code(addr, size):
+        for base, offset, length in sections:
+            if base <= addr and addr + size <= base + length:
+                return data[offset + addr - base:offset + addr - base + size]
+        return b""
+    return funcs, code
+
+
+def check_itcm_calls(data, shoff, shentsize, shnum, itcm_start, itcm_end):
+    """Code in ITCM runs only after `load_itcm` copies it there. Find every function outside
+    ITCM that calls into it, directly or through a linker thunk, follow its direct callers up
+    to functions that nothing calls directly, and return an error naming any of those that is
+    not in ITCM_SAFE_ROOTS. Callers that ITCM code calls are safe too. Calls through function
+    pointers are not followed."""
+    funcs, code = elf_functions(data, shoff, shentsize, shnum)
+    in_itcm = lambda a: itcm_start <= a < itcm_end
+    itcm_names = {name for name, a, _ in funcs if in_itcm(a)}
+    starts = {a: name for name, a, _ in funcs}
+    calls_itcm, callers, called_from_itcm = set(), {}, set()
+    for name, a, size in funcs:
+        body = code(a, size)
+        for k in range(0, len(body) - 3, 2):
+            hw1, hw2 = struct.unpack_from("<HH", body, k)
+            target = decode_bw(hw1, hw2, a + k, BL) or decode_bw(hw1, hw2, a + k, B_W)
+            callee = starts.get(target)
+            if callee is None:
+                continue
+            thunk = callee.partition("LongThunk_")[2]
+            if in_itcm(a):
+                # Anything ITCM code calls runs after load_itcm too.
+                called_from_itcm.add(thunk or callee)
+            elif in_itcm(target) or thunk in itcm_names:
+                calls_itcm.add(name)
+            elif callee != name:
+                callers.setdefault(callee, set()).add(name)
+    tops, seen, todo = set(), set(), list(calls_itcm)
+    while todo:
+        name = todo.pop()
+        if name in seen:
+            continue
+        seen.add(name)
+        if name in called_from_itcm or any(root in name for root in ITCM_SAFE_ROOTS):
+            continue
+        if name in callers:
+            todo.extend(callers[name])
+        else:
+            tops.add(name)
+    if tops:
+        return "code in ITCM can run before load_itcm, from: " + ", ".join(sorted(tops))
+    print(f"patch: {len(calls_itcm)} functions outside ITCM call into it, all after load_itcm")
+    return None
+
+
 def elf_image(path):
     """The patch's bytes from PATCH_BASE to the end of its last section, with
     .bss as zeros. .noinit, which the patch writes before reading, is left out
@@ -241,6 +314,9 @@ def elf_image(path):
     shentsize, shnum, shstrndx = struct.unpack_from("<HHH", data, 0x2E)
     names_at = struct.unpack_from("<I", data, shoff + shstrndx * shentsize + 16)[0]
     symbols = elf_symbols(data, shoff, shentsize, shnum)
+    error = check_itcm_calls(data, shoff, shentsize, shnum, symbols["__itcm_start"], symbols["__itcm_end"])
+    if error:
+        raise ValueError(error)
     out = bytearray()
     for i in range(shnum):
         name, kind, flags, addr, offset, size = struct.unpack_from("<IIIIII", data, shoff + i * shentsize)
@@ -284,7 +360,11 @@ def main(argv):
         print(f"no hook addresses for V{info['version']} build {info['build']}")
         return 1
 
-    patch = elf_image(args.elf)
+    try:
+        patch = elf_image(args.elf)
+    except ValueError as e:
+        print(f"refused: {e}")
+        return 1
     if patch[:4] != b"BATX":
         print("the patch does not start with its header (magic BATX)")
         return 1

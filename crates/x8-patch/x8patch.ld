@@ -32,7 +32,14 @@ SECTIONS
      900 cycles a call on B239 (`hook` 7 to 9% of the CPU), which fits refilling the
      instruction cache each time. Only its copy `audio_hook_itcm`, which the bat
      screen switches to after loading ITCM; the one installed at start-up stays in
-     SDRAM. And memcpy and memset, which the app calls for every chunk. */
+     SDRAM.
+
+     Never memcpy, memset or anything else that code outside the bat screen calls: the
+     stock firmware calls the patch's hooks (keys, takes, the launcher, the clock) from
+     start-up, before the bat screen first loads ITCM, and a call into ITCM then runs
+     whatever was there. B241 to B250 had memcpy and memset here, and load_itcm's own
+     copy called memcpy in ITCM, so the bat screen hung on opening. tools/x8patch.py
+     checks which functions outside ITCM call into it. */
   .itcm : ALIGN(8)
   {
     __itcm_start = .;
@@ -47,12 +54,6 @@ SECTIONS
     *(.text.*process_input*)
     *(.text.*FrontEnd4push*)
     *(.text.*5audio15audio_hook_itcm*)
-    *(.text.*compiler_builtins3mem6memcpy*)
-    *(.text.*compiler_builtins3mem6memset*)
-    *(.text.__aeabi_memcpy*)
-    *(.text.__aeabi_memset*)
-    *(.text.__aeabi_memclr*)
-    *(.text.__aeabi_memmove*)
     . = ALIGN(8);
     __itcm_end = .;
   } > ITCM AT> PATCH

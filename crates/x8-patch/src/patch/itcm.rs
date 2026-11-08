@@ -30,7 +30,12 @@ pub(super) fn load_itcm() {
     // SAFETY: the load copy is as long as the section; ITCM is writable.
     unsafe {
         let from = &raw const __itcm_load as *const u32;
-        ptr::copy_nonoverlapping(from, code.as_ptr() as *mut u32, code.len());
+        let to = code.as_ptr() as *mut u32;
+        // Volatile, one word at a time, so the compiler can't turn the loop into a call to
+        // memcpy: if memcpy were ever placed in ITCM, that call would run before ITCM holds it.
+        for i in 0..code.len() {
+            ptr::write_volatile(to.add(i), ptr::read_volatile(from.add(i)));
+        }
         core::arch::asm!("dsb sy", "isb sy");
     }
     ITCM_SUM.store(itcm_sum(), Relaxed);
