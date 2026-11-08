@@ -2247,8 +2247,8 @@ header is now version 18. B242 to B245 were built earlier the same day and never
 
 ## Step 25 test file: phone chimes set the clock, location log, no pauses in bat takes (built 2026-11-08, not yet installed)
 
-`work/patch24/#PortaX8_0247.203` (B247, SHA-256 `6ce037cb…f147869c`). Includes steps 11 to 24. Install this file in place of
-B241 or an earlier build: B246 was never installed, and its file has been deleted. All the checks in `tools/x8patch.py` pass on
+`work/patch24/#PortaX8_0248.203` (B248, SHA-256 `7841ee60…73927e5e`). Includes steps 11 to 24. Install this file in place of
+B241 or an earlier build: B246 and B247 were never installed, and their files have been deleted. All the checks in `tools/x8patch.py` pass on
 this file. No new stock hook site (header version 18).
 
 How the parts work is in [Setting the clock, locations and pauses](#setting-the-clock-locations-and-pauses-2026-11-08).
@@ -2262,11 +2262,15 @@ How the parts work is in [Setting the clock, locations and pauses](#setting-the-
 - **Locations.** A chime with a location gives a take's GUANO `Loc Position` when it was read during the take or up to 1 h
   before it started. Locations are also added to `BAT_LOCATIONS.CSV`, beside the takes (`time,latitude,longitude`), once a take,
   as the take's files close. A location read with no take after it is lost at power-off.
-- **REC pauses takes.** A new switch on the Record tab, off by default. With it off, REC does nothing while a take from a bat
+- **Lines that say what each switch does now.** On the Record and Tests tabs, the line under each switch follows its
+  setting, for example `REC is ignored during a take, so takes have no gaps`. The MIX file switch can be changed whatever
+  MANUAL's REC READY for MASTER says: on, it follows REC READY (`MIX file is saved, as MASTER REC READY is on in MANUAL`, or
+  `No MIX file: MASTER REC READY is off in MANUAL`); off, `Overrides REC READY: no MIX file for BAT DETECTOR`.
+- **Pause with REC.** A new switch on the Record tab, off by default. With it off, REC does nothing while a take from a bat
   tile records, and the main screen says `Pausing is off. STOP ends the take.` Pauses that do happen get a mark where they end
   and GUANO fields `X8Bat|Pauses` and `X8Bat|Paused` (seconds). Takes with no pauses say `X8Bat|Pauses: 0`.
 
-| Item | B241 | B247 | Limit |
+| Item | B241 | B248 | Limit |
 |---|---|---|---|
 | ITCM | 82.5 KB | 84.3 KB | 89.2 KB |
 | DTCM | 141.5 KB | 141.7 KB | 152.8 KB |
@@ -2284,7 +2288,7 @@ How the parts work is in [Setting the clock, locations and pauses](#setting-the-
    and is there a `BAT_LOCATIONS.CSV` beside the takes, with a header line and one line for each chime with a location?
 4. **No pauses.** During a take from BAT DETECTOR, press REC. Does the take carry on, with the notice? Its GUANO should say
    `X8Bat|Pauses: 0`.
-5. **Pauses.** Turn `REC pauses takes` on, then pause and resume a take twice, once for about 10 s. Is there a mark at each
+5. **Pauses.** Turn `Pause with REC` on, then pause and resume a take twice, once for about 10 s. Is there a mark at each
    resume, and do `X8Bat|Pauses: 2` and `X8Bat|Paused` match? Does MARK still make TE captures when pressed by hand?
 
 ## Checking takes for cuts in the WAV (2026-11-07)
