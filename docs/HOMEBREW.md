@@ -2412,6 +2412,33 @@ processing takes 3.5 times as long as FD's, by FD's 12 points on the unit.
    stereo PITCH fits only with the recorder stopped, options are to switch to mono PITCH or turn PITCH off while recording, or a
    setting that turns off headphone listening when recording starts.
 
+
+**Results on B251 (2026-11-09).** B250 itself hung on opening (Step 28), so these are from B251, which has the same DSP code.
+Two inputs on, synthetic calls on, MIX file off. `lost` counts input frames thrown away in the 8 s row; `skip%` is the share of
+the row with the analysis (the waterfall) switched off because input was piling up; `ring` is the most input frames waiting, of
+8,192.
+
+| Row | Stopped: `dsp` (max) | lost | skip% | Recording: `dsp` (max) | lost | skip% |
+|---|---|---|---|---|---|---|
+| 1:1 mono, Auto volume off | 27 (28) | 0 | 0 | 35 (36) | 0 | 0 |
+| FD, Auto volume off | 40 (41) | 0 | 0 | 51 (52) | 0 | 0 |
+| PITCH mono, Auto volume off | 76 (82) | 0 | 15 | 81 (84) | 2k | 71 |
+| PITCH mono, Auto volume on | 75 (76) | 0 | 23 | 81 (81) | 1k | 79 |
+| PITCH stereo, Auto volume off | 87 (88) | 0.3M | 93 | 87 (87) | 0.6M | 92 |
+| PITCH stereo, Auto volume on | 88 (89) | 0.3M | 93 | 87 (87) | 0.7M | 91 |
+| FD with the chime decoders | 50 (50) | 0 | 0 | 66 (66) | 0 | 0 |
+
+- **Stereo PITCH does not keep up**, stopped or recording: 0.3M to 0.7M of the 1.5M input frames in each 8 s row are lost (20 to 46%).
+- **Mono PITCH keeps up only with the recorder stopped**, and only because the waterfall is switched off 15 to 23% of the time.
+  While recording it loses 1,000 to 2,000 frames a row and the waterfall is off for three quarters of the row.
+- **PITCH's own cost** (PITCH mono less 1:1 mono) is 41 to 49 points, with the analysis partly off, so the full cost is higher.
+  FD's is 13. The PC benchmark's ratio of 3.5 holds on the unit. The estimate of 52 to 69 `dsp` for mono with the recorder
+  stopped was low: it measured 76.
+- Every other mode keeps up with nothing lost, recording included. The highest is FD with the chime decoders, 66 while recording.
+- `hook` is 8 in every row, stopped and recording, where B239 measured 7 to 9 from SDRAM. Moving the hook to ITCM (Step 23) has
+  not shown a saving. Not yet checked: whether the Debug info line reads `hook N itcm`, which says the ITCM copy is the one
+  running.
+
 ## Step 28 test file: B250's hang on opening a bat screen fixed (built 2026-11-08, installed 2026-11-08: the bat screens open)
 
 `work/patch27/#PortaX8_0251.203` (B251, SHA-256 `fca5191c…f88bf6cbb`). Includes steps 11 to 27. Install this file in place of
