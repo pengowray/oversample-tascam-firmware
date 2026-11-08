@@ -1,0 +1,112 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>X8 bat detector patcher</title>
+<meta name="description" content="Make the bat detector update file for the TASCAM Portacapture X8 from TASCAM's own V2.03 firmware, in your browser.">
+<style>
+  :root {
+    --bg: #f7f7f5; --panel: #ffffff; --text: #1d1d1b; --muted: #5d5d58; --line: #d8d8d2;
+    --accent: #1f6fd1; --accent-text: #ffffff; --good: #1f7a3a; --bad: #b3261e; --warn-bg: #fff4d6;
+    color-scheme: light dark;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #161615; --panel: #212120; --text: #ececea; --muted: #a6a6a0; --line: #3a3a37;
+      --accent: #4c95f0; --accent-text: #0b0b0b; --good: #5fc27a; --bad: #ff8a80; --warn-bg: #3a3218;
+    }
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--text);
+    font: 16px/1.5 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; }
+  main { max-width: 46rem; margin: 0 auto; padding: 1.5rem 1rem 4rem; }
+  h1 { font-size: 1.6rem; margin: 0 0 0.25rem; }
+  h2 { font-size: 1.15rem; margin: 2rem 0 0.5rem; }
+  p, li { color: var(--text); }
+  .lead { color: var(--muted); margin-top: 0; }
+  .note { background: var(--warn-bg); border-radius: 6px; padding: 0.75rem 1rem; }
+  code, .hash { font-family: ui-monospace, "Cascadia Mono", "DejaVu Sans Mono", monospace; font-size: 0.9em; }
+  .hash { overflow-wrap: anywhere; }
+  a { color: var(--accent); }
+  #drop { display: block; border: 2px dashed var(--line); border-radius: 8px; background: var(--panel);
+    padding: 1.5rem 1rem; text-align: center; cursor: pointer; }
+  #drop.over { border-color: var(--accent); }
+  #drop strong { display: block; font-size: 1.05rem; }
+  #drop span { color: var(--muted); }
+  #file { position: absolute; width: 1px; height: 1px; opacity: 0; }
+  #file:focus-visible + #drop { outline: 3px solid var(--accent); outline-offset: 2px; }
+  #checks { list-style: none; padding: 0; margin: 1rem 0; }
+  #checks li { background: var(--panel); border: 1px solid var(--line); border-radius: 6px;
+    padding: 0.6rem 0.8rem; margin-bottom: 0.5rem; }
+  #checks .label { font-weight: 600; }
+  #checks .ok .label::before { content: "Passed: "; color: var(--good); }
+  #checks .fail .label::before { content: "Failed: "; color: var(--bad); }
+  #checks .detail { display: block; color: var(--muted); }
+  #download { display: inline-block; background: var(--accent); color: var(--accent-text); text-decoration: none;
+    font-weight: 600; border-radius: 6px; padding: 0.7rem 1.2rem; }
+  #download[hidden] { display: none; }
+  table { border-collapse: collapse; width: 100%; font-size: 0.95rem; }
+  th, td { text-align: left; padding: 0.35rem 0.5rem; border-bottom: 1px solid var(--line); vertical-align: top; }
+  th { color: var(--muted); font-weight: 600; width: 9rem; }
+  footer { margin-top: 3rem; color: var(--muted); font-size: 0.9rem; }
+</style>
+</head>
+<body>
+<main>
+  <h1>Bat detector for the TASCAM Portacapture X8</h1>
+  <p class="lead">This page makes a bat detector update file for the X8 from TASCAM's own V2.03 firmware. The
+    firmware never leaves your computer: the page reads it, changes it and saves the result here.</p>
+
+  <p class="note"><strong>Experimental test build.</strong> This is an unofficial patch, not made or supported by
+    TASCAM. It has been tested on one X8 (hardware version 1.00 build 010). Installing the official V2.03 file
+    the same way puts the X8 back to stock. A power cut or a card removed during any update can leave the
+    unit needing repair.</p>
+
+  <h2>1. Get TASCAM's V2.03 firmware</h2>
+  <p>Download <code>portacapture_x8_fw_v203.zip</code> from
+    <a href="https://tascam.com/us/product/portacapture_x8/download">TASCAM's Portacapture X8 download page</a>.
+    You can use the zip file as it is, or the <code>#PortaX8_0217.203</code> file inside it.</p>
+
+  <h2>2. Choose the file</h2>
+  <input type="file" id="file" accept=".zip,.203">
+  <label for="file" id="drop">
+    <strong>Drop the zip or .203 file here</strong>
+    <span>or click to choose it</span>
+  </label>
+
+  <ul id="checks" aria-live="polite"></ul>
+  <a id="download" hidden>Save the update file</a>
+
+  <h2>3. Install it on the X8</h2>
+  <ol>
+    <li>Power the X8 from USB or the AC adapter, not batteries.</li>
+    <li>On the X8, turn on SD CARD READER (GENERAL SETTINGS, OTHER SETTINGS). Copy the update file into the
+      <code>UTILITY</code> folder on the card. Keep only one update file there.</li>
+    <li>Eject the card on the computer, press DISCONNECT, and turn the X8 off.</li>
+    <li>Hold HOME and REC while turning the X8 on, until UPDATE MODE shows.</li>
+    <li>Press MARK. Check that the file's build matches the one in the table below.</li>
+    <li>Press MARK again to install. Don't touch the power or the card until the X8 turns itself off.</li>
+    <li>Delete the update file from the <code>UTILITY</code> folder.</li>
+  </ol>
+  <p>To go back to stock, install TASCAM's <code>#PortaX8_0217.203</code> the same way.</p>
+
+  <h2>This build</h2>
+  <table>
+    <tr><th>Build</th><td id="build">loading</td></tr>
+    <tr><th>Needs</th><td id="original-name">loading</td></tr>
+    <tr><th>Its SHA-256</th><td class="hash" id="original-sha">loading</td></tr>
+    <tr><th>Makes</th><td id="patched-name">loading</td></tr>
+    <tr><th>Its SHA-256</th><td class="hash" id="patched-sha">loading</td></tr>
+  </table>
+
+  <footer>
+    Source, notes and how to use the bat detector:
+    <a href="https://github.com/pengowray/oversample-tascam-firmware">github.com/pengowray/oversample-tascam-firmware</a>.
+    By the author of <a href="https://github.com/pengowray/oversample">Oversample</a>.
+    TASCAM and Portacapture are trademarks of TEAC Corporation; this project is not affiliated with them.
+  </footer>
+</main>
+<script src="patcher.js"></script>
+</body>
+</html>

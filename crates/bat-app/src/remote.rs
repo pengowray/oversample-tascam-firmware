@@ -69,7 +69,7 @@ const BEEP_AMPLITUDE: f32 = 0.02;
 /// Each note's rise and fall, so it does not click.
 const BEEP_RAMP_MS: u32 = 5;
 
-/// The latest command read, for the Tools screen.
+/// The latest command read, for the phone remote panel on the Record tab.
 #[derive(Clone, Copy)]
 pub(crate) struct LastCommand {
     pub(crate) command: RemoteCommand,

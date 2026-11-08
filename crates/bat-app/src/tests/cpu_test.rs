@@ -69,7 +69,7 @@ fn the_plan_has_a_row_for_each_combination() {
     // HET, COMB and 1:1 twice and FD and TE once, for each Auto volume choice, and FD and COMB
     // stereo with Auto volume on and the decoders.
     assert_eq!(app.cpu_test_rows().len(), (3 * 2 + 2) * 3 + 2);
-    // About 3.5 min, as the Tools screen says.
+    // About 3.5 min, as the CPU test button on the Tests tab says.
     assert_eq!(app.cpu_test_rows().len() * ROW_SECONDS, 208);
     let start = layout::CPU_TEST_START.center();
     app.touch(start.x, start.y);

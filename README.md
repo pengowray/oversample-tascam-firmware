@@ -1,20 +1,94 @@
-# Portacapture X8 bat detector
+# Oversample bat detector for the TASCAM Portacapture X8
 
-Work towards using the TASCAM Portacapture X8 as a bat detector and recorder: live
-heterodyne, pitch shift, frequency division and time expansion while recording
-192 kHz WAV, plus a spectrogram waterfall on the unit's screen. A collaboration
-between Oversample (`~/projects/batchi`) and TASCAM.
+An unofficial firmware patch that adds a bat detector to the TASCAM Portacapture X8 recorder. It runs
+on top of TASCAM's own V2.03 firmware: the X8 records 192 kHz WAV files as usual, and the bat screen
+lets you listen to bats live through headphones while it records.
 
-- [docs/FEASIBILITY.md](docs/FEASIBILITY.md): hardware, frequency range, features, ways to build it, questions for TASCAM.
-- [docs/HOMEBREW.md](docs/HOMEBREW.md): firmware update format, flash layout, patching plan, recovery.
-- [crates/bat-dsp](crates/bat-dsp/README.md): the real-time bat DSP library (Rust, `no_std`): heterodyne, comb, frequency division, time expansion, pitch shift, spectrum, call detection.
-- The AudioMoth chime decoder, for the phone remote and the PHONE TIME screen, is the `chime` crate in the Oversample repository (`~/projects/batchi/chime`), which Oversample also uses. This workspace depends on it by path; change it there.
-- [crates/guano](crates/guano/src/lib.rs): GUANO bat-recording metadata for WAV files (`no_std`): reads a WAV header and writes a `guan` chunk. The X8 patch uses it to add GUANO to takes from BAT DETECTOR.
-- [crates/bat-app](crates/bat-app/src/lib.rs): the bat app itself (`no_std`): listening modes, call detection and the 320 × 480 screen.
-- [web/](web/README.md): an emulator page that runs the bat app in the browser on WAV files or a microphone. Screens of each mode are in [docs/screens/](docs/screens/).
-- [tools/x8fw.py](tools/x8fw.py): unpack, check and repack firmware update files (Python 3, standard library only).
-- [tools/fwdis.py](tools/fwdis.py): quick disassembly and cross-reference helpers for the main application (needs `capstone` and `numpy`).
+**Make the update file:** [pengowray.github.io/oversample-tascam-firmware](https://pengowray.github.io/oversample-tascam-firmware/)
+patches TASCAM's V2.03 firmware in your browser.
 
-`Tascam_X8_official/` holds TASCAM's firmware, manuals and drivers. It is not
-committed. Put unpacked images and other working files in `work/`, which is also
-not committed.
+This project is by the author of [Oversample](https://github.com/pengowray/oversample), an app for
+looking at and listening to bat recordings. It is not affiliated with or endorsed by TASCAM. TASCAM's
+firmware is not included: the patcher changes your own copy of the official update file.
+
+## Status
+
+Experimental. Earlier builds have run on one X8 (F/W Version 2.03 Build 217, H/W Version 1.00
+Build 010, as GENERAL SETTINGS > SYSTEM > Information shows them). Other hardware versions are
+untested. The current build, B248, has not yet run on a unit. The optional AK-BT1 Bluetooth adapter
+has not been tried with the patch. [docs/HOMEBREW.md](docs/HOMEBREW.md) lists what each build changed
+and what to check.
+
+Installing TASCAM's official V2.03 update file the same way puts the X8 back to stock. As with any
+firmware update, losing power or removing the card during the update can leave the unit needing
+repair.
+
+## What it adds
+
+- **BAT DETECTOR and BAT PLAYBACK** tiles on the LAUNCHER, in place of USER SETTINGS 2 and 3. They
+  open MANUAL with the bat screen on top, so REC records as MANUAL does.
+- **Listening modes:** heterodyne (HET), comb, frequency division (FD), time expansion (TE) and 1:1,
+  in stereo for HET, COMB and 1:1.
+- **A waterfall** from 0 to about 96 kHz, with bat calls, steady tones, audible sounds and clicks
+  marked as they are detected.
+- **Auto volume** for the headphones, with a Bats only choice that is silent between calls.
+- **GUANO metadata** in each WAV file: start time, length, recorder, and the phone's location when
+  known.
+- **Phone remote** (experimental): chimes played by a phone start and stop recording and set the X8's
+  clock. The phone page that plays them is not published yet.
+- **Settings** in three tabs: Listen, Record and Tests, with a CPU test.
+
+Screens from the emulator are in [docs/screens/](docs/screens/).
+
+## Building from source
+
+You need Rust with the `thumbv7em-none-eabihf` target, Python 3, and TASCAM's V2.03 update file
+(`#PortaX8_0217.203`, from `portacapture_x8_fw_v203.zip` on TASCAM's download page).
+
+```bash
+rustup target add thumbv7em-none-eabihf
+cargo build -p x8-patch --release --target thumbv7em-none-eabihf
+python3 tools/x8patch.py "#PortaX8_0217.203" target/thumbv7em-none-eabihf/release/x8-patch "#PortaX8_0248.203" --build 248
+```
+
+`tools/x8patch.py` checks the stock code at every place it changes, then packs and checks the
+update file. To publish a build on the patcher page, make its data with
+`tools/make_patch_data.py` (see the file's header) and point `site/patches/latest.json` at it.
+
+The AudioMoth chime decoder is the `chime` crate in the Oversample repository, which Cargo fetches
+from GitHub. To build against a local checkout of Oversample instead, add a `.cargo/config.toml`
+outside this repository, for example in its parent folder:
+
+```toml
+[patch."https://github.com/pengowray/oversample"]
+chime = { path = "/path/to/oversample/chime" }
+```
+
+The tests run on the computer: `cargo test --workspace`.
+
+## Repository layout
+
+- [crates/bat-dsp](crates/bat-dsp/README.md): the real-time bat DSP library (`no_std`): heterodyne,
+  comb, frequency division, time expansion, pitch shift, spectrum, call detection.
+- [crates/bat-app](crates/bat-app/src/lib.rs): the bat app (`no_std`): listening modes, call
+  detection and the 320 × 480 screen.
+- [crates/x8-patch](crates/x8-patch/src/main.rs): the code patched into the X8's firmware, and its
+  hooks into the stock code.
+- [crates/guano](crates/guano/src/lib.rs): GUANO metadata for WAV files (`no_std`).
+- [crates/bat-app-web](web/README.md) and [web/](web/README.md): an emulator page that runs the bat
+  app in a browser on WAV files or a microphone.
+- [site/](site/index.html): the patcher page.
+- [tools/](tools/): `x8fw.py` unpacks, checks and repacks update files; `x8patch.py` builds a
+  patched update file; `make_patch_data.py` makes the patcher page's data; `fwdis.py` and
+  `tools/ghidra/` help read the firmware.
+- [docs/HOMEBREW.md](docs/HOMEBREW.md): the update file format, the flash layout, the firmware map
+  and a log of every build. [docs/FEASIBILITY.md](docs/FEASIBILITY.md): the original feasibility
+  study.
+
+`Tascam_X8_official/` (TASCAM's files) and `work/` (unpacked images and built update files) are
+local folders, not part of the repository.
+
+## Licence
+
+MIT or Apache-2.0, at your option: see [LICENSE-MIT](LICENSE-MIT) and
+[LICENSE-APACHE](LICENSE-APACHE). TASCAM and Portacapture are trademarks of TEAC Corporation.

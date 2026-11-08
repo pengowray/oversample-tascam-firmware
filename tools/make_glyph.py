@@ -1,11 +1,11 @@
 """Make the launcher glyphs for the bat tiles.
 
-    python3 tools/make_glyph.py bat ~/projects/batchi/about-icon.png crates/x8-patch/src/patch/bat_glyph.rs
+    python3 tools/make_glyph.py bat about-icon.png crates/x8-patch/src/patch/bat_glyph.rs
     python3 tools/make_glyph.py play crates/x8-patch/src/patch/play_glyph.rs
 
 The X8's launcher icons are alpha masks that the firmware draws in white (see
 work/notes/launcher.md section 7). The bat for BAT DETECTOR is the Oversample
-logo's shape, with its dark outlines and eyes left out so the drawing still shows
+logo's shape (about-icon.png in the Oversample repository), with its dark outlines and eyes left out so the drawing still shows
 in one colour. The play button for BAT PLAYBACK is a solid triangle.
 Needs Pillow and numpy.
 """
