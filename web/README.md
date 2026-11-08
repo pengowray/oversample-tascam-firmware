@@ -94,6 +94,7 @@ the same screen. To test a recording on any firmware, record the chime on the X8
 copy the WAV to the computer and run:
 
 ```bash
+# in ~/projects/batchi, where the chime crate lives
 cargo run --release -p chime --example decode_wav -- FILE.wav
 ```
 

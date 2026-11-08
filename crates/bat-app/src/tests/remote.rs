@@ -6,9 +6,7 @@ use super::*;
 use crate::screen::pages_lines;
 use crate::{RemoteCommand, RemoteResult, Screen};
 
-#[path = "../../../chime/tests/support/gen.rs"]
-#[allow(dead_code)]
-mod chime_gen;
+use chime::encode as chime_gen;
 
 const SECOND: usize = FS as usize;
 const UNIX: u32 = 1_793_000_000;

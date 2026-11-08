@@ -1,6 +1,11 @@
 [workspace]
-members = ["crates/bat-dsp", "crates/bat-app", "crates/bat-app-web", "crates/x8-patch", "crates/chime", "crates/guano"]
+members = ["crates/bat-dsp", "crates/bat-app", "crates/bat-app-web", "crates/x8-patch", "crates/guano"]
 resolver = "3"
+
+[workspace.dependencies]
+# The AudioMoth chime decoder lives in the Oversample repository, beside it on this computer, which
+# also uses it. Change it there.
+chime = { path = "../../../../projects/batchi/chime" }
 
 [workspace.package]
 edition = "2024"

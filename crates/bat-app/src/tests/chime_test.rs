@@ -4,9 +4,7 @@ use super::*;
 use crate::chime_test::FailureReason;
 use crate::screen::{CLOCK_Y, COLUMN_X, FAILURE_Y, ROW_H, ROW_Y, chime_test_lines};
 
-#[path = "../../../chime/tests/support/gen.rs"]
-#[allow(dead_code)]
-mod chime_gen;
+use chime::encode as chime_gen;
 
 const SECOND: usize = FS as usize;
 /// 2026-10-26 07:33:20 UTC.

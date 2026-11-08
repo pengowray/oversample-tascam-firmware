@@ -18,12 +18,6 @@ use chime::format::TimeMessage;
 use chime::{Decoder, Event};
 use crate::phone_time::Reading;
 
-/// What a chime's deployment ID holds for a command, in the order the decoder gives it: these
-/// seven bytes, then the command. The phone page's encoder reverses the bytes it is given.
-const COMMAND_MAGIC: [u8; 7] = *b"BATXREC";
-const COMMAND_START: u8 = 1;
-const COMMAND_STOP: u8 = 2;
-
 const CARRIER_HZ: f32 = chime::format::CARRIER_HZ as f32;
 /// The tone counts in a spectrum column when the carrier's bin is this far above the bins 1.5 kHz
 /// to each side. A Hann window's main lobe reaches 2 bins out, so those bins hold noise.
@@ -39,12 +33,8 @@ const LISTEN_S: u64 = 6;
 /// How long a result shows on the main screen.
 const RESULT_SHOWN_S: u64 = 5;
 
-/// What the phone asked for.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum RemoteCommand {
-    Start,
-    Stop,
-}
+/// What the phone asked for: the command in a chime's deployment ID (`chime::format`).
+pub use chime::format::RemoteCommand;
 
 /// What came of a command.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -78,19 +68,6 @@ const NOTE_MS: u32 = 110;
 const BEEP_AMPLITUDE: f32 = 0.02;
 /// Each note's rise and fall, so it does not click.
 const BEEP_RAMP_MS: u32 = 5;
-
-/// The command in a chime's message, if it has one.
-pub(crate) fn command_in(message: &TimeMessage) -> Option<RemoteCommand> {
-    let id = message.deployment_id?;
-    if id[..7] != COMMAND_MAGIC {
-        return None;
-    }
-    match id[7] {
-        COMMAND_START => Some(RemoteCommand::Start),
-        COMMAND_STOP => Some(RemoteCommand::Stop),
-        _ => None,
-    }
-}
 
 /// The latest command read, for the Tools screen.
 #[derive(Clone, Copy)]
@@ -246,7 +223,7 @@ impl Remote {
                 if self.last_unix != message.unix_time {
                     self.reading = Some(Reading::new(&message, start_sample, now));
                 }
-                let Some(command) = command_in(&message) else { return };
+                let Some(command) = message.remote_command() else { return };
                 let same_chime = self.last.is_some_and(|last| last.command == command) && self.last_unix == message.unix_time;
                 self.last = Some(LastCommand { command, read_at: now, level_dbfs: chime.level_dbfs });
                 self.last_unix = message.unix_time;

@@ -7,12 +7,14 @@ description = "The X8 bat app: listening modes, call detection and its 320x480 s
 
 [dependencies]
 bat-dsp = { path = "../bat-dsp" }
-chime = { path = "../chime" }
+chime = { workspace = true }
 embedded-graphics = "0.8.2"
 u8g2-fonts = "0.8.0"
 libm = "0.2.16"
 
 [dev-dependencies]
+# The chime encoder, for the tests' chimes.
+chime = { workspace = true, features = ["std"] }
 # For the examples only (screenshot.rs, calls.rs, library.rs, hop_compare.rs, auto_volume.rs, bench.rs).
 hound = "3.5"
 png = "0.17"

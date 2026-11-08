@@ -2175,7 +2175,7 @@ header is now version 18. B242 to B245 were built earlier the same day and never
   3rd-order CIC stage before the 1 kHz Butterworth, which was 98% of a listening decoder's cost. On the PC, one decoder went
   from 1.76 to 0.62 ms of CPU a second while listening, and from 2.76 to 1.6 during a chime. The decoding tables match the
   old decoder within one trial at the threshold. Details are in the `chime` commits merged on 2026-11-08 (`b60e708` and
-  after); `cargo run --release -p chime --example cost` times the stages.
+  after); `cargo run --release -p chime --example cost --features profile`, run in the Oversample repository, times the stages.
 
 - **Settings in three tabs.** SETTINGS has tabs under the title bar, and the TOOLS screen is gone. `Listen` has Lowest bat
   call, Listen to, Auto volume (full width, with wider choices) and the sounds to mark. `Record` has MIX file, GUANO metadata
