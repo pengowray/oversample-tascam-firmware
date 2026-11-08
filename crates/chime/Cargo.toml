@@ -10,6 +10,10 @@ publish = false
 bat-dsp = { path = "../bat-dsp" }
 libm = "0.2.16"
 
+[features]
+# Lets the `cost` example stop the decoder after a given stage, to time the stages one by one.
+profile = []
+
 [dev-dependencies]
 hound = "3.5"
 
@@ -18,3 +22,7 @@ hound = "3.5"
 [[example]]
 name = "decode_wav"
 test = true
+
+[[example]]
+name = "cost"
+required-features = ["profile"]

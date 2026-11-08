@@ -192,6 +192,19 @@ fn heard_a_chime(coherence: f32, well_above_noise: bool, path: &Path) -> bool {
     (well_above_noise && start_symbols_seen) || path.codeword_score() >= CODEWORD_SCORE_OF_A_CHIME
 }
 
+/// The last stage that [`Decoder::push`] runs, for timing the stages one by one. Each
+/// stage needs the ones before it. With a stage other than `Walk`, the decoder reads no
+/// chime.
+#[cfg(feature = "profile")]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
+pub enum Stage {
+    FrontEnd,
+    Detector,
+    /// The timing search runs when the detector asks for it, but no walk starts.
+    Search,
+    Walk,
+}
+
 /// Streaming chime decoder for one channel of audio.
 pub struct Decoder {
     front_end: FrontEnd,
@@ -203,6 +216,8 @@ pub struct Decoder {
     /// The coherence from the timing search that started the latest walk.
     coherence: f32,
     walkers: [Walker; 2],
+    #[cfg(feature = "profile")]
+    last_stage: Stage,
 }
 
 impl Decoder {
@@ -244,6 +259,8 @@ impl Decoder {
             let walkers = addr_of_mut!((*this).walkers).cast::<Walker>();
             Walker::init_in_place(walkers, STEADY, bucket_len);
             Walker::init_in_place(walkers.add(1), MOVING, bucket_len);
+            #[cfg(feature = "profile")]
+            addr_of_mut!((*this).last_stage).write(Stage::Walk);
             Some(&mut *this)
         }
     }
@@ -252,6 +269,10 @@ impl Decoder {
     /// ends.
     pub fn push(&mut self, sample: f32) -> Option<Event> {
         let baseband = self.front_end.push(sample, &mut self.ring)?;
+        #[cfg(feature = "profile")]
+        if self.last_stage == Stage::FrontEnd {
+            return None;
+        }
 
         // At the start of a walk a few buckets are waiting. Taking one for each baseband
         // sample bounds the work in one call of push, and the walk soon catches up. A
@@ -259,6 +280,10 @@ impl Decoder {
         // is a large cost.
         let was_walking = self.walking;
         if self.detector.push(baseband.limited, baseband.raw_power, was_walking) {
+            #[cfg(feature = "profile")]
+            if self.last_stage == Stage::Detector {
+                return None;
+            }
             self.search_for_symbols();
         }
         if was_walking {
@@ -272,6 +297,12 @@ impl Decoder {
             }
         }
         None
+    }
+
+    /// Makes [`Decoder::push`] stop after `stage`.
+    #[cfg(feature = "profile")]
+    pub fn set_last_stage(&mut self, stage: Stage) {
+        self.last_stage = stage;
     }
 
     /// RMS level of the 17 to 19 kHz band, in dBFS. This is a running average with a time
@@ -290,6 +321,10 @@ impl Decoder {
             self.detector.lag_product(),
             self.front_end.power_limit(),
         );
+        #[cfg(feature = "profile")]
+        if self.last_stage == Stage::Search {
+            return;
+        }
         if let Some(found) = found {
             self.walking = true;
             self.coherence = found.coherence;
