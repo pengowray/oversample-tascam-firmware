@@ -2165,12 +2165,11 @@ DSP task shows as about 2 `dsp` points.
   volume off and on), COMB stereo 44 and 56.
 - **Auto volume.** Does On and Bats only sound as before?
 
-## Step 24 test file: GUANO metadata in takes from BAT DETECTOR (built 2026-11-08, not yet installed)
+## Step 24 test file: GUANO metadata in takes from BAT DETECTOR, MIX file switch follows REC READY (built 2026-11-08, not yet installed)
 
-`work/patch24/#PortaX8_0243.203` (B243, SHA-256 `5b9cb14b…a978e7ccc9`). Includes steps 11 to 23. Install this file in place of
+`work/patch24/#PortaX8_0244.203` (B244, SHA-256 `918fbbbb…11dc66c04b`). Includes steps 11 to 23. Install this file in place of
 B241 or an earlier build. All the checks in `tools/x8patch.py` pass on this file. It has one new stock hook site, so the patch
-header is now version 18. B242, built earlier the same day, had no stack check (see below) and was never installed; its file
-has been deleted.
+header is now version 18. B242 and B243 were built earlier the same day and never installed; their files have been deleted.
 
 - **GUANO metadata.** Each WAV file of a take recorded with the bat screen open gets a GUANO chunk (`guan`) after its audio. The
   patch adds it when the stock recorder closes the file, at the end of the take and when a long take splits at about 4 GB, so each
@@ -2187,7 +2186,7 @@ has been deleted.
   Samplerate: 192000
   Make: TASCAM
   Model: Portacapture X8
-  Firmware Version: V2.03 with bat patch B243
+  Firmware Version: V2.03 with bat patch B244
   Original Filename: 261106_0095_3-4.wav
   ```
 
@@ -2195,15 +2194,22 @@ has been deleted.
   closes the file, less the length, to the nearest second. `Original Filename` is the name the file was opened with. The record
   command stores the bare name (such as `261106_0095_3-4.wav`), read from the code; the patch leaves the field out if the name is
   not printable ASCII.
+- **MIX file switch and REC READY.** With REC READY off for MASTER in MANUAL, no take has a MIX file, but SETTINGS still showed
+  the MIX file switch on. The patch now reads MANUAL's track on/off words (bits 6 and 7 are the master), and the switch shows off
+  and greyed with `REC READY is off for MASTER in MANUAL.` Taps and the wheel do nothing there; the app keeps its own setting for
+  when REC READY is back on.
+- **CPU test.** While recording, the summary line says whether the take has a MIX file (`MIX file on.` or `MIX file off.`), from
+  the stock file mask, since the MIX file costs CPU. A row whose MIX status differs from row 1 gets the `*` that a change of
+  recorder state gets. The state lines are shorter, for example `Recording for every row.`, so `Ended at 25 of 26.` still fits.
 - **Stack check.** Before it adds the chunk, the hook finds its task's stack in the RTOS task table and adds nothing with under
   2 KB free (it uses about 0.7 KB), or on a stack the table does not list. A file left without GUANO this way looks like a
   stock file.
 
-| Item | B241 | B243 | Limit |
+| Item | B241 | B244 | Limit |
 |---|---|---|---|
-| ITCM | 82.5 KB | 82.5 KB | 89.2 KB |
+| ITCM | 82.5 KB | 82.2 KB | 89.2 KB |
 | DTCM | 141.5 KB | 141.5 KB | 152.8 KB |
-| `.noinit`, the end of the patch's memory | ends at 0x818ed558 | ends at 0x818ef5c8 | 0x81900000 |
+| `.noinit`, the end of the patch's memory | ends at 0x818ed558 | ends at 0x818ef8a8 | 0x81900000 |
 
 **What to check.**
 
@@ -2214,7 +2220,10 @@ has been deleted.
    on the computer that the file has 3 marks and still has its GUANO text.
 3. Turn `GUANO metadata` off in TOOLS and record a take. Its files should end with the audio, as stock files do.
 4. Record a take in MANUAL opened from its own tile. It should have no GUANO text.
-5. If there is time: a take longer than about 46 min at 192 kHz with inputs 3 and 4 splits at about 4 GB. Does each file have its
+5. In MANUAL, tap MASTER and turn REC READY off, then open BAT DETECTOR. Is SETTINGS' MIX file switch off and greyed, with the
+   REC READY line? Turn REC READY back on: does the switch show its earlier setting again?
+6. CPU test while recording: does the summary line say `MIX file on.`, or `MIX file off.` with the MIX file switch off?
+7. If there is time: a take longer than about 46 min at 192 kHz with inputs 3 and 4 splits at about 4 GB. Does each file have its
    own GUANO text, with a `Timestamp` about 46 min apart? A split file without GUANO would mean the stack check stopped it: the
    split runs on a task that has not been identified.
 
