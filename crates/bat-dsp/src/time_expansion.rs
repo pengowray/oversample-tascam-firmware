@@ -152,9 +152,9 @@ impl<'a> TimeExpander<'a> {
         match self.phase {
             Phase::Idle => ExpanderState::Idle,
             Phase::Capturing { .. } => ExpanderState::Capturing,
-            Phase::Playing => ExpanderState::Playing {
-                progress: self.pos as f32 / ((self.len as u64) << FRAC_BITS) as f32,
-            },
+            Phase::Playing => {
+                ExpanderState::Playing { progress: self.pos as f32 / ((self.len as u64) << FRAC_BITS) as f32 }
+            }
         }
     }
 
@@ -338,9 +338,15 @@ mod tests {
     fn playback_matches_reading_the_ring_for_every_sample() {
         let x = noise(0.5, 40_000, 3);
         // The storage is smaller than the audio, so the window crosses the end of the ring.
-        for (factor, block, change_to) in
-            [(10.0, 256, None), (10.0, 7, None), (1.0, 64, None), (1.5, 33, None), (7.3, 256, None), (20.0, 100, Some(3.0)), (2.0, 100, Some(16.0))]
-        {
+        for (factor, block, change_to) in [
+            (10.0, 256, None),
+            (10.0, 7, None),
+            (1.0, 64, None),
+            (1.5, 33, None),
+            (7.3, 256, None),
+            (20.0, 100, Some(3.0)),
+            (2.0, 100, Some(16.0)),
+        ] {
             let mut storage = std::vec![0.0; 9_000];
             let mut te = TimeExpander::new(FS, &mut storage);
             te.set_factor(factor);
@@ -353,7 +359,9 @@ mod tests {
             let mut played = 0;
             let mut out = std::vec![0.0; block];
             while matches!(te.state(), ExpanderState::Playing { .. }) {
-                if played == 1_000 && let Some(factor) = change_to {
+                if played == 1_000
+                    && let Some(factor) = change_to
+                {
                     te.set_factor(factor);
                 }
                 let (pos, step) = (te.pos, te.step);
@@ -383,8 +391,7 @@ mod tests {
         let burst_len = 1_920;
         let play_len = (PRE + POST) * 10;
         let mut x = std::vec![0.0; at + POST + play_len + 1_000];
-        x[burst_start..burst_start + burst_len]
-            .copy_from_slice(&sine(FS, 50_000.0, 0.5, burst_len));
+        x[burst_start..burst_start + burst_len].copy_from_slice(&sine(FS, 50_000.0, 0.5, burst_len));
         let y = run_with_trigger(&mut te, &x, 512, at);
         assert_eq!(te.state(), ExpanderState::Idle);
 

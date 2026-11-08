@@ -14,9 +14,9 @@
 use core::f32::consts::TAU;
 use core::mem::MaybeUninit;
 
+use crate::phone_time::Reading;
 use chime::format::TimeMessage;
 use chime::{Decoder, Event};
-use crate::phone_time::Reading;
 
 const CARRIER_HZ: f32 = chime::format::CARRIER_HZ as f32;
 /// The tone counts in a spectrum column when the carrier's bin is this far above the bins 1.5 kHz
@@ -184,7 +184,13 @@ impl Remote {
     /// Feed the first `channels` blocks to the decoders. Not inlined, so the decoders stay out
     /// of `BatApp::process`, which the X8 patch runs from ITCM, where they would not fit.
     #[inline(never)]
-    pub(crate) fn listen(&mut self, decoders: &mut [MaybeUninit<Decoder>; 2], blocks: [&[f32]; 2], channels: usize, now: u64) {
+    pub(crate) fn listen(
+        &mut self,
+        decoders: &mut [MaybeUninit<Decoder>; 2],
+        blocks: [&[f32]; 2],
+        channels: usize,
+        now: u64,
+    ) {
         if self.wake {
             self.wake = false;
             if now >= self.listen_until {
@@ -227,7 +233,8 @@ impl Remote {
                     self.reading = Some(Reading::new(&message, start_sample, now));
                 }
                 let Some(remote) = message.remote() else { return };
-                let same_chime = self.last.is_some_and(|last| last.message == remote) && self.last_unix == message.unix_time;
+                let same_chime =
+                    self.last.is_some_and(|last| last.message == remote) && self.last_unix == message.unix_time;
                 self.last = Some(LastCommand { message: remote, read_at: now, level_dbfs: chime.level_dbfs });
                 self.last_unix = message.unix_time;
                 if !same_chime {

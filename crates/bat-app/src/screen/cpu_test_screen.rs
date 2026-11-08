@@ -2,7 +2,9 @@
 
 use embedded_graphics::pixelcolor::Rgb565;
 
-use super::{BODY_BOLD, CENTER, Fb, LEFT, RIGHT, SMALL, hline, no_input_notice, rate_warning, rounded, switch_control, text};
+use super::{
+    BODY_BOLD, CENTER, Fb, LEFT, RIGHT, SMALL, hline, no_input_notice, rate_warning, rounded, switch_control, text,
+};
 use crate::cpu_test::{Row, RowResult, View};
 use crate::layout::*;
 use crate::palette::*;
@@ -30,7 +32,8 @@ pub(crate) const COLUMN_GAP: i32 = 3;
 const LABEL_X: i32 = 6;
 const ROW_INDENT: i32 = 4;
 
-pub(super) const CALLS_LINES: [&str; 2] = ["Synthetic calls make every run sound the same.", "10 a second. Heard in headphones. Not recorded."];
+pub(super) const CALLS_LINES: [&str; 2] =
+    ["Synthetic calls make every run sound the same.", "10 a second. Heard in headphones. Not recorded."];
 pub(super) const START: &str = "Start test";
 pub(super) const START_AGAIN: &str = "Test again";
 pub(super) const COLUMNS: [(&str, i32); 10] = [
@@ -150,8 +153,12 @@ fn summary(app: &BatApp, fb: Fb) {
     let Some(first) = rows.iter().find_map(|row| row.result) else {
         let state = app.recorder().0;
         let line = match state {
-            Recorder::Recording if app.take_mix_file() == Some(true) => "Recording, MIX file on. The test runs while recording.",
-            Recorder::Recording if app.take_mix_file() == Some(false) => "Recording, MIX file off. The test runs while recording.",
+            Recorder::Recording if app.take_mix_file() == Some(true) => {
+                "Recording, MIX file on. The test runs while recording."
+            }
+            Recorder::Recording if app.take_mix_file() == Some(false) => {
+                "Recording, MIX file off. The test runs while recording."
+            }
             Recorder::Recording => "Recording. The test runs while recording.",
             Recorder::Standby => "Record standby. Press REC to test while recording.",
             Recorder::Paused => "Recording paused. Press REC to test while recording.",
@@ -290,7 +297,15 @@ pub(super) fn draw(app: &BatApp, fb: Fb) {
     }
     rounded(fb, CPU_TEST_START, 4, ACCENT);
     let has_results = app.cpu_test.has_results();
-    text(fb, &BODY_BOLD, if has_results { START_AGAIN } else { START }, CPU_TEST_START.center().x, CPU_TEST_START.top_left.y + 28, CENTER, TEXT);
+    text(
+        fb,
+        &BODY_BOLD,
+        if has_results { START_AGAIN } else { START },
+        CPU_TEST_START.center().x,
+        CPU_TEST_START.top_left.y + 28,
+        CENTER,
+        TEXT,
+    );
 }
 
 pub(super) const RUNNING_HELP: &str = "Tap anywhere to stop the test.";
@@ -316,9 +331,9 @@ pub(super) fn running_line(app: &BatApp, fb: Fb) {
 #[cfg(test)]
 /// For the Totals table, then the Stages table.
 pub(crate) fn column_contents() -> std::vec::Vec<std::vec::Vec<(i32, std::vec::Vec<std::string::String>)>> {
+    use std::format;
     use std::string::ToString;
     use std::vec;
-    use std::format;
 
     let problem = |n| format!("{}", Count { n, full_below: PROBLEM_FULL_BELOW });
     let totals = COLUMNS

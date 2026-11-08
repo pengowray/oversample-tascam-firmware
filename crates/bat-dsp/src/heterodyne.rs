@@ -123,22 +123,6 @@ impl Heterodyne {
             (*ol, *or) = self.process_sample_stereo(l, r);
         }
     }
-
-    /// Add this heterodyne's output, times `scale`, to `output`.
-    fn process_add(&mut self, input: &[f32], output: &mut [f32], scale: f32) {
-        for (o, &x) in output.iter_mut().zip(input) {
-            *o += self.process_sample(x) * scale;
-        }
-    }
-
-    /// Add this heterodyne's output for both channels, times `scale`, to the outputs.
-    fn process_add_stereo(&mut self, left: &[f32], right: &[f32], out_left: &mut [f32], out_right: &mut [f32], scale: f32) {
-        for (((ol, or), &l), &r) in out_left.iter_mut().zip(out_right.iter_mut()).zip(left).zip(right) {
-            let (a, b) = self.process_sample_stereo(l, r);
-            *ol += a * scale;
-            *or += b * scale;
-        }
-    }
 }
 
 /// Up to `N` heterodynes on one input, mixed. Output is scaled by 1 / (number
@@ -371,7 +355,11 @@ mod tests {
     }
 
     /// Run two channels through `process`, as (left, right).
-    fn stereo(x: &[f32], y: &[f32], mut process: impl FnMut(&[f32], &[f32], &mut [f32], &mut [f32])) -> (Vec<f32>, Vec<f32>) {
+    fn stereo(
+        x: &[f32],
+        y: &[f32],
+        mut process: impl FnMut(&[f32], &[f32], &mut [f32], &mut [f32]),
+    ) -> (Vec<f32>, Vec<f32>) {
         let (mut l, mut r) = (std::vec![0.0; x.len()], std::vec![0.0; x.len()]);
         for (((a, b), ol), or) in x.chunks(256).zip(y.chunks(256)).zip(l.chunks_mut(256)).zip(r.chunks_mut(256)) {
             process(a, b, ol, or);

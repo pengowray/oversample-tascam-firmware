@@ -111,7 +111,9 @@ pub(super) fn run_remote(app: &mut BatApp<'static>) {
         GOAL_RECORDING => match transport {
             RECORDING => finish(app, RemoteResult::Started, now),
             _ if waited >= GIVE_UP_S * blocks_per_second() => finish(app, RemoteResult::NoResponse, now),
-            STOPPED | STANDBY | PAUSED | PAUSED_BY_EVENT if hold_on() => finish(app, RemoteResult::HoldOn(RemoteCommand::Start), now),
+            STOPPED | STANDBY | PAUSED | PAUSED_BY_EVENT if hold_on() => {
+                finish(app, RemoteResult::HoldOn(RemoteCommand::Start), now)
+            }
             STOPPED if guide_on() => finish(app, RemoteResult::GuideOn, now),
             STOPPED if read_byte(stock::DSP_PAGE) != 0 => finish(app, RemoteResult::PageOpen, now),
             9..=11 => finish(app, RemoteResult::GuideOn, now),
@@ -130,7 +132,9 @@ pub(super) fn run_remote(app: &mut BatApp<'static>) {
                 }
             }
             _ if waited >= GIVE_UP_S * blocks_per_second() => finish(app, RemoteResult::NoResponse, now),
-            RECORDING | PAUSED | PAUSED_BY_EVENT if hold_on() => finish(app, RemoteResult::HoldOn(RemoteCommand::Stop), now),
+            RECORDING | PAUSED | PAUSED_BY_EVENT if hold_on() => {
+                finish(app, RemoteResult::HoldOn(RemoteCommand::Stop), now)
+            }
             RECORDING | PAUSED | PAUSED_BY_EVENT => press(stock::HOME, now),
             // Closing the file.
             _ => {}

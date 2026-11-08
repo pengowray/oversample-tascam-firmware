@@ -34,7 +34,8 @@
 //! screen; the default is both.
 
 use bat_app::{
-    AutoVolume, BatApp, Buffers, CallKind, Feed, HEIGHT, InputKind, InputName, MixSilence, Mode, MonitorSource, Recorder, Rgb565Buffer, WIDTH,
+    AutoVolume, BatApp, Buffers, CallKind, Feed, HEIGHT, InputKind, InputName, MixSilence, Mode, MonitorSource,
+    Recorder, Rgb565Buffer, WIDTH,
 };
 use embedded_graphics::prelude::*;
 use embedded_graphics::primitives::Rectangle;
@@ -78,8 +79,7 @@ fn main() {
     let spec = reader.spec();
     let channels = spec.channels as usize;
     let total_frames = reader.duration() as usize;
-    let seconds: f32 =
-        args.get(3).map(|s| s.parse().unwrap()).unwrap_or(total_frames as f32 / spec.sample_rate as f32);
+    let seconds: f32 = args.get(3).map(|s| s.parse().unwrap()).unwrap_or(total_frames as f32 / spec.sample_rate as f32);
     let wanted = ((seconds * spec.sample_rate as f32) as usize).min(total_frames) * channels;
     let samples: Vec<f32> = match spec.sample_format {
         hound::SampleFormat::Float => reader.samples::<f32>().take(wanted).map(Result::unwrap).collect(),
@@ -111,9 +111,12 @@ fn main() {
     app.set_clock(21 * 3600 + 47 * 60 + 5);
     if let Ok(kinds) = std::env::var("MARK") {
         let kinds: Vec<&str> = kinds.split(',').collect();
-        for (name, kind) in
-            [("bat", CallKind::Bat), ("tone", CallKind::Tone), ("audible", CallKind::Audible), ("broadband", CallKind::Broadband)]
-        {
+        for (name, kind) in [
+            ("bat", CallKind::Bat),
+            ("tone", CallKind::Tone),
+            ("audible", CallKind::Audible),
+            ("broadband", CallKind::Broadband),
+        ] {
             app.set_marked(kind, kinds.contains(&name));
         }
     }
@@ -203,10 +206,10 @@ fn main() {
 
     // X8_BEHIND=N: the X8's clock N s behind the phone's, after a chime on the phone time screen;
     // CLOCK_STATE=after shows the status line for a set waiting for the take to end.
-    if let Ok(behind) = std::env::var("X8_BEHIND") {
-        if let Some(time) = app.take_phone_time() {
-            app.set_host_clock(Some(time.local_ms.div_euclid(1000) - behind.parse::<i64>().unwrap()));
-        }
+    if let Ok(behind) = std::env::var("X8_BEHIND")
+        && let Some(time) = app.take_phone_time()
+    {
+        app.set_host_clock(Some(time.local_ms.div_euclid(1000) - behind.parse::<i64>().unwrap()));
     }
     // PAUSE_REFUSED=1: the main screen's notice that REC did not pause the take.
     if std::env::var("PAUSE_REFUSED").is_ok() {
@@ -265,16 +268,29 @@ fn main() {
         ];
         let font = FontRenderer::new::<fonts::u8g2_font_helvR08_tf>();
         let (top, height) = app.last_call_area();
-        let _ = fb.fill_solid(&Rectangle::new(Point::new(0, top), Size::new(WIDTH as u32, height)), embedded_graphics::pixelcolor::Rgb565::new(4, 8, 4));
+        let _ = fb.fill_solid(
+            &Rectangle::new(Point::new(0, top), Size::new(WIDTH as u32, height)),
+            embedded_graphics::pixelcolor::Rgb565::new(4, 8, 4),
+        );
         for (i, line) in LINES.iter().enumerate() {
             let y = top + i as i32 * 13;
-            let width = font.get_rendered_dimensions(*line, Point::new(2, y + 10), VerticalPosition::Baseline).map_or(0, |d| d.advance.x);
+            let width = font
+                .get_rendered_dimensions(*line, Point::new(2, y + 10), VerticalPosition::Baseline)
+                .map_or(0, |d| d.advance.x);
             eprintln!("debug line {}: {} px wide, starting at x = 2, of {WIDTH}", i + 1, width);
-            let _ = fb.fill_solid(&Rectangle::new(Point::new(0, y), Size::new(WIDTH as u32, 13)), embedded_graphics::pixelcolor::Rgb565::new(4, 8, 4));
-            let _ = font.render(*line, Point::new(2, y + 10), VerticalPosition::Baseline, FontColor::Transparent(embedded_graphics::pixelcolor::Rgb565::WHITE), &mut fb);
+            let _ = fb.fill_solid(
+                &Rectangle::new(Point::new(0, y), Size::new(WIDTH as u32, 13)),
+                embedded_graphics::pixelcolor::Rgb565::new(4, 8, 4),
+            );
+            let _ = font.render(
+                *line,
+                Point::new(2, y + 10),
+                VerticalPosition::Baseline,
+                FontColor::Transparent(embedded_graphics::pixelcolor::Rgb565::WHITE),
+                &mut fb,
+            );
         }
     }
-    drop(fb);
     let (w, h) = (WIDTH * scale, HEIGHT * scale);
     let mut rgb = vec![0u8; w * h * 3];
     for y in 0..h {

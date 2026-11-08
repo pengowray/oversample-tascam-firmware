@@ -8,7 +8,10 @@ use embedded_graphics::prelude::*;
 use embedded_graphics::primitives::Rectangle;
 use u8g2_fonts::{FontRenderer, fonts};
 
-use super::{BODY, BODY_BOLD, CENTER, Fb, LEFT, SMALL, VALUE, fill, mix_silence_lines, no_input_notice, rate_warning, rounded, text};
+use super::{
+    BODY, BODY_BOLD, CENTER, Fb, LEFT, SMALL, VALUE, fill, mix_silence_lines, no_input_notice, rate_warning, rounded,
+    text,
+};
 use crate::chime_test::{Channel, ChimeClock, Failure, FailureReason};
 use crate::layout::{CLOCK_BACK, CLOCK_SET};
 use crate::palette::*;
@@ -21,9 +24,11 @@ pub(super) const CLOCK: FontRenderer = FontRenderer::new::<fonts::u8g2_font_logi
 pub(crate) const TITLE: &str = "PHONE TIME";
 pub(super) const LABEL_READ: &str = "Phone time from the last chime";
 pub(super) const LABEL_NONE: &str = "No chime read yet";
-pub(super) const ROW_LABELS: [&str; 5] = ["Chimes read", "Chimes failed", "Last carrier dBFS", "Last SNR dB", "17-19 kHz now"];
+pub(super) const ROW_LABELS: [&str; 5] =
+    ["Chimes read", "Chimes failed", "Last carrier dBFS", "Last SNR dB", "17-19 kHz now"];
 pub(super) const SNR_NOT_MEASURED: &str = "not measured";
-pub(super) const HELP: [&str; 2] = ["On the phone, press \"Play chimes for 1 minute\".", "Hold the phone steady near a mic, with the volume up."];
+pub(super) const HELP: [&str; 2] =
+    ["On the phone, press \"Play chimes for 1 minute\".", "Hold the phone steady near a mic, with the volume up."];
 pub(super) const ANALYSIS: [&str; 3] = [
     "Bat analysis is stopped while this screen is open.",
     "The waterfall gets grey columns for this time.",
@@ -156,7 +161,9 @@ impl fmt::Display for FailureLine {
             }
             FailureReason::Decoder(UnreadableReason::BadCrc) => f.write_str("CRC check failed"),
             FailureReason::Decoder(UnreadableReason::TooManyBytes) => f.write_str("chime was too long"),
-            FailureReason::Decoder(UnreadableReason::ConflictingReads) => f.write_str("two different readings passed CRC"),
+            FailureReason::Decoder(UnreadableReason::ConflictingReads) => {
+                f.write_str("two different readings passed CRC")
+            }
             FailureReason::Decoder(UnreadableReason::MessageRefused) => f.write_str("message refused after CRC passed"),
             FailureReason::Decoder(UnreadableReason::BadSymbol) => f.write_str("symbol length not recognised"),
         }
@@ -223,7 +230,15 @@ pub(super) fn draw(app: &BatApp, fb: Fb) {
             let x8_minus_phone = app.clocks_now().map(|(phone, x8)| x8 - phone);
             text(fb, &SMALL, format_args!("{}", Age { x8_minus_phone, read_s_ago }), 160, AGE_Y, CENTER, TEXT_MUTED);
             match app.phone.and_then(|reading| reading.location) {
-                Some((latitude, longitude)) => text(fb, &SMALL, format_args!("{}", Location(latitude, longitude)), 160, LOCATION_Y, CENTER, TEXT_MUTED),
+                Some((latitude, longitude)) => text(
+                    fb,
+                    &SMALL,
+                    format_args!("{}", Location(latitude, longitude)),
+                    160,
+                    LOCATION_Y,
+                    CENTER,
+                    TEXT_MUTED,
+                ),
                 None => text(fb, &SMALL, LOCATION_NONE, 160, LOCATION_Y, CENTER, TEXT_MUTED),
             };
         }
@@ -272,30 +287,6 @@ pub(super) fn draw(app: &BatApp, fb: Fb) {
     }
 }
 
-/// Test helpers: the screen's strings as text.
-#[cfg(test)]
-pub(crate) mod chime_text {
-    use std::format;
-    use std::string::{String, ToString};
-
-    use chime::format::LocalTime;
-
-    use super::{Age, ChimeClock, DateLine};
-
-    pub(crate) fn age(seconds: u64) -> String {
-        Age { x8_minus_phone: None, read_s_ago: seconds }.to_string()
-    }
-
-    pub(crate) fn compared(x8_minus_phone: i64, seconds: u64) -> String {
-        Age { x8_minus_phone: Some(x8_minus_phone), read_s_ago: seconds }.to_string()
-    }
-
-    pub(crate) fn date(local_seconds: i64, timezone_minutes: i16) -> String {
-        let local = LocalTime::from_epoch_seconds(local_seconds);
-        format!("{}", DateLine(ChimeClock { local, timezone_minutes, read_s_ago: 0 }))
-    }
-}
-
 /// Test helpers: each line that has a limit, with its width and the room for it.
 #[cfg(test)]
 pub(crate) fn lines_with_widths() -> std::vec::Vec<(std::string::String, i32, i32)> {
@@ -303,7 +294,8 @@ pub(crate) fn lines_with_widths() -> std::vec::Vec<(std::string::String, i32, i3
     use std::vec::Vec;
 
     let width = |font: &FontRenderer, line: &str| {
-        font.get_rendered_dimensions(line, Point::zero(), u8g2_fonts::types::VerticalPosition::Baseline).map_or(0, |d| d.advance.x)
+        font.get_rendered_dimensions(line, Point::zero(), u8g2_fonts::types::VerticalPosition::Baseline)
+            .map_or(0, |d| d.advance.x)
     };
     let mut lines = Vec::new();
     let mut add = |font: &FontRenderer, line: &str, room: i32| lines.push((line.to_string(), width(font, line), room));
@@ -344,4 +336,28 @@ pub(crate) fn lines_with_widths() -> std::vec::Vec<(std::string::String, i32, i3
         add(&SMALL, &FailureLine("Mix, right side", failure).to_string(), full);
     }
     lines
+}
+
+/// Test helpers: the screen's strings as text.
+#[cfg(test)]
+pub(crate) mod chime_text {
+    use std::format;
+    use std::string::{String, ToString};
+
+    use chime::format::LocalTime;
+
+    use super::{Age, ChimeClock, DateLine};
+
+    pub(crate) fn age(seconds: u64) -> String {
+        Age { x8_minus_phone: None, read_s_ago: seconds }.to_string()
+    }
+
+    pub(crate) fn compared(x8_minus_phone: i64, seconds: u64) -> String {
+        Age { x8_minus_phone: Some(x8_minus_phone), read_s_ago: seconds }.to_string()
+    }
+
+    pub(crate) fn date(local_seconds: i64, timezone_minutes: i16) -> String {
+        let local = LocalTime::from_epoch_seconds(local_seconds);
+        format!("{}", DateLine(ChimeClock { local, timezone_minutes, read_s_ago: 0 }))
+    }
 }

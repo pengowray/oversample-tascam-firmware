@@ -164,7 +164,7 @@ fn play(a: &[f32], b: &[f32], mode: Mode, het_hz: f32, volume: AutoVolume) -> (R
     let (mut run, mut baseline) = (Run::default(), Run::default());
     let mut old = B231::new();
     let mean: Vec<f32> = a.iter().zip(b).map(|(x, y)| 0.5 * (x + y)).collect();
-    for x in mean.chunks_exact(WINDOW) {
+    for x in mean.as_chunks::<WINDOW>().0 {
         app.process(x, x, &mut l, &mut r);
         run.add(&l, app.auto_volume_gain(), app.auto_volume_gate());
         if volume == AutoVolume::Off {
@@ -187,8 +187,8 @@ fn report(name: &str, run: &Run, found: &[Detected], gated: bool) {
         }
     }
     let (mut quiet_gain, mut noise, mut call_gain) = (Vec::new(), Vec::new(), Vec::new());
-    for w in settle.min(windows)..windows {
-        if near_call[w] {
+    for (w, &near) in near_call.iter().enumerate().skip(settle.min(windows)) {
+        if near {
             call_gain.push(db(run.gain[w]));
         } else {
             quiet_gain.push(db(run.gain[w]));
@@ -203,7 +203,13 @@ fn report(name: &str, run: &Run, found: &[Detected], gated: bool) {
         }
     }
     let settled = &run.gain[settle.min(windows)..];
-    let moved: f32 = settled.chunks_exact(10).zip(settled.get(10..).unwrap_or(&[]).chunks_exact(10)).map(|(a, b)| db(b[0] / a[0]).abs()).sum::<f32>()
+    let moved: f32 = settled
+        .as_chunks::<10>()
+        .0
+        .iter()
+        .zip(settled.get(10..).unwrap_or(&[]).as_chunks::<10>().0)
+        .map(|(a, b)| db(b[0] / a[0]).abs())
+        .sum::<f32>()
         / ((windows.saturating_sub(settle + 10) / 10).max(1) as f32);
     print!(
         "  {name:<10} gain {:>6.1} ({:>6.1} to {:>6.1})  noise {:>7.1}  gain in call {:>6.1}  call out {:>7.1} {:>7.1} {:>7.1}  moved {moved:>5.2}",
@@ -236,7 +242,9 @@ fn gate_report(run: &Run, found: &[Detected]) {
     let mut i = 0;
     while i < bats.len() {
         let mut k = i;
-        while k + 1 < bats.len() && (bats[k + 1].event.start_sample - bats[k].event.start_sample) as f32 / FS <= PASS_GAP_S {
+        while k + 1 < bats.len()
+            && (bats[k + 1].event.start_sample - bats[k].event.start_sample) as f32 / FS <= PASS_GAP_S
+        {
             k += 1;
         }
         let pass = &bats[i..=k];
@@ -281,7 +289,8 @@ fn main() {
         let Some((a, b)) = read_stereo(path) else { continue };
         let found = detect(&a, &b);
         let mut bat_peaks: Vec<f32> = found.iter().filter(|d| d.bat).map(|d| d.event.peak_freq_hz).collect();
-        let het_hz = if bat_peaks.is_empty() { 45_000.0 } else { (percentile(&mut bat_peaks, 0.5) / 500.0).round() * 500.0 };
+        let het_hz =
+            if bat_peaks.is_empty() { 45_000.0 } else { (percentile(&mut bat_peaks, 0.5) / 500.0).round() * 500.0 };
         println!(
             "{path}: {:.0} s, {} detections, {} bat calls, HET at {:.1} kHz",
             a.len() as f32 / FS,

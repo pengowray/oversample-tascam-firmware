@@ -1,3 +1,6 @@
+// `run_skipping` takes a list of ranges to skip, and most tests skip one.
+#![allow(clippy::single_range_in_vec_init)]
+
 use std::vec;
 use std::vec::Vec;
 
@@ -414,7 +417,9 @@ fn auto_level_applies_in_each_mode_and_only_to_the_output() {
 
 #[test]
 fn steady_noise_and_tones_come_out_at_the_ceiling_at_any_level() {
-    let tone = |n: usize, amp: f32| -> Vec<f32> { (0..n).map(|i| amp * (i as f32 * core::f32::consts::TAU * 1000.0 / FS).sin()).collect() };
+    let tone = |n: usize, amp: f32| -> Vec<f32> {
+        (0..n).map(|i| amp * (i as f32 * core::f32::consts::TAU * 1000.0 / FS).sin()).collect()
+    };
     let ten_seconds = (10.0 * FS) as usize;
     for target in [0.25, X8_TARGET] {
         let ceiling = db(target) - NOISE_BELOW_TARGET_DB;
@@ -796,7 +801,11 @@ fn the_auto_volume_row_shows_three_choices_a_tap_picks_one_and_the_wheel_steps()
     for (i, &volume) in AutoVolume::ALL.iter().enumerate() {
         let font = u8g2_fonts::FontRenderer::new::<u8g2_fonts::fonts::u8g2_font_helvR10_tf>();
         let width = font
-            .get_rendered_dimensions(volume.label(), embedded_graphics::prelude::Point::zero(), u8g2_fonts::types::VerticalPosition::Baseline)
+            .get_rendered_dimensions(
+                volume.label(),
+                embedded_graphics::prelude::Point::zero(),
+                u8g2_fonts::types::VerticalPosition::Baseline,
+            )
             .unwrap()
             .advance
             .x;
@@ -1086,7 +1095,9 @@ fn run_skipping(app: &mut BatApp, x: &[f32], skip: &[core::ops::Range<usize>]) -
 }
 
 fn mark_everything(app: &mut BatApp) {
-    for kind in [CallKind::Bat, CallKind::Single, CallKind::Tone, CallKind::Audible, CallKind::Broadband, CallKind::TooLow] {
+    for kind in
+        [CallKind::Bat, CallKind::Single, CallKind::Tone, CallKind::Audible, CallKind::Broadband, CallKind::TooLow]
+    {
         app.set_marked(kind, true);
     }
 }

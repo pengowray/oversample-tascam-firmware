@@ -37,7 +37,9 @@ fn read_mono(path: &Path) -> Result<(Vec<f32>, u32), String> {
     let spec = reader.spec();
     let ch = spec.channels as usize;
     let samples: Vec<f32> = match spec.sample_format {
-        hound::SampleFormat::Float => reader.into_samples::<f32>().collect::<Result<_, _>>().map_err(|e| e.to_string())?,
+        hound::SampleFormat::Float => {
+            reader.into_samples::<f32>().collect::<Result<_, _>>().map_err(|e| e.to_string())?
+        }
         hound::SampleFormat::Int => {
             let scale = 1.0 / (1u64 << (spec.bits_per_sample - 1)) as f32;
             reader
@@ -136,7 +138,10 @@ fn matched(a: &[Found], b: &[Found], slack: u64) -> Vec<bool> {
             while j < b.len() && b[j].event.end_sample + slack < x.event.start_sample {
                 j += 1;
             }
-            b[j..].iter().take_while(|y| y.event.start_sample <= x.event.end_sample + slack).any(|y| same_sound(&x.event, &y.event, slack))
+            b[j..]
+                .iter()
+                .take_while(|y| y.event.start_sample <= x.event.end_sample + slack)
+                .any(|y| same_sound(&x.event, &y.event, slack))
         })
         .collect()
 }
@@ -280,7 +285,11 @@ fn files(hops: &[Grid], paths: &[String], csv: Option<&String>) {
             let mut one = Totals::default();
             add_file(&mut one, &results[0], &results[i], hops[0].hop, h.hop, seconds);
             add_file(&mut totals[i], &results[0], &results[i], hops[0].hop, h.hop, seconds);
-            let _ = write!(rows, ",{},{},{},{},{},{}", one.detections, one.bats, one.missed, one.new, one.bats_missed, one.bats_new);
+            let _ = write!(
+                rows,
+                ",{},{},{},{},{},{}",
+                one.detections, one.bats, one.missed, one.new, one.bats_missed, one.bats_new
+            );
         }
         rows.push('\n');
     }
@@ -323,7 +332,8 @@ fn synthetic(hops: &[Grid]) {
     let lengths_ms = [1.0f32, 1.5, 2.0, 3.0, 5.0, 10.0];
     // Amplitude of the call against noise of amplitude 0.003, in dB.
     let levels_db = [12.0f32, 15.0, 18.0, 21.0, 24.0, 30.0, 40.0];
-    let shapes: [(&str, f32, f32); 2] = [("steep FM 80 to 40 kHz", 80_000.0, 40_000.0), ("shallow FM 50 to 45 kHz", 50_000.0, 45_000.0)];
+    let shapes: [(&str, f32, f32); 2] =
+        [("steep FM 80 to 40 kHz", 80_000.0, 40_000.0), ("shallow FM 50 to 45 kHz", 50_000.0, 45_000.0)];
     for (name, f0, f1) in shapes {
         println!("{name}: share of calls detected (and classified as bat calls), 200 calls each");
         print!("{:>6} {:>7}", "ms", "dB");

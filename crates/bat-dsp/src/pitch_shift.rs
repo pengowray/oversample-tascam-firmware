@@ -322,7 +322,7 @@ impl Stft {
         // DC and the quarter rate's Nyquist bin carry no shifted sound.
         self.spec[0] = Complex32::new(0.0, 0.0);
         for (c, &g) in self.spec.iter_mut().zip(&DROOP).skip(1) {
-            *c = *c * g;
+            *c *= g;
         }
 
         let frame = inverse_rfft(&mut self.spec, &TWIDDLE);

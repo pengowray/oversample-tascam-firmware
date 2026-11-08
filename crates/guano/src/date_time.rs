@@ -36,7 +36,10 @@ impl DateTime {
 
     /// The date and time `seconds` after 1970-01-01 00:00, with no time zone applied.
     pub fn from_seconds(seconds: i64) -> Option<Self> {
-        Some(Self { days: i32::try_from(seconds.div_euclid(SECONDS_PER_DAY)).ok()?, seconds: seconds.rem_euclid(SECONDS_PER_DAY) as u32 })
+        Some(Self {
+            days: i32::try_from(seconds.div_euclid(SECONDS_PER_DAY)).ok()?,
+            seconds: seconds.rem_euclid(SECONDS_PER_DAY) as u32,
+        })
     }
 
     /// The date and time `seconds` earlier.

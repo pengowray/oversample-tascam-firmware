@@ -4,7 +4,10 @@
 use embedded_graphics::primitives::Rectangle;
 
 use super::{BODY, BODY_BOLD, Fb, LEFT, SMALL, outline_selected, rounded, switch_control, text};
-use crate::layout::{RECORD_CLOCK, RECORD_GUANO, RECORD_MIX_FILE, RECORD_PAUSE, RECORD_REMOTE, TESTS_CHIME_TEST, TESTS_CPU_TEST, TESTS_DEBUG, panel_switch};
+use crate::layout::{
+    RECORD_CLOCK, RECORD_GUANO, RECORD_MIX_FILE, RECORD_PAUSE, RECORD_REMOTE, TESTS_CHIME_TEST, TESTS_CPU_TEST,
+    TESTS_DEBUG, panel_switch,
+};
 use crate::palette::*;
 use crate::{BatApp, RemoteCommand, RemoteResult, Setting};
 
@@ -13,8 +16,10 @@ use crate::{BatApp, RemoteCommand, RemoteResult, Setting};
 pub(super) const TITLE_LABEL: &str = "REMOTE";
 
 pub(super) const REMOTE_NAME: &str = "Phone remote (experimental)";
-pub(super) const REMOTE_HELP: [&str; 2] =
-    ["Phone chimes start or stop recording about 4 s later.", "BAT DETECTOR only. Almost no CPU until the phone plays."];
+pub(super) const REMOTE_HELP: [&str; 2] = [
+    "Phone chimes start or stop recording about 4 s later.",
+    "BAT DETECTOR only. Almost no CPU until the phone plays.",
+];
 pub(super) const REMOTE_BEEPS: &str = "Two notes up: started. Two down: stopped. One low: failed.";
 pub(super) const CHIME_TEST_NAME: &str = "Phone time";
 pub(super) const CHIME_TEST_HELP: &str = "Shows if the X8 reads chimes. Can set the X8 clock.";
@@ -36,7 +41,8 @@ pub(super) const MIX_FILE_FOLLOWS: [&str; 2] =
     ["No MIX file: MASTER REC READY is off in MANUAL", "MIX file is saved, as MASTER REC READY is on in MANUAL"];
 pub(super) const MIX_FILE_OVERRIDES: &str = "Overrides REC READY: no MIX file for BAT DETECTOR";
 pub(super) const DEBUG_NAME: &str = "Debug info";
-pub(super) const DEBUG_STATE: [&str; 2] = ["CPU and input figures are hidden", "CPU and input figures are shown on the main screen"];
+pub(super) const DEBUG_STATE: [&str; 2] =
+    ["CPU and input figures are hidden", "CPU and input figures are shown on the main screen"];
 pub(super) const GUANO_NAME: &str = "GUANO metadata";
 pub(super) const GUANO_STATE: [&str; 2] =
     ["No GUANO metadata. WAV files are stock X8 files", "Each WAV file gets start time, recorder model, location"];
@@ -85,7 +91,14 @@ pub(super) fn record(app: &BatApp, fb: Fb) {
     }
     if app.pause_option_available() {
         let selected = app.selected_setting() == Setting::PauseWithRec;
-        switch_panel(fb, RECORD_PAUSE, PAUSE_NAME, &[state(&PAUSE_STATE, app.pause_with_rec())], app.pause_with_rec(), selected);
+        switch_panel(
+            fb,
+            RECORD_PAUSE,
+            PAUSE_NAME,
+            &[state(&PAUSE_STATE, app.pause_with_rec())],
+            app.pause_with_rec(),
+            selected,
+        );
     }
     if app.remote_available() {
         remote_panel(app, fb);
@@ -120,7 +133,10 @@ fn remote_panel(app: &BatApp, fb: Fb) {
     text(
         fb,
         &SMALL,
-        format_args!("Tones heard {}. Chimes read {}, failed {}.", remote.tones, remote.chimes_read, remote.chimes_failed),
+        format_args!(
+            "Tones heard {}. Chimes read {}, failed {}.",
+            remote.tones, remote.chimes_read, remote.chimes_failed
+        ),
         x,
         y + 86,
         LEFT,

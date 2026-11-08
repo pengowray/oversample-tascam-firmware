@@ -277,7 +277,7 @@ impl CpuTest {
             return false;
         }
         let sums = self.sums;
-        let average = |sum: u32| if sums.windows == 0 { 0 } else { (sum + sums.windows / 2) / sums.windows };
+        let average = |sum: u32| (sum + sums.windows / 2).checked_div(sums.windows).unwrap_or(0);
         let measured_frames = now.saturating_sub(self.measure_start).max(1);
         let skipped_frames = skipped.wrapping_sub(self.start_skipped) as u64 * SKIP_CHUNK_FRAMES;
         let from = self.start_figures;

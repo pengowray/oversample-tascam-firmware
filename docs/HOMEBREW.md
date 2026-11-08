@@ -2359,7 +2359,7 @@ B241 or an earlier build. All the checks in `tools/x8patch.py` pass on this file
 
 ## Step 30 test file: PITCH about 40% cheaper (built 2026-11-09, not yet installed)
 
-`work/patch29/#PortaX8_0253.203` (B253, SHA-256 `e98a6b47…3608a59a4`). Includes steps 11 to 29. Install this file in place of
+`work/patch29/#PortaX8_0253.203` (B253, SHA-256 `5a058cd9…b2dc67d66`). Includes steps 11 to 29. Install this file in place of
 any earlier build. All the checks in `tools/x8patch.py` pass on this file. No new stock hook site (header version 18).
 
 The aim is to make mono PITCH fit while recording. On B251 PITCH's own cost was 41 to 49 points (Step 27). PITCH is still hidden
@@ -2391,7 +2391,7 @@ chime decoders kept up at 66 while recording. Stereo PITCH would still be over 9
 |---|---|---|---|
 | ITCM | 80.6 KB | 80.8 KB | 89.2 KB |
 | DTCM | 141.1 KB | 135.1 KB | 152.8 KB |
-| `.noinit`, the end of the patch's memory | ends at 0x818f92d8 | ends at 0x818f9a58 | 0x81900000 |
+| `.noinit`, the end of the patch's memory | ends at 0x818f92d8 | ends at 0x818f9a08 | 0x81900000 |
 
 **What to check.**
 

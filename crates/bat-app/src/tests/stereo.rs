@@ -7,7 +7,9 @@ const MODES: [Mode; 4] = [Mode::Het, Mode::Comb, Mode::Pitch, Mode::Thru];
 /// Run two inputs through the app in blocks of `block` samples, as (left, right).
 fn run_both(app: &mut BatApp, first: &[f32], second: &[f32], block: usize) -> (Vec<f32>, Vec<f32>) {
     let (mut left, mut right) = (vec![0.0; first.len()], vec![0.0; first.len()]);
-    for (((a, b), l), r) in first.chunks(block).zip(second.chunks(block)).zip(left.chunks_mut(block)).zip(right.chunks_mut(block)) {
+    for (((a, b), l), r) in
+        first.chunks(block).zip(second.chunks(block)).zip(left.chunks_mut(block)).zip(right.chunks_mut(block))
+    {
         app.process(a, b, l, r);
     }
     (left, right)
@@ -23,7 +25,8 @@ fn bits(x: &[f32]) -> Vec<u32> {
 
 /// Frequency of the upward zero crossings.
 fn frequency(x: &[f32]) -> f32 {
-    let crossings: Vec<usize> = x.windows(2).enumerate().filter(|(_, w)| w[0] < 0.0 && w[1] >= 0.0).map(|(i, _)| i).collect();
+    let crossings: Vec<usize> =
+        x.windows(2).enumerate().filter(|(_, w)| w[0] < 0.0 && w[1] >= 0.0).map(|(i, _)| i).collect();
     let (Some(first), Some(last)) = (crossings.first(), crossings.last()) else { return 0.0 };
     (crossings.len() - 1) as f32 * FS / (last - first) as f32
 }
@@ -171,7 +174,8 @@ fn the_louder_ear_sets_the_gain_for_both() {
     for loud_on_first in [true, false] {
         let mut auto = level::AutoLevel::new(FS);
         auto.set_volume(AutoVolume::On);
-        let (mut left, mut right) = if loud_on_first { (loud.clone(), quiet.clone()) } else { (quiet.clone(), loud.clone()) };
+        let (mut left, mut right) =
+            if loud_on_first { (loud.clone(), quiet.clone()) } else { (quiet.clone(), loud.clone()) };
         // FD has no noise floor, so only the gain for the target is at work here.
         auto.apply_stereo(&mut left, &mut right, Mode::Fd, true);
         let (louder, quieter) = if loud_on_first { (&left, &right) } else { (&right, &left) };
@@ -242,9 +246,13 @@ fn fd_and_te_hear_the_average_in_both_ears() {
     }
 }
 
+/// The waterfall, the analysis history, the calls, the last call, and the time expansion
+/// recording, from [`analysis_of`].
+type Analysis = (Vec<u8>, Vec<u8>, Vec<(u64, CallKind)>, Option<CallEvent>, Vec<f32>);
+
 /// Play two different signals in a mode, with a join partway, and return what the
 /// analysis and the time expansion recording made of them.
-fn analysis_of(mode: Mode) -> (Vec<u8>, Vec<u8>, Vec<(u64, CallKind)>, Option<CallEvent>, Vec<f32>) {
+fn analysis_of(mode: Mode) -> Analysis {
     let (first, second) = two_signals();
     let mut storage = vec![0.0f32; FS as usize];
     let (waterfall, history, calls, last);
@@ -476,7 +484,11 @@ fn a_change_of_chains_after_a_pause_starts_from_silence() {
         app.input_lost(0);
         app.set_inputs(after);
         let (left, right) = run_both(&mut app, &silence, &silence, 1024);
-        assert!(left.iter().chain(&right).all(|&v| v == 0.0), "{before:?} to {after:?}: {}", peak(&left).max(peak(&right)));
+        assert!(
+            left.iter().chain(&right).all(|&v| v == 0.0),
+            "{before:?} to {after:?}: {}",
+            peak(&left).max(peak(&right))
+        );
     }
 }
 
@@ -485,9 +497,16 @@ fn a_track_turned_on_or_off_on_the_mix_changes_the_chains_with_no_click() {
     let name = |short, long| Some(InputName { short, long });
     let (one, two) = ([name("3", "Input 3"), None], [name("3", "Input 3"), name("4", "Input 4")]);
     // The same signals as for a change of Listen to.
-    for (mode, first_hz, second_hz) in [(Mode::Het, 47_000.0, 52_000.0), (Mode::Comb, 58_000.0, 52_000.0), (Mode::Thru, 3_000.0, 5_000.0)] {
-        let first: Vec<f32> = tone(first_hz, 0.4, FS as usize).iter().zip(noise(0.001, FS as usize)).map(|(a, b)| a + b).collect();
-        let second: Vec<f32> = tone(second_hz, 0.05, FS as usize).iter().zip(noise(0.001, FS as usize).iter().rev()).map(|(a, b)| a + b).collect();
+    for (mode, first_hz, second_hz) in
+        [(Mode::Het, 47_000.0, 52_000.0), (Mode::Comb, 58_000.0, 52_000.0), (Mode::Thru, 3_000.0, 5_000.0)]
+    {
+        let first: Vec<f32> =
+            tone(first_hz, 0.4, FS as usize).iter().zip(noise(0.001, FS as usize)).map(|(a, b)| a + b).collect();
+        let second: Vec<f32> = tone(second_hz, 0.05, FS as usize)
+            .iter()
+            .zip(noise(0.001, FS as usize).iter().rev())
+            .map(|(a, b)| a + b)
+            .collect();
         let limit = MOST_STEP_AT_A_SWITCH * peak(&first);
 
         let mut storage = vec![0.0f32; 1024];
@@ -509,7 +528,14 @@ fn a_track_turned_on_or_off_on_the_mix_changes_the_chains_with_no_click() {
 
 /// `first` and `second` with `lost` samples taken out at `at`, told to the app, in a
 /// stereo mode, as (left, right).
-fn stereo_with_lost_input(first: &[f32], second: &[f32], mode: Mode, at: usize, lost: usize, tell: bool) -> (Vec<f32>, Vec<f32>) {
+fn stereo_with_lost_input(
+    first: &[f32],
+    second: &[f32],
+    mode: Mode,
+    at: usize,
+    lost: usize,
+    tell: bool,
+) -> (Vec<f32>, Vec<f32>) {
     let mut storage = vec![0.0f32; 1024];
     let mut app = BatApp::new(FS, &mut storage, buffers());
     app.set_mode(mode);
@@ -527,7 +553,11 @@ fn stereo_with_lost_input(first: &[f32], second: &[f32], mode: Mode, at: usize, 
 #[test]
 fn lost_input_leaves_no_step_in_either_ear() {
     let first = noise_under_a_loud_tone(FS as usize);
-    let second: Vec<f32> = tone(1_300.0, 0.05, FS as usize).iter().zip(noise(0.0003, FS as usize).iter().rev()).map(|(a, b)| a + b).collect();
+    let second: Vec<f32> = tone(1_300.0, 0.05, FS as usize)
+        .iter()
+        .zip(noise(0.0003, FS as usize).iter().rev())
+        .map(|(a, b)| a + b)
+        .collect();
     let (at, lost) = (96_000, 50);
 
     // 1:1 passes the input through, so the sample either side of the join shows it.
@@ -636,9 +666,16 @@ fn switching_between_mono_and_stereo_many_times_is_finite_and_has_no_click() {
     // A loud tone on one input and a quieter one on the other, near HET's frequency and
     // near one of the comb's, so that the two ears hear very different levels when both
     // are on. In 1:1 the tones are low, so that a step would stand out from them.
-    for (mode, first_hz, second_hz) in [(Mode::Het, 47_000.0, 52_000.0), (Mode::Comb, 58_000.0, 52_000.0), (Mode::Thru, 3_000.0, 5_000.0)] {
-        let first: Vec<f32> = tone(first_hz, 0.4, FS as usize).iter().zip(noise(0.001, FS as usize)).map(|(a, b)| a + b).collect();
-        let second: Vec<f32> = tone(second_hz, 0.05, FS as usize).iter().zip(noise(0.001, FS as usize).iter().rev()).map(|(a, b)| a + b).collect();
+    for (mode, first_hz, second_hz) in
+        [(Mode::Het, 47_000.0, 52_000.0), (Mode::Comb, 58_000.0, 52_000.0), (Mode::Thru, 3_000.0, 5_000.0)]
+    {
+        let first: Vec<f32> =
+            tone(first_hz, 0.4, FS as usize).iter().zip(noise(0.001, FS as usize)).map(|(a, b)| a + b).collect();
+        let second: Vec<f32> = tone(second_hz, 0.05, FS as usize)
+            .iter()
+            .zip(noise(0.001, FS as usize).iter().rev())
+            .map(|(a, b)| a + b)
+            .collect();
         let limit = MOST_STEP_AT_A_SWITCH * peak(&first);
 
         let mut storage = vec![0.0f32; 1024];
@@ -655,7 +692,11 @@ fn switching_between_mono_and_stereo_many_times_is_finite_and_has_no_click() {
         assert!(left.iter().chain(&right).all(|v| v.is_finite()), "{mode:?}");
         assert!(biggest_step(&left) < limit, "{mode:?}: left {} against {limit}", biggest_step(&left));
         assert!(biggest_step(&right) < limit, "{mode:?}: right {} against {limit}", biggest_step(&right));
-        std::println!("{mode:?}: biggest step left {}, right {}, limit {limit}", biggest_step(&left), biggest_step(&right));
+        std::println!(
+            "{mode:?}: biggest step left {}, right {}, limit {limit}",
+            biggest_step(&left),
+            biggest_step(&right)
+        );
     }
 }
 

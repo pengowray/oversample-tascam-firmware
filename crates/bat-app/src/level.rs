@@ -274,7 +274,8 @@ impl AutoLevel {
                 let n = rest_left.len().min(self.window_left as usize);
                 let (part_left, later_left) = rest_left.split_at_mut(n);
                 let (part_right, later_right) = rest_right.split_at_mut(n);
-                for (block_left, block_right) in part_left.chunks_mut(GAIN_BLOCK).zip(part_right.chunks_mut(GAIN_BLOCK)) {
+                for (block_left, block_right) in part_left.chunks_mut(GAIN_BLOCK).zip(part_right.chunks_mut(GAIN_BLOCK))
+                {
                     let (mut sum_left, mut sum_right, mut peak) = (0.0f32, 0.0f32, 0.0f32);
                     for (&l, &r) in block_left.iter().zip(block_right.iter()) {
                         sum_left += l * l;

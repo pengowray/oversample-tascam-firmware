@@ -26,15 +26,7 @@ pub struct Nco {
 
 impl Nco {
     pub fn new(sample_rate: f32, freq_hz: f32) -> Self {
-        let mut nco = Self {
-            sample_rate,
-            freq_hz: 0.0,
-            re: 1.0,
-            im: 0.0,
-            step_re: 1.0,
-            step_im: 0.0,
-            since_renorm: 0,
-        };
+        let mut nco = Self { sample_rate, freq_hz: 0.0, re: 1.0, im: 0.0, step_re: 1.0, step_im: 0.0, since_renorm: 0 };
         nco.set_freq(freq_hz);
         nco
     }
@@ -115,10 +107,7 @@ mod tests {
         // old step, so it continues the old waveform.
         let next = nco.tick();
         let w = TAU * 30_000.0 / fs;
-        let expect = (
-            last.0 * libm::cosf(w) - last.1 * libm::sinf(w),
-            last.0 * libm::sinf(w) + last.1 * libm::cosf(w),
-        );
+        let expect = (last.0 * libm::cosf(w) - last.1 * libm::sinf(w), last.0 * libm::sinf(w) + last.1 * libm::cosf(w));
         assert!((next.0 - expect.0).abs() < 1e-4 && (next.1 - expect.1).abs() < 1e-4);
     }
 }

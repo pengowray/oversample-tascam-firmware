@@ -6,10 +6,9 @@ use bat_app::{BatApp, Button};
 use super::audio::install_audio_hook;
 use super::screen::{draw_status_strip, enter_work, follow_app, leave_bat_screen, request_enter};
 use super::state::{
-    ACTION_MARK, ACTION_WHEEL, ACTIONS, ACTIONS_READ, ACTIONS_WRITE, AUDIO_INSTALLED,
-    AUDIO_NOT_TRIED, AUDIO_STATE, BAT_ACTIVE, BLOCKS, CALLS, CALLS_AT_SECOND, CALLS_PER_S,
-    DRAGGING, LAST_EVENT, LAST_SECOND, PENDING, PLAYBACK, QT_PRESSED, SCREEN_APP,
-    TOUCH_DOWN, TOUCH_READ, TOUCH_WRITE, TOUCHES, WORK_ENTER,
+    ACTION_MARK, ACTION_WHEEL, ACTIONS, ACTIONS_READ, ACTIONS_WRITE, AUDIO_INSTALLED, AUDIO_NOT_TRIED, AUDIO_STATE,
+    BAT_ACTIVE, BLOCKS, CALLS, CALLS_AT_SECOND, CALLS_PER_S, DRAGGING, LAST_EVENT, LAST_SECOND, PENDING, PLAYBACK,
+    QT_PRESSED, SCREEN_APP, TOUCH_DOWN, TOUCH_READ, TOUCH_WRITE, TOUCHES, WORK_ENTER,
 };
 use super::task::{on_patch_stack, task_running, tick_work};
 use super::{Handler, app_byte, blocks_per_second, read_byte, stock, system_mode};

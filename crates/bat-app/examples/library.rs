@@ -27,7 +27,9 @@ fn read_mono(path: &Path) -> Result<(Vec<f32>, u32), String> {
     let spec = reader.spec();
     let ch = spec.channels as usize;
     let samples: Vec<f32> = match spec.sample_format {
-        hound::SampleFormat::Float => reader.into_samples::<f32>().collect::<Result<_, _>>().map_err(|e| e.to_string())?,
+        hound::SampleFormat::Float => {
+            reader.into_samples::<f32>().collect::<Result<_, _>>().map_err(|e| e.to_string())?
+        }
         hound::SampleFormat::Int => {
             let scale = 1.0 / (1u64 << (spec.bits_per_sample - 1)) as f32;
             reader
@@ -124,9 +126,9 @@ fn main() {
         let mut analyzer: SpectrumAnalyzer<512> = SpectrumAnalyzer::new(fs);
         analyzer.set_hop(bat_app::FFT_HOP);
         let mut detector: CallDetector<512> = CallDetector::new(fs);
-    if let Some((lo, hi)) = audible_band_from_env() {
-        detector.set_audible_band(lo, hi);
-    }
+        if let Some((lo, hi)) = audible_band_from_env() {
+            detector.set_audible_band(lo, hi);
+        }
         let mut events = Vec::new();
         for block in x.chunks(4096) {
             analyzer.push(block, |col| events.extend(detector.process(col)));

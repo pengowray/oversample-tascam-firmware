@@ -3,9 +3,7 @@
 use std::vec::Vec;
 
 pub fn sine(fs: f32, freq: f32, amp: f32, n: usize) -> Vec<f32> {
-    (0..n)
-        .map(|i| amp * (core::f64::consts::TAU * freq as f64 * i as f64 / fs as f64).sin() as f32)
-        .collect()
+    (0..n).map(|i| amp * (core::f64::consts::TAU * freq as f64 * i as f64 / fs as f64).sin() as f32).collect()
 }
 
 /// Linear chirp from `f0` to `f1` over `n` samples.

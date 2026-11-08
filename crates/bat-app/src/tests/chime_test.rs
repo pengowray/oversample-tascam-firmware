@@ -305,7 +305,14 @@ fn it_listens_only_to_blocks_that_can_differ() {
         // The mix's sides differ, even with one input on, which may be panned to the right.
         (Feed::Mix, [name("3", "Input 3"), None], &quiet, &x, [0, 1], ["Mix, left side", "Mix, right side"]),
         (Feed::Mix, [name("3", "Input 3"), None], &x, &x, [1, 1], ["Mix, left side", "Mix, right side"]),
-        (Feed::Mix, [name("3", "Input 3"), name("4", "Input 4")], &quiet, &x, [0, 1], ["Mix, left side", "Mix, right side"]),
+        (
+            Feed::Mix,
+            [name("3", "Input 3"), name("4", "Input 4")],
+            &quiet,
+            &x,
+            [0, 1],
+            ["Mix, left side", "Mix, right side"],
+        ),
         // No input on: nothing to listen to.
         (Feed::Inputs, [None, None], &x, &x, [0, 0], ["", ""]),
         (Feed::Mix, [None, None], &x, &x, [0, 0], ["", ""]),
@@ -446,9 +453,8 @@ fn a_call_in_progress_ends_when_the_screen_opens() {
     app.set_mode(Mode::Te);
     let calls = train(1.5, 0.5, 8);
     run_two(&mut app, &calls, &calls);
-    let sounding: Vec<f32> = (0..SECOND / 100)
-        .map(|i| 0.3 * (core::f32::consts::TAU * 45_000.0 * i as f32 / FS).sin())
-        .collect();
+    let sounding: Vec<f32> =
+        (0..SECOND / 100).map(|i| 0.3 * (core::f32::consts::TAU * 45_000.0 * i as f32 / FS).sin()).collect();
     run_two(&mut app, &sounding, &sounding);
     app.open_chime_test();
     run_two(&mut app, &silence(1024), &silence(1024));

@@ -3,16 +3,16 @@ use core::sync::atomic::{Ordering::Acquire, Ordering::Relaxed, Ordering::Release
 use bat_app::BatApp;
 
 use super::audio::{ANALYSIS_OFF_ABOVE, process_input, use_itcm_hook};
+use super::clock::run_clock;
 use super::itcm::itcm_still_ok;
 use super::keys::{apply_actions, apply_touches};
-use super::clock::run_clock;
 use super::remote::run_remote;
 use super::screen::{draw_frame, hide_for_popup, render, show_frame};
 use super::state::{
     ACTIONS_READ, ACTIONS_WRITE, APP, BACKLOG_DROPPED, BAT_ACTIVE, BLOCKS, COPY_BLOCKS, COPY_PERMILLE, DRAW_BLOCKS,
-    DRAW_PERMILLE, DSP_BLOCKS, DSP_PERMILLE, DSP_STACK, DSP_STACK_BYTES, IN_READ, IN_WRITE,
-    LAST_RENDER, LOAD_SECOND, LOAD_WINDOW_START, OUT_READ, OUT_WRITE, SESSION, SESSION_SEEN, STACK, Stack, TASK,
-    TOUCH_DOWN, TOUCH_READ, TOUCH_WRITE,
+    DRAW_PERMILLE, DSP_BLOCKS, DSP_PERMILLE, DSP_STACK, DSP_STACK_BYTES, IN_READ, IN_WRITE, LAST_RENDER, LOAD_SECOND,
+    LOAD_WINDOW_START, OUT_READ, OUT_WRITE, SESSION, SESSION_SEEN, STACK, Stack, TASK, TOUCH_DOWN, TOUCH_READ,
+    TOUCH_WRITE,
 };
 use super::{blocks_per_second, read_byte, spare, stock, system_state};
 
@@ -127,7 +127,11 @@ fn drop_backlog(app: &mut BatApp<'static>) {
     let read = IN_READ.load(Relaxed);
     let waiting = IN_WRITE.load(Acquire).wrapping_sub(read);
     let held = waiting.wrapping_add(OUT_WRITE.load(Relaxed).wrapping_sub(OUT_READ.load(Acquire)));
-    let above_limit = if waiting > BACKLOG_FRAMES { (waiting - BACKLOG_FRAMES).min(held.saturating_sub(MOST_HELD_FRAMES)) } else { 0 };
+    let above_limit = if waiting > BACKLOG_FRAMES {
+        (waiting - BACKLOG_FRAMES).min(held.saturating_sub(MOST_HELD_FRAMES))
+    } else {
+        0
+    };
     let skip = above_limit.max(held.saturating_sub(spare::OUT_FRAMES)).min(waiting);
     if skip > 0 {
         IN_READ.store(read.wrapping_add(skip), Release);
@@ -142,7 +146,11 @@ fn drop_backlog(app: &mut BatApp<'static>) {
 /// time and the meters keep moving.
 fn render_due(now: u32) -> bool {
     let since = now.wrapping_sub(LAST_RENDER.load(Relaxed));
-    let rate = if read_byte(stock::TRANSPORT) == TRANSPORT_RECORDING { RENDERS_PER_SECOND_RECORDING } else { RENDERS_PER_SECOND };
+    let rate = if read_byte(stock::TRANSPORT) == TRANSPORT_RECORDING {
+        RENDERS_PER_SECOND_RECORDING
+    } else {
+        RENDERS_PER_SECOND
+    };
     if since < blocks_per_second() / rate {
         return false;
     }

@@ -10,21 +10,22 @@ use embedded_graphics::primitives::Rectangle;
 use u8g2_fonts::types::{FontColor, VerticalPosition};
 use u8g2_fonts::{FontRenderer, fonts};
 
-use x8_patch::file_mask::{has_master, master_rec_ready};
-use super::inputs::{PLAYBACK_LEFT, PLAYBACK_RIGHT, on_tracks_muted, selected_inputs, tracks_on};
 use super::audio::{OUTPUT_GAIN, use_itcm_hook};
+use super::inputs::{PLAYBACK_LEFT, PLAYBACK_RIGHT, on_tracks_muted, selected_inputs, tracks_on};
 use super::itcm::load_itcm;
 use super::state::{
-    APP, APP_READY, AUDIO_INSTALLED, AUDIO_SLOT_UNEXPECTED, AUDIO_STATE, BACKLOG_DROPPED,
-    BAT_ACTIVE, BLOCKS, BUFFERS, CALLS_PER_S, COPY_PERMILLE, CYCLES_PER_S, DEBUG_SHOWN, DRAW_PERMILLE, DSP_PERMILLE,
-    DUMMY_LCDIF, FRAME, HEAR_MIX, HEARD_WORDS, HOOK_CYCLES_PER_S, HOOK_IN_ITCM, ITCM_OK, IN_DROPPED, IN_READ, IN_WAITING_MOST, IN_WRITE,
-    GUANO_ON, LAST_EVENT, LAUNCH_AT, MIX_FILE_OFF, LOAD_WINDOW_START, LAUNCH_FROM, LAUNCHING, MUTE_SEEN, MUTE_SEEN_AT, NO_APP, NO_INPUT_WORDS, OUT_LAST, OUT_READ,
-    OUT_WRITE, PENDING, PLAYBACK, POPUP_HIDDEN, PRIMED, SAVED_BUFFER, SAVED_LITERAL, SCREEN_APP, SESSION,
-    SOURCE_PEAK, STOCK_CYCLES_PER_S, TASK, TEST_DSP_MAX, TEST_SETTINGS, TEST_START_BLOCKS, TEST_START_DRY,
-    TEST_START_BACKLOG, TEST_START_LOST, TEST_START_SKIPPED, UNDERRUNS, WORD_PEAKS, WORK_ENTER,
+    APP, APP_READY, AUDIO_INSTALLED, AUDIO_SLOT_UNEXPECTED, AUDIO_STATE, BACKLOG_DROPPED, BAT_ACTIVE, BLOCKS, BUFFERS,
+    CALLS_PER_S, COPY_PERMILLE, CYCLES_PER_S, DEBUG_SHOWN, DRAW_PERMILLE, DSP_PERMILLE, DUMMY_LCDIF, FRAME, GUANO_ON,
+    HEAR_MIX, HEARD_WORDS, HOOK_CYCLES_PER_S, HOOK_IN_ITCM, IN_DROPPED, IN_READ, IN_WAITING_MOST, IN_WRITE, ITCM_OK,
+    LAST_EVENT, LAUNCH_AT, LAUNCH_FROM, LAUNCHING, LOAD_WINDOW_START, MIX_FILE_OFF, MUTE_SEEN, MUTE_SEEN_AT, NO_APP,
+    NO_INPUT_WORDS, OUT_LAST, OUT_READ, OUT_WRITE, PENDING, PLAYBACK, POPUP_HIDDEN, PRIMED, SAVED_BUFFER,
+    SAVED_LITERAL, SCREEN_APP, SESSION, SOURCE_PEAK, STOCK_CYCLES_PER_S, TASK, TEST_DSP_MAX, TEST_SETTINGS,
+    TEST_START_BACKLOG, TEST_START_BLOCKS, TEST_START_DRY, TEST_START_LOST, TEST_START_SKIPPED, UNDERRUNS, WORD_PEAKS,
+    WORK_ENTER,
 };
 use super::task::{app, start_task, task_running};
 use super::{app_byte, blocks_per_second, rate_class, read_byte, spare, stock, system_state};
+use x8_patch::file_mask::{has_master, master_rec_ready};
 
 const SAMPLE_RATE: f32 = 192_000.0;
 
@@ -151,11 +152,8 @@ pub(super) fn leave_bat_screen() {
         // The buffer Qt last presented while the bat screen was up, or the
         // one it showed before.
         let presented = (*DUMMY_LCDIF.0.get()).assume_init_ref()[0x13] as usize;
-        let back = if stock::FRAMEBUFFERS.contains(&presented) {
-            presented
-        } else {
-            SAVED_BUFFER.load(Relaxed) as usize
-        };
+        let back =
+            if stock::FRAMEBUFFERS.contains(&presented) { presented } else { SAVED_BUFFER.load(Relaxed) as usize };
         if stock::FRAMEBUFFERS.contains(&back) {
             ptr::write_volatile(stock::LCDIF_NEXT_BUF, back);
         }
@@ -224,7 +222,13 @@ fn host_figures() -> HostFigures {
 pub(super) fn show_frame() {
     // SAFETY: both buffers hold 320 x 480 pixels and do not overlap; the
     // off-screen frame is used only by the context running the app.
-    unsafe { ptr::copy_nonoverlapping((*FRAME.0.get()).as_ptr().cast::<u16>(), spare::DISPLAY as *mut u16, stock::WIDTH * stock::HEIGHT) };
+    unsafe {
+        ptr::copy_nonoverlapping(
+            (*FRAME.0.get()).as_ptr().cast::<u16>(),
+            spare::DISPLAY as *mut u16,
+            stock::WIDTH * stock::HEIGHT,
+        )
+    };
 }
 
 /// A peak word as dB below full scale, for the debug figures.
@@ -264,8 +268,7 @@ fn draw_debug(fb: &mut Rgb565Buffer<'_>, app: &BatApp<'static>) {
         TEST_DSP_MAX.store(0, Relaxed);
     }
     // Only a window that began after the change counts towards the highest.
-    let window_is_current =
-        LOAD_WINDOW_START.load(Relaxed).wrapping_sub(TEST_START_BLOCKS.load(Relaxed)) as i32 >= 0;
+    let window_is_current = LOAD_WINDOW_START.load(Relaxed).wrapping_sub(TEST_START_BLOCKS.load(Relaxed)) as i32 >= 0;
     let dsp_max = TEST_DSP_MAX.load(Relaxed).max(if window_is_current { dsp } else { 0 });
     TEST_DSP_MAX.store(dsp_max, Relaxed);
     let percent = |part: u32, all: u32| if all == 0 { 0 } else { (part as u64 * 100 / all as u64) as u32 };
@@ -324,7 +327,12 @@ fn draw_debug(fb: &mut Rgb565Buffer<'_>, app: &BatApp<'static>) {
     if task <= 0 {
         let _ = write!(line, "no task {task} | ");
     }
-    let _ = write!(line, "dry {} lost {} ", dry.wrapping_sub(TEST_START_DRY.load(Relaxed)), lost.wrapping_sub(TEST_START_LOST.load(Relaxed)));
+    let _ = write!(
+        line,
+        "dry {} lost {} ",
+        dry.wrapping_sub(TEST_START_DRY.load(Relaxed)),
+        lost.wrapping_sub(TEST_START_LOST.load(Relaxed))
+    );
     // Input dropped by the task, as against input that did not fit in the ring. This
     // should almost never happen, so it takes no room on the line until it does.
     let dropped = dropped.wrapping_sub(TEST_START_BACKLOG.load(Relaxed));
@@ -347,7 +355,8 @@ fn draw_debug(fb: &mut Rgb565Buffer<'_>, app: &BatApp<'static>) {
     let source = db_below_full_scale(SOURCE_PEAK.swap(0, Relaxed));
     if PLAYBACK.load(Relaxed) {
         // SAFETY: words in the stock audio engine and DSP blocks.
-        let (engine, playing) = unsafe { (ptr::read_volatile(stock::ENGINE_STATE), ptr::read_volatile(stock::DSP_PLAYING)) };
+        let (engine, playing) =
+            unsafe { (ptr::read_volatile(stock::ENGINE_STATE), ptr::read_volatile(stock::DSP_PLAYING)) };
         let _ = write!(line, "engine {engine} play {playing} | file -{source} dB");
     } else {
         if app.feed() == Feed::Mix {
@@ -513,9 +522,15 @@ const STRIP_ROWS: usize = 13;
 const FONT: FontRenderer = FontRenderer::new::<fonts::u8g2_font_helvR08_tf>();
 
 fn draw_strip(target: &mut Rgb565Buffer<'_>, top: i32, line: &Line, background: Rgb565) {
-    let _ = target.fill_solid(&Rectangle::new(Point::new(0, top), Size::new(stock::WIDTH as u32, STRIP_ROWS as u32)), background);
-    let _ =
-        FONT.render(line.as_str(), Point::new(2, top + 10), VerticalPosition::Baseline, FontColor::Transparent(Rgb565::WHITE), target);
+    let _ = target
+        .fill_solid(&Rectangle::new(Point::new(0, top), Size::new(stock::WIDTH as u32, STRIP_ROWS as u32)), background);
+    let _ = FONT.render(
+        line.as_str(),
+        Point::new(2, top + 10),
+        VerticalPosition::Baseline,
+        FontColor::Transparent(Rgb565::WHITE),
+        target,
+    );
 }
 
 /// While the bat screen is closed: a strip across the top of Qt's framebuffers.

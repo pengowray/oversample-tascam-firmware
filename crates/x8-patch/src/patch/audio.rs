@@ -4,10 +4,11 @@ use core::sync::atomic::{Ordering::Acquire, Ordering::Relaxed, Ordering::Release
 use bat_app::BatApp;
 
 use super::state::{
-    AUDIO_INSTALLED, AUDIO_SLOT_UNEXPECTED, AUDIO_STATE, BAT_ACTIVE, BLOCKS, BLOCKS_AT_SECOND,
-    CYCLE_COUNTER_ON, CYCLES_AT_SECOND, CYCLES_PER_S, DEBUG_SHOWN, HEAR_MIX, HEARD_WORDS, HOOK_CYCLES, HOOK_CYCLES_PER_S, HOOK_IN_ITCM,
-    IN_DROPPED, IN_DROPPED_SEEN, IN_HOLE_AT, IN_READ, IN_RING, IN_WAITING_MOST, IN_WRITE, NO_INPUT_WORDS, OUT_FADE_IN, OUT_LAST, OUT_READ, OUT_WRITE,
-    PLAYBACK, PRIMED, SOURCE_PEAK, STOCK_CYCLES, STOCK_CYCLES_PER_S, UNDERRUNS, WORD_PEAKS,
+    AUDIO_INSTALLED, AUDIO_SLOT_UNEXPECTED, AUDIO_STATE, BAT_ACTIVE, BLOCKS, BLOCKS_AT_SECOND, CYCLE_COUNTER_ON,
+    CYCLES_AT_SECOND, CYCLES_PER_S, DEBUG_SHOWN, HEAR_MIX, HEARD_WORDS, HOOK_CYCLES, HOOK_CYCLES_PER_S, HOOK_IN_ITCM,
+    IN_DROPPED, IN_DROPPED_SEEN, IN_HOLE_AT, IN_READ, IN_RING, IN_WAITING_MOST, IN_WRITE, NO_INPUT_WORDS, OUT_FADE_IN,
+    OUT_LAST, OUT_READ, OUT_WRITE, PLAYBACK, PRIMED, SOURCE_PEAK, STOCK_CYCLES, STOCK_CYCLES_PER_S, UNDERRUNS,
+    WORD_PEAKS,
 };
 use super::{Handler, blocks_per_second, rate_class, spare, stock};
 
@@ -265,7 +266,10 @@ unsafe fn hook_body<const ITCM: bool>(a: usize, b: usize, c: usize, d: usize) ->
             // the ring.
             unsafe {
                 let pair = if !from_output && !no_input {
-                    [ptr::read_volatile(input.add(12 * k + first_word)), ptr::read_volatile(input.add(12 * k + second_word))]
+                    [
+                        ptr::read_volatile(input.add(12 * k + first_word)),
+                        ptr::read_volatile(input.add(12 * k + second_word)),
+                    ]
                 } else if from_output && output_usable && gain != 0.0 {
                     let unscale = |word: i32| (word as f32 / gain) as i32;
                     [unscale(ptr::read_volatile(output.add(2 * k))), unscale(ptr::read_volatile(output.add(2 * k + 1)))]
@@ -309,7 +313,8 @@ unsafe fn hook_body<const ITCM: bool>(a: usize, b: usize, c: usize, d: usize) ->
     for k in 0..4 {
         if primed {
             // SAFETY: `at + k` is below OUT_FRAMES, so both samples are inside the output ring.
-            (left, right) = unsafe { (ptr::read_volatile(ring.add(2 * (at + k))), ptr::read_volatile(ring.add(2 * (at + k) + 1))) };
+            (left, right) =
+                unsafe { (ptr::read_volatile(ring.add(2 * (at + k))), ptr::read_volatile(ring.add(2 * (at + k) + 1))) };
             if fade_in > 0 {
                 fade_in -= 1;
                 let share = (RESUME_FADE_FRAMES - fade_in) as f32 / RESUME_FADE_FRAMES as f32;

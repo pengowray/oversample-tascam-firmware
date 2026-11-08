@@ -105,7 +105,9 @@ pub struct CallEvent {
 #[derive(Clone, Copy, Debug, PartialEq)]
 enum State {
     /// Learning the floor until this sample; nothing is detected.
-    Settling { until: u64 },
+    Settling {
+        until: u64,
+    },
     Idle,
     /// Call in progress; the last column was above the release threshold.
     Active,
@@ -427,7 +429,10 @@ where
             State::Idle => self.idle(db, &scan, t, dt),
             // The first column after a gap decides what happens to a call that
             // was in progress when the gap began.
-            State::Active if after_gap && (scan.peak_db <= self.threshold_db || t.saturating_sub(self.call.end) > self.max_call) => {
+            State::Active
+                if after_gap
+                    && (scan.peak_db <= self.threshold_db || t.saturating_sub(self.call.end) > self.max_call) =>
+            {
                 event = self.finish();
                 self.idle(db, &scan, t, dt);
             }
@@ -580,10 +585,8 @@ where
             call.peak_freq_hz = peak_position(db, scan.peak_bin) * bin_hz;
         }
         // Average excess across the audible band.
-        let (a0, a1) = (
-            (self.audible_band_hz.0 / bin_hz) as usize,
-            ((self.audible_band_hz.1 / bin_hz) as usize).min(N / 2),
-        );
+        let (a0, a1) =
+            ((self.audible_band_hz.0 / bin_hz) as usize, ((self.audible_band_hz.1 / bin_hz) as usize).min(N / 2));
         if a1 > a0 {
             let (mean, spread) = (self.mean.as_ref(), self.spread.as_ref());
             let sum: f32 = (a0..a1).map(|k| db[k] - mean[k] - spread[k]).sum();

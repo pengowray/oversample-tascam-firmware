@@ -371,11 +371,7 @@ mod tests {
     const FS: f32 = 192_000.0;
 
     /// Every column from `x`, pushed in blocks of `block`, as (centre, dB).
-    fn columns<const N: usize>(
-        an: &mut SpectrumAnalyzer<N>,
-        x: &[f32],
-        block: usize,
-    ) -> Vec<(u64, Vec<f32>)>
+    fn columns<const N: usize>(an: &mut SpectrumAnalyzer<N>, x: &[f32], block: usize) -> Vec<(u64, Vec<f32>)>
     where
         [f32; N]: FftFrame,
     {

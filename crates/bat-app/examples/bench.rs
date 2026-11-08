@@ -77,7 +77,8 @@ fn load(path: Option<&String>) -> Vec<f32> {
             s ^= s << 5;
             let noise = 0.003 * ((s as f32 / u32::MAX as f32) * 2.0 - 1.0);
             let t = i as f32 / FS;
-            let call = if (t * 10.0).fract() < 0.005 { 0.1 * (std::f32::consts::TAU * 45_000.0 * t).sin() } else { 0.0 };
+            let call =
+                if (t * 10.0).fract() < 0.005 { 0.1 * (std::f32::consts::TAU * 45_000.0 * t).sin() } else { 0.0 };
             noise + call
         })
         .collect()
@@ -374,7 +375,10 @@ fn main() {
     let (first, second) = load_two(args.get(1), &x);
     println!();
     println!("Whole app, source First or Both, with Auto volume off or on, with and without its analysis:");
-    println!("{:<8}{:>9}{:>9}{:>9}{:>9}  |{:>9}{:>9}{:>9}{:>9}", "mode", "First", "Both", "First on", "Both on", "First", "Both", "First on", "Both on");
+    println!(
+        "{:<8}{:>9}{:>9}{:>9}{:>9}  |{:>9}{:>9}{:>9}{:>9}",
+        "mode", "First", "Both", "First on", "Both on", "First", "Both", "First on", "Both on"
+    );
     for mode in [Mode::Het, Mode::Comb, Mode::Thru] {
         print!("{:<8}", mode.label());
         let row = [
@@ -414,7 +418,10 @@ fn main() {
     // so the decoders are listening and not reading a message.
     println!();
     println!("Whole app with source Both, on the main screen and with the chime test open:");
-    println!("{:<8}{:>16}{:>20}{:>20}{:>16}", "mode", "main screen", "test, two inputs", "test, one input", "draw ms/frame");
+    println!(
+        "{:<8}{:>16}{:>20}{:>20}{:>16}",
+        "mode", "main screen", "test, two inputs", "test, one input", "draw ms/frame"
+    );
     for mode in [Mode::Het, Mode::Comb, Mode::Thru, Mode::Fd] {
         print!("{:<8}", mode.label());
         let input3 = bat_app::InputName { short: "3", long: "Input 3" };

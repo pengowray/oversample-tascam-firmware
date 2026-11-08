@@ -32,7 +32,7 @@ fn track_input(track: usize) -> Option<Input> {
     // SAFETY: a byte in the settings record, inside the track's record.
     let source = read_byte(unsafe { stock::TRACK_SOURCES.add(track * stock::TRACK_SOURCE_STEP) });
     let (input, name) = match source {
-        1 | 2 | 3 => {
+        1..=3 => {
             let input = (source as usize - 1) * 2 + side;
             (input, INPUT_NAMES[input])
         }
@@ -52,7 +52,7 @@ pub(super) fn on_tracks_muted() -> bool {
         // SAFETY: a byte in the settings record, inside the track's record.
         let source = read_byte(unsafe { stock::TRACK_SOURCES.add(track * stock::TRACK_SOURCE_STEP) });
         let channel = match source {
-            1 | 2 | 3 => (source as usize - 1) * 2 + track % 2,
+            1..=3 => (source as usize - 1) * 2 + track % 2,
             4 => 4 + track % 2,
             _ => continue,
         };

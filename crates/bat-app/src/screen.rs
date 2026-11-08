@@ -12,9 +12,9 @@ use u8g2_fonts::{FontRenderer, fonts};
 use crate::fb::Rgb565Buffer;
 use crate::layout::*;
 use crate::palette::*;
-use crate::{SettingsPage, 
-    AutoVolume, BatApp, CallKind, DEFAULT_CUTOFF_HZ, Feed, InputKind, Meter, MixSilence, Mode, MonitorSource, Recorder, Screen, Setting, TeStatus,
-    VIEW_HI_HZ, VIEW_LO_HZ, WF_COLUMN_MS,
+use crate::{
+    AutoVolume, BatApp, CallKind, DEFAULT_CUTOFF_HZ, Feed, InputKind, Meter, MixSilence, Mode, MonitorSource, Recorder,
+    Screen, Setting, SettingsPage, TeStatus, VIEW_HI_HZ, VIEW_LO_HZ, WF_COLUMN_MS,
 };
 use bat_dsp::heterodyne::DEFAULT_COMB_SPACING_HZ;
 use bat_dsp::time_expansion::{DEFAULT_POST_MS, DEFAULT_PRE_MS};
@@ -23,9 +23,14 @@ mod chime_screen;
 mod cpu_test_screen;
 mod pages;
 #[cfg(test)]
-pub(crate) use chime_screen::{CLOCK_Y, COLUMN_X, FAILURE_Y, ROW_H, ROW_Y, chime_text, columns as chime_columns, lines_with_widths as chime_test_lines};
+pub(crate) use chime_screen::{
+    CLOCK_Y, COLUMN_X, FAILURE_Y, ROW_H, ROW_Y, chime_text, columns as chime_columns,
+    lines_with_widths as chime_test_lines,
+};
 #[cfg(test)]
-pub(crate) use cpu_test_screen::{COLUMN_GAP as CPU_TEST_COLUMN_GAP, column_contents as cpu_test_columns, lines_with_widths as cpu_test_lines};
+pub(crate) use cpu_test_screen::{
+    COLUMN_GAP as CPU_TEST_COLUMN_GAP, column_contents as cpu_test_columns, lines_with_widths as cpu_test_lines,
+};
 #[cfg(test)]
 pub(crate) use pages::lines_with_widths as pages_lines;
 
@@ -166,7 +171,7 @@ fn status_bar(app: &BatApp, fb: Fb) {
         Recorder::Stopped => fill(fb, Rectangle::with_center(Point::new(24, cy), Size::new(12, 12)), TEXT),
         Recorder::Standby => {
             // Half a second on, half off, by sample time.
-            if (app.samples as f32 / (app.sample_rate * 0.5)) as u64 % 2 == 0 {
+            if ((app.samples as f32 / (app.sample_rate * 0.5)) as u64).is_multiple_of(2) {
                 dot(fb, RECORDING);
             }
         }
@@ -204,7 +209,7 @@ fn status_bar(app: &BatApp, fb: Fb) {
 fn rate_warning(fb: Fb, rate_hz: u32, kind: InputKind) {
     let (x, y) = notice_panel(fb);
     let tenths = (rate_hz + 50) / 100;
-    if tenths % 10 == 0 {
+    if tenths.is_multiple_of(10) {
         text(fb, &BODY_BOLD, format_args!("Wrong sample rate: {}kHz", tenths / 10), x, y, LEFT, TEXT);
     } else {
         text(fb, &BODY_BOLD, format_args!("Wrong sample rate: {}.{}kHz", tenths / 10, tenths % 10), x, y, LEFT, TEXT);
@@ -251,7 +256,9 @@ fn mix_silence_notice(fb: Fb, silence: MixSilence) {
 
 /// A small notice in the top left corner of the waterfall.
 fn corner_notice_lines(fb: Fb, lines: &[&str]) {
-    let width = |line: &&str| BODY.get_rendered_dimensions(*line, Point::zero(), VerticalPosition::Baseline).map_or(0, |d| d.advance.x);
+    let width = |line: &&str| {
+        BODY.get_rendered_dimensions(*line, Point::zero(), VerticalPosition::Baseline).map_or(0, |d| d.advance.x)
+    };
     let panel = corner_notice(lines.iter().map(width).max().unwrap_or(0), lines.len());
     rounded(fb, panel, 3, PANEL);
     let border = PrimitiveStyleBuilder::new().stroke_color(LINE).stroke_width(1).build();
@@ -332,8 +339,20 @@ fn meters(app: &BatApp, fb: Fb) {
     }
     for db in [-72.0f32, -48.0, -24.0, -12.0, -6.0, 0.0] {
         let x = meter_x(db);
-        let align = if db == METER_MIN_DB { LEFT } else if db == 0.0 { RIGHT } else { CENTER };
-        let x = if db == METER_MIN_DB { METER_X } else if db == 0.0 { METER_X + METER_W } else { x };
+        let align = if db == METER_MIN_DB {
+            LEFT
+        } else if db == 0.0 {
+            RIGHT
+        } else {
+            CENTER
+        };
+        let x = if db == METER_MIN_DB {
+            METER_X
+        } else if db == 0.0 {
+            METER_X + METER_W
+        } else {
+            x
+        };
         text(fb, &SMALL, format_args!("{}", db as i32), x, METER_SCALE_BASELINE, align, TEXT_MUTED);
     }
     text(fb, &SMALL, "dB", 314, METER_SCALE_BASELINE, RIGHT, TEXT_MUTED);
@@ -501,9 +520,8 @@ fn snapshot(app: &BatApp, fb: Fb) {
     // column, so the digits stay in place as the values change: Peak, the
     // range's low end and Length share one column, the range's high end has
     // its own, and the units follow at fixed places.
-    let width = |s: &str| {
-        BODY.get_rendered_dimensions(s, Point::zero(), VerticalPosition::Baseline).map_or(0, |d| d.advance.x)
-    };
+    let width =
+        |s: &str| BODY.get_rendered_dimensions(s, Point::zero(), VerticalPosition::Baseline).map_or(0, |d| d.advance.x);
     let (two_digits, point_digit, space) = (width("88"), width(".8"), width(" "));
     let point1 = SNAP_VALUE_X + two_digits;
     let unit1 = point1 + point_digit + space;
@@ -619,7 +637,9 @@ pub(crate) enum ListenHelp {
 impl core::fmt::Display for ListenHelp {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         match self {
-            ListenHelp::Ears(left, right) => write!(f, "Left ear: input {left}. Right ear: input {right}. Mono in FD and TE."),
+            ListenHelp::Ears(left, right) => {
+                write!(f, "Left ear: input {left}. Right ear: input {right}. Mono in FD and TE.")
+            }
             ListenHelp::Stereo => f.write_str("Stereo in HET, COMB and 1:1. Mono in FD and TE."),
             ListenHelp::OneSignal => f.write_str("Heard in both ears and shown on the waterfall."),
             ListenHelp::Nothing => f.write_str(NO_INPUT_HEADING),
@@ -638,7 +658,9 @@ pub(crate) fn listen_help(app: &BatApp) -> ListenHelp {
         (Feed::Mix, [_, Some(_)], MonitorSource::Both) => ListenHelp::Stereo,
         (Feed::Mix, ..) => ListenHelp::OneSignal,
         (Feed::Inputs, [Some(first), Some(second)], MonitorSource::Both) => match app.input_kind() {
-            InputKind::Live if is_number(first.short) && is_number(second.short) => ListenHelp::Ears(first.short, second.short),
+            InputKind::Live if is_number(first.short) && is_number(second.short) => {
+                ListenHelp::Ears(first.short, second.short)
+            }
             _ => ListenHelp::Stereo,
         },
         (Feed::Inputs, ..) => ListenHelp::OneSignal,
@@ -672,7 +694,9 @@ fn switch_control(fb: Fb, sw: Rectangle, on: bool) {
         .into_styled(PrimitiveStyle::with_fill(if on { ACCENT } else { LINE }))
         .draw(fb);
     let knob_x = if on { sw.top_left.x + sw.size.width as i32 - h as i32 / 2 } else { sw.top_left.x + h as i32 / 2 };
-    let _ = Circle::with_center(Point::new(knob_x, sw.center().y), h - 6).into_styled(PrimitiveStyle::with_fill(TEXT)).draw(fb);
+    let _ = Circle::with_center(Point::new(knob_x, sw.center().y), h - 6)
+        .into_styled(PrimitiveStyle::with_fill(TEXT))
+        .draw(fb);
 }
 
 /// The tabs, the page shown, the note and Done.
@@ -714,13 +738,34 @@ fn listen_page(app: &BatApp, fb: Fb) {
                     text(fb, &BODY, mark_name(kind), x + 18, y + 14, LEFT, TEXT);
                     let (hx, hy) = (x + 18, y + 28);
                     match kind {
-                        CallKind::Bat => text(fb, &SMALL, "Similar calls repeated several times a second.", hx, hy, LEFT, TEXT_MUTED),
-                        CallKind::Tone => text(fb, &SMALL, "150 ms or longer, like a rat's 22 kHz alarm call.", hx, hy, LEFT, TEXT_MUTED),
-                        CallKind::Audible => text(fb, &SMALL, "Also loud at 2 to 12 kHz, like birds and voices.", hx, hy, LEFT, TEXT_MUTED),
+                        CallKind::Bat => {
+                            text(fb, &SMALL, "Similar calls repeated several times a second.", hx, hy, LEFT, TEXT_MUTED)
+                        }
+                        CallKind::Tone => text(
+                            fb,
+                            &SMALL,
+                            "150 ms or longer, like a rat's 22 kHz alarm call.",
+                            hx,
+                            hy,
+                            LEFT,
+                            TEXT_MUTED,
+                        ),
+                        CallKind::Audible => text(
+                            fb,
+                            &SMALL,
+                            "Also loud at 2 to 12 kHz, like birds and voices.",
+                            hx,
+                            hy,
+                            LEFT,
+                            TEXT_MUTED,
+                        ),
                         _ => text(
                             fb,
                             &SMALL,
-                            format_args!("Reaching down to {:.0} kHz, like handling noise.", app.detector.band().0 / 1000.0),
+                            format_args!(
+                                "Reaching down to {:.0} kHz, like handling noise.",
+                                app.detector.band().0 / 1000.0
+                            ),
                             hx,
                             hy,
                             LEFT,
@@ -757,7 +802,9 @@ fn listen_page(app: &BatApp, fb: Fb) {
                 (Feed::Mix, _, MonitorSource::First) => "Mix, left side",
                 (Feed::Mix, _, MonitorSource::Second) => "Mix, right side",
                 (Feed::Inputs, [None, _], _) => "No input",
-                (Feed::Inputs, [Some(first), None], _) | (Feed::Inputs, [Some(first), _], MonitorSource::First) => first.long,
+                (Feed::Inputs, [Some(first), None], _) | (Feed::Inputs, [Some(first), _], MonitorSource::First) => {
+                    first.long
+                }
                 (Feed::Inputs, [_, Some(second)], MonitorSource::Second) => second.long,
                 (Feed::Inputs, [Some(first), Some(second)], MonitorSource::Both) => match app.input_kind() {
                     InputKind::Playback => "Left and right",
@@ -793,5 +840,13 @@ fn listen_page(app: &BatApp, fb: Fb) {
     }
     // Lined up with the text in the panels above.
     text(fb, &BODY_BOLD, "Sounds to mark", 16, SWITCHES_HEADING, LEFT, TEXT);
-    text(fb, &SMALL, "Marked on waterfall, played in TE and Auto volume Bats only.", 16, SWITCHES_HELP, LEFT, TEXT_MUTED);
+    text(
+        fb,
+        &SMALL,
+        "Marked on waterfall, played in TE and Auto volume Bats only.",
+        16,
+        SWITCHES_HELP,
+        LEFT,
+        TEXT_MUTED,
+    );
 }

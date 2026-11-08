@@ -325,9 +325,8 @@ impl CallClassifier {
             let gap = event.start_sample.saturating_sub(r.event.start_sample);
             let similar = (r.event.peak_freq_hz - event.peak_freq_hz).abs() <= self.train_freq_hz;
             let strong = r.event.peak_db_above_floor.max(event.peak_db_above_floor) >= self.train_min_db;
-            let later = partner.is_none_or(|p| {
-                self.recent[p].is_some_and(|q| r.event.start_sample > q.event.start_sample)
-            });
+            let later =
+                partner.is_none_or(|p| self.recent[p].is_some_and(|q| r.event.start_sample > q.event.start_sample));
             if gap <= self.train_window && similar && strong && later {
                 partner = Some(i);
             }
@@ -369,7 +368,11 @@ impl CallClassifier {
         let similar = |run: &PulseRun| (run.peak_hz - peak).abs() <= TONE_FREQ_HZ;
 
         for run in self.pulse_runs.iter_mut().flatten() {
-            if run.pulses >= REGULAR_MIN_PULSES && similar(run) && start.saturating_sub(run.last) <= tone_hold && fits(run, u64::MAX) {
+            if run.pulses >= REGULAR_MIN_PULSES
+                && similar(run)
+                && start.saturating_sub(run.last) <= tone_hold
+                && fits(run, u64::MAX)
+            {
                 run.last = start;
                 return Some(run.first);
             }
@@ -396,7 +399,9 @@ impl CallClassifier {
         // The run's earlier pulses can no longer start a train.
         let first = run.first;
         for slot in &mut self.recent {
-            if slot.is_some_and(|r| r.event.start_sample >= first && (r.event.peak_freq_hz - peak).abs() <= TONE_FREQ_HZ) {
+            if slot
+                .is_some_and(|r| r.event.start_sample >= first && (r.event.peak_freq_hz - peak).abs() <= TONE_FREQ_HZ)
+            {
                 *slot = None;
             }
         }
@@ -441,9 +446,7 @@ impl CallClassifier {
         if end.saturating_sub(chain_start) >= self.tone_min {
             if !tone {
                 // A new tone: replace one that has ended, or the oldest.
-                let slot = (0..TONES)
-                    .min_by_key(|&i| self.tones[i].map_or(0, |t| t.end + 1))
-                    .unwrap_or(0);
+                let slot = (0..TONES).min_by_key(|&i| self.tones[i].map_or(0, |t| t.end + 1)).unwrap_or(0);
                 self.tones[slot] = Some(Tone { freq_hz: peak, start: chain_start, end });
                 self.tone_since = chain_start;
             }

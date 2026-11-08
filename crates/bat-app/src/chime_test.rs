@@ -64,7 +64,15 @@ const NOTHING_YET: Channel = Channel { read: 0, failed: 0, carrier_dbfs: None, s
 
 impl ChimeTest {
     pub(crate) const fn new() -> Self {
-        Self { rate_hz: 0, ready: false, channels: [NOTHING_YET; 2], reading: None, fresh: false, failure: None, last_jump: 0 }
+        Self {
+            rate_hz: 0,
+            ready: false,
+            channels: [NOTHING_YET; 2],
+            reading: None,
+            fresh: false,
+            failure: None,
+            last_jump: 0,
+        }
     }
 
     /// Forget everything and build new decoders, whose sample counts start from 0.
@@ -84,7 +92,13 @@ impl ChimeTest {
     /// the start of the blocks. Not inlined, so the decoders stay out of `BatApp::process`,
     /// which the X8 patch runs from ITCM, where they would not fit.
     #[inline(never)]
-    pub(crate) fn listen(&mut self, decoders: &mut [MaybeUninit<Decoder>; 2], blocks: [&[f32]; 2], channels: usize, sample: u64) {
+    pub(crate) fn listen(
+        &mut self,
+        decoders: &mut [MaybeUninit<Decoder>; 2],
+        blocks: [&[f32]; 2],
+        channels: usize,
+        sample: u64,
+    ) {
         if !self.ready {
             return;
         }
@@ -106,7 +120,8 @@ impl ChimeTest {
                 let start_sample = now as i64 - since_start;
                 if start_sample < self.last_jump as i64 {
                     self.channels[channel].failed += 1;
-                    self.failure = Some(Failure { channel, reason: FailureReason::FramesLost, bytes: chime.payload_len });
+                    self.failure =
+                        Some(Failure { channel, reason: FailureReason::FramesLost, bytes: chime.payload_len });
                     return;
                 }
                 let results = &mut self.channels[channel];

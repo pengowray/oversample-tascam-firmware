@@ -38,7 +38,8 @@ static WAS_STOPPED: AtomicBool = AtomicBool::new(true);
 /// The latest reading of the clock and the block count it was taken at.
 static X8: Slot<Option<(ClockReading, u32)>> = Slot(core::cell::UnsafeCell::new(core::mem::MaybeUninit::new(None)));
 /// The record command 76 copies from. It must stay put until task 4 has run the command.
-static RECORD: Slot<[u8; RECORD_BYTES]> = Slot(core::cell::UnsafeCell::new(core::mem::MaybeUninit::new([0; RECORD_BYTES])));
+static RECORD: Slot<[u8; RECORD_BYTES]> =
+    Slot(core::cell::UnsafeCell::new(core::mem::MaybeUninit::new([0; RECORD_BYTES])));
 
 const IDLE: u32 = 0;
 /// Waiting for command 75; then, if `SET_WANTED`, giving command 76.
@@ -161,7 +162,10 @@ pub(super) fn run_clock(app: &mut BatApp<'static>) {
             app.set_clock_state(if stopped { ClockState::Setting } else { ClockState::AfterTake });
         }
     }
-    let free = system_mode() <= 1 && stopped && !task_4_busy() && now.wrapping_sub(TAKE_ENDED.load(Relaxed)) >= AFTER_TAKE_S * bps;
+    let free = system_mode() <= 1
+        && stopped
+        && !task_4_busy()
+        && now.wrapping_sub(TAKE_ENDED.load(Relaxed)) >= AFTER_TAKE_S * bps;
     let waited = now.wrapping_sub(STEP_SINCE.load(Relaxed));
     match STEP.load(Relaxed) {
         IDLE if free && SET_WANTED.load(Relaxed) => {
@@ -169,7 +173,10 @@ pub(super) fn run_clock(app: &mut BatApp<'static>) {
             give_task_4(stock::COMMAND_READ_CLOCK, 0);
             go(READING, now);
         }
-        IDLE if free && app.screen() == Screen::ChimeTest && now.wrapping_sub(LAST_READ.load(Relaxed)) >= READ_EVERY_S * bps => {
+        IDLE if free
+            && app.screen() == Screen::ChimeTest
+            && now.wrapping_sub(LAST_READ.load(Relaxed)) >= READ_EVERY_S * bps =>
+        {
             give_task_4(stock::COMMAND_READ_CLOCK, 0);
             go(READING, now);
         }
@@ -192,7 +199,9 @@ pub(super) fn run_clock(app: &mut BatApp<'static>) {
             let Some((conventions, _)) = *x8() else { return fail(app, now) };
             let Some(target) = phone_ms_at(now) else { return fail(app, now) };
             // The chip counts whole seconds: round to the nearest.
-            let Some(record) = clock_record::write((target + 500).div_euclid(1000), &conventions) else { return fail(app, now) };
+            let Some(record) = clock_record::write((target + 500).div_euclid(1000), &conventions) else {
+                return fail(app, now);
+            };
             // SAFETY: the context running the app only; task 4 reads it once it runs the command.
             let record_ptr = unsafe { (*RECORD.0.get()).as_mut_ptr() };
             unsafe { ptr::write_volatile(record_ptr, record) };

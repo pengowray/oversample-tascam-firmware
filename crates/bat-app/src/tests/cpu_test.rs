@@ -225,7 +225,8 @@ fn the_table_columns_keep_apart() {
     use u8g2_fonts::types::VerticalPosition;
 
     let small = FontRenderer::new::<u8g2_font_helvR08_tf>();
-    let width = |s: &str| small.get_rendered_dimensions(s, Point::zero(), VerticalPosition::Baseline).unwrap().advance.x;
+    let width =
+        |s: &str| small.get_rendered_dimensions(s, Point::zero(), VerticalPosition::Baseline).unwrap().advance.x;
     // The widest row name, with the `*` drawn 1 px after it, ends here. The `*` shows only when
     // the recorder's state changed, and its glyph has room to its right.
     let name_end = 4 + 6 + 1 + width("COMB stereo*");
@@ -234,7 +235,11 @@ fn the_table_columns_keep_apart() {
         for (right, contents) in columns {
             let widest = contents.iter().map(|s| width(s)).max().unwrap();
             let (before, gap) = previous_right.map_or((name_end, 2), |x| (x, CPU_TEST_COLUMN_GAP));
-            assert!(right - widest >= before + gap, "{contents:?}: {} px from the column before", right - widest - before);
+            assert!(
+                right - widest >= before + gap,
+                "{contents:?}: {} px from the column before",
+                right - widest - before
+            );
             previous_right = Some(right);
         }
         assert!(previous_right.unwrap() <= 314);
@@ -249,8 +254,8 @@ fn the_longest_table_stays_above_the_switch() {
 
 #[test]
 fn a_stage_clock_adds_each_stage_and_rows_keep_their_shares() {
-    use core::sync::atomic::{AtomicU32, Ordering::Relaxed};
     use crate::stages::{Stage, StageClock};
+    use core::sync::atomic::{AtomicU32, Ordering::Relaxed};
 
     static TICKS: AtomicU32 = AtomicU32::new(u32::MAX - 5);
     let mut clock = StageClock::new();
@@ -288,8 +293,8 @@ fn a_stage_clock_adds_each_stage_and_rows_keep_their_shares() {
 
 #[test]
 fn the_view_button_shows_only_with_a_stage_clock_and_switches_tables() {
-    use core::sync::atomic::AtomicU32;
     use crate::cpu_test::View;
+    use core::sync::atomic::AtomicU32;
 
     static TICKS: AtomicU32 = AtomicU32::new(0);
     let mut storage = vec![0.0f32; SECOND];

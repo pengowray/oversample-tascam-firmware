@@ -267,12 +267,7 @@ impl FrequencyDivider {
     /// Like [`process`](Self::process), and also writes a [`ZcPoint`] for
     /// each output event, up to `points.len()` of them. Returns how many were
     /// written. Points beyond `points.len()` are dropped.
-    pub fn process_with_points(
-        &mut self,
-        input: &[f32],
-        output: &mut [f32],
-        points: &mut [ZcPoint],
-    ) -> usize {
+    pub fn process_with_points(&mut self, input: &[f32], output: &mut [f32], points: &mut [ZcPoint]) -> usize {
         debug_assert_eq!(input.len(), output.len());
         let mut written = 0;
         for (o, &x) in output.iter_mut().zip(input) {

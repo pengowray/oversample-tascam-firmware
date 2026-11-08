@@ -118,7 +118,15 @@ mod tests {
     use guano::DateTime;
     use std::string::String;
 
-    const RECORDER: Recorder = Recorder { firmware: "V2.03", patch_build: 242, file_name: Some("261106_0090_3-4.wav"), phone_now: None, utc_offset_minutes: None, location_e6: None, pauses: None };
+    const RECORDER: Recorder = Recorder {
+        firmware: "V2.03",
+        patch_build: 242,
+        file_name: Some("261106_0090_3-4.wav"),
+        phone_now: None,
+        utc_offset_minutes: None,
+        location_e6: None,
+        pauses: None,
+    };
 
     /// A header as the X8 writes one, 5548 bytes before the audio.
     fn header(data_size: u32, block_align: u16, date: &[u8], time: &[u8]) -> Header {
@@ -212,7 +220,15 @@ mod tests {
 
     #[test]
     fn without_a_build_or_name() {
-        let recorder = Recorder { firmware: "V2.03", patch_build: 0, file_name: None, phone_now: None, utc_offset_minutes: None, location_e6: None, pauses: None };
+        let recorder = Recorder {
+            firmware: "V2.03",
+            patch_build: 0,
+            file_name: None,
+            phone_now: None,
+            utc_offset_minutes: None,
+            location_e6: None,
+            pauses: None,
+        };
         let t = text(&header(192_000 * 8, 8, b"2026-11-06", b"19:08:08"), &recorder);
         assert!(t.contains("Firmware Version: V2.03 with bat patch\n"));
         assert!(!t.contains("Original Filename"));
@@ -240,7 +256,15 @@ mod tests {
         assert_eq!(header.data_end(), Some(size));
         let name = std::path::Path::new(&input).file_name().unwrap().to_str().unwrap();
         let path = std::format!("{name}\0");
-        let recorder = Recorder { firmware: "V2.03", patch_build: 242, file_name: guano::file_name(path.as_bytes()), phone_now: None, utc_offset_minutes: None, location_e6: None, pauses: None };
+        let recorder = Recorder {
+            firmware: "V2.03",
+            patch_build: 242,
+            file_name: guano::file_name(path.as_bytes()),
+            phone_now: None,
+            utc_offset_minutes: None,
+            location_e6: None,
+            pauses: None,
+        };
         let mut out = [0u8; 0x400];
         let added = write_chunk(&header, &recorder, &mut out).unwrap();
         file.seek(SeekFrom::Start(u64::from(size))).unwrap();

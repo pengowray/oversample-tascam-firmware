@@ -29,7 +29,8 @@ fn main() {
         };
         let frames = samples.len() / channels;
         let first: Vec<f32> = samples.iter().step_by(channels).copied().collect();
-        let second: Vec<f32> = if channels > 1 { samples.iter().skip(1).step_by(channels).copied().collect() } else { first.clone() };
+        let second: Vec<f32> =
+            if channels > 1 { samples.iter().skip(1).step_by(channels).copied().collect() } else { first.clone() };
         let mut storage = vec![0.0f32; 192_000];
         let mut buffers = Box::new(Buffers::new());
         let mut app = BatApp::new(192_000.0, &mut storage, &mut buffers);
@@ -45,9 +46,15 @@ fn main() {
         }
         let seconds = frames as f64 / 192_000.0;
         let (tones, read, failed) = app.remote_counts();
-        println!("{tones:4} tones  {read:3} chimes read  {failed:3} failed  {commands:2} commands  {seconds:7.1} s  {path}");
+        println!(
+            "{tones:4} tones  {read:3} chimes read  {failed:3} failed  {commands:2} commands  {seconds:7.1} s  {path}"
+        );
         all_s += seconds;
         all_tones += tones;
     }
-    println!("total: {all_tones} tones in {:.1} min, {:.2} a minute", all_s / 60.0, all_tones as f64 / (all_s / 60.0).max(1e-9));
+    println!(
+        "total: {all_tones} tones in {:.1} min, {:.2} a minute",
+        all_s / 60.0,
+        all_tones as f64 / (all_s / 60.0).max(1e-9)
+    );
 }

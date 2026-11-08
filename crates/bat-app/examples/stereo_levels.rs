@@ -87,7 +87,14 @@ fn detect(a: &[f32], b: &[f32]) -> Vec<(CallEvent, bool)> {
 }
 
 /// The app's output in this mode, in the X8's units before its gain.
-fn play(a: &[f32], b: &[f32], mode: Mode, het_hz: f32, source: MonitorSource, volume: AutoVolume) -> (Vec<f32>, Vec<f32>) {
+fn play(
+    a: &[f32],
+    b: &[f32],
+    mode: Mode,
+    het_hz: f32,
+    source: MonitorSource,
+    volume: AutoVolume,
+) -> (Vec<f32>, Vec<f32>) {
     let mut storage = vec![0.0f32; FS as usize];
     let mut buffers = Box::new(Buffers::new());
     let mut app = BatApp::new(FS, &mut storage, &mut buffers);
@@ -167,7 +174,10 @@ impl Figures {
 
 fn main() {
     let args: Vec<String> = std::env::args().skip(1).collect();
-    println!("{:>9} {:>6} {:>7} {:>7} {:>7} {:>7} {:>7} {:>9} {:>7}", "", "count", "L", "R", "mono", "|L-R|", "p90", "ear-mono", "corr");
+    println!(
+        "{:>9} {:>6} {:>7} {:>7} {:>7} {:>7} {:>7} {:>9} {:>7}",
+        "", "count", "L", "R", "mono", "|L-R|", "p90", "ear-mono", "corr"
+    );
     for path in &args {
         let Some((a, b)) = read_two(path) else { continue };
         let found = detect(&a, &b);
@@ -175,7 +185,12 @@ fn main() {
         let het_hz = if peaks.is_empty() { 45_000.0 } else { (percentile(&mut peaks, 0.5) / 500.0).round() * 500.0 };
         let bats = found.iter().filter(|d| d.1).count();
         println!("{path}: {:.0} s, {bats} bat calls, {} detections", a.len() as f32 / FS, found.len());
-        println!("  inputs: RMS {:.1} and {:.1} dBFS, correlation {:.2}", db(rms(&a)), db(rms(&b)), correlation(&a, &b));
+        println!(
+            "  inputs: RMS {:.1} and {:.1} dBFS, correlation {:.2}",
+            db(rms(&a)),
+            db(rms(&b)),
+            correlation(&a, &b)
+        );
         let mean: Vec<f32> = a.iter().zip(&b).map(|(x, y)| 0.5 * (x + y)).collect();
         for (mode, name) in [(Mode::Het, "HET"), (Mode::Comb, "COMB")] {
             if mode == Mode::Het {
@@ -183,7 +198,9 @@ fn main() {
             } else {
                 println!("  {name}");
             }
-            for (volume, calls_name, quiet_name) in [(AutoVolume::Off, "calls", "quiet"), (AutoVolume::On, "c. auto", "q. auto")] {
+            for (volume, calls_name, quiet_name) in
+                [(AutoVolume::Off, "calls", "quiet"), (AutoVolume::On, "c. auto", "q. auto")]
+            {
                 let (left, right) = play(&a, &b, mode, het_hz, MonitorSource::Both, volume);
                 let (mono, _) = play(&mean, &mean, mode, het_hz, MonitorSource::First, volume);
                 let (hl, hr, hm) = (headphones(&left), headphones(&right), headphones(&mono));

@@ -141,7 +141,12 @@ static EMPTY_TEXT: [u8; 1] = [0];
 /// tile, the text is the tile's instead of "USER SETTINGS 2" or "3" and its
 /// description. The delete mode label is drawn where a USER SETTINGS tile's
 /// title is, so a bat tile leaves it empty, as the app tiles do.
-pub(super) unsafe extern "C" fn text_hook<const LINE: usize>(out: usize, binding: usize, root: usize, d: usize) -> usize {
+pub(super) unsafe extern "C" fn text_hook<const LINE: usize>(
+    out: usize,
+    binding: usize,
+    root: usize,
+    d: usize,
+) -> usize {
     // SAFETY: the stock binding the launcher called, with its arguments.
     let binding_fn: Handler = unsafe { core::mem::transmute(stock::LAUNCHER_TEXTS[LINE]) };
     let result = unsafe { binding_fn(out, binding, root, d) };
@@ -212,7 +217,12 @@ pub(super) unsafe extern "C" fn delete_hook(bridge: usize, slot: usize, c: usize
 
 /// Wraps the delete badge binding of USER SETTINGS 2 (`TILE` 0) or 3 (1):
 /// the bat tiles never show it.
-pub(super) unsafe extern "C" fn badge_hook<const TILE: usize>(binding: usize, root: usize, c: usize, d: usize) -> usize {
+pub(super) unsafe extern "C" fn badge_hook<const TILE: usize>(
+    binding: usize,
+    root: usize,
+    c: usize,
+    d: usize,
+) -> usize {
     if system_mode() <= 1 {
         return 0;
     }
@@ -287,7 +297,13 @@ const fn glyph_tile(pixels: *const u8) -> QtTile {
 }
 
 const fn glyph_image(tile: *const QtTile) -> QtImage {
-    QtImage { colour: stock::ICON_COLOUR, width: bat_glyph::WIDTH, height: bat_glyph::HEIGHT, tile_count: 1, tiles: tile }
+    QtImage {
+        colour: stock::ICON_COLOUR,
+        width: bat_glyph::WIDTH,
+        height: bat_glyph::HEIGHT,
+        tile_count: 1,
+        tiles: tile,
+    }
 }
 
 static BAT_TILE: QtTile = glyph_tile(bat_glyph::PIXELS.as_ptr());
@@ -297,7 +313,12 @@ static TILE_IMAGES: [QtImage; 2] = [glyph_image(&raw const BAT_TILE), glyph_imag
 
 /// Replaces the icon binding of USER SETTINGS 2 (`TILE` 0) or 3 (1): BAT DETECTOR
 /// shows the bat, and BAT PLAYBACK shows a play button in the same colour.
-pub(super) unsafe extern "C" fn icon_image_hook<const TILE: usize>(out: usize, binding: usize, root: usize, d: usize) -> usize {
+pub(super) unsafe extern "C" fn icon_image_hook<const TILE: usize>(
+    out: usize,
+    binding: usize,
+    root: usize,
+    d: usize,
+) -> usize {
     if system_mode() <= 1 {
         // SAFETY: `out` is where the stock binding writes the image pointer.
         unsafe { ptr::write(out as *mut *const QtImage, &raw const TILE_IMAGES[TILE]) };
@@ -309,7 +330,12 @@ pub(super) unsafe extern "C" fn icon_image_hook<const TILE: usize>(out: usize, b
 }
 
 /// Replaces those tiles' icon height binding.
-pub(super) unsafe extern "C" fn icon_height_hook<const TILE: usize>(binding: usize, root: usize, c: usize, d: usize) -> usize {
+pub(super) unsafe extern "C" fn icon_height_hook<const TILE: usize>(
+    binding: usize,
+    root: usize,
+    c: usize,
+    d: usize,
+) -> usize {
     if system_mode() <= 1 {
         return bat_glyph::HEIGHT as usize;
     }
@@ -319,7 +345,12 @@ pub(super) unsafe extern "C" fn icon_height_hook<const TILE: usize>(binding: usi
 }
 
 /// Replaces those tiles' icon width binding.
-pub(super) unsafe extern "C" fn icon_width_hook<const TILE: usize>(binding: usize, root: usize, c: usize, d: usize) -> usize {
+pub(super) unsafe extern "C" fn icon_width_hook<const TILE: usize>(
+    binding: usize,
+    root: usize,
+    c: usize,
+    d: usize,
+) -> usize {
     if system_mode() <= 1 {
         return bat_glyph::WIDTH as usize;
     }

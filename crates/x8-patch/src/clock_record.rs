@@ -64,7 +64,10 @@ mod tests {
     #[test]
     fn a_record_round_trips() {
         let reading = read(&SUNDAY).unwrap();
-        assert_eq!(LocalTime::from_epoch_seconds(reading.local_seconds), LocalTime { year: 2026, month: 11, day: 8, hour: 21, minute: 30, second: 49 });
+        assert_eq!(
+            LocalTime::from_epoch_seconds(reading.local_seconds),
+            LocalTime { year: 2026, month: 11, day: 8, hour: 21, minute: 30, second: 49 }
+        );
         assert_eq!(reading.weekday_offset, 0);
         assert_eq!(write(reading.local_seconds, &reading), Some(SUNDAY));
     }

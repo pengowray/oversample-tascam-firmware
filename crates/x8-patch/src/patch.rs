@@ -3,34 +3,34 @@ use core::mem::MaybeUninit;
 use core::panic::PanicInfo;
 use core::ptr;
 
-/// BAT DETECTOR's launcher glyph.
-mod bat_glyph;
 /// The audio hook, the cycle counter and `process_input`, which feeds the app from the input ring.
 mod audio;
+/// BAT DETECTOR's launcher glyph.
+mod bat_glyph;
+/// Sets the X8's clock from the phone's chimes, and keeps the phone's time for GUANO metadata.
+mod clock;
+/// Adds GUANO metadata to the WAV files of takes from a bat tile as the stock recorder closes them.
+mod guano_file;
 /// Which inputs the app hears, from the track settings.
 mod inputs;
 /// Copies the hot code into ITCM and checks that it stays unchanged.
 mod itcm;
-/// Sets the X8's clock from the phone's chimes, and keeps the phone's time for GUANO metadata.
-mod clock;
-/// Keeps the phone's location from chimes for GUANO metadata, and logs it to the card.
-mod location;
-/// Keeps REC from pausing bat takes unless allowed, and counts the pauses that happen.
-mod pauses;
-/// Adds GUANO metadata to the WAV files of takes from a bat tile as the stock recorder closes them.
-mod guano_file;
 /// The key and touch hooks, and passing their events on to the app.
 mod keys;
 /// The bat tiles on the LAUNCHER: slots, texts, title position, delete mode, badges and icons.
 mod launcher;
+/// Keeps the phone's location from chimes for GUANO metadata, and logs it to the card.
+mod location;
 /// Leaves the MIX file out of takes from a bat tile, when the app's switch is off.
 mod mix_file;
+/// Keeps REC from pausing bat takes unless allowed, and counts the pauses that happen.
+mod pauses;
 /// BAT PLAYBACK's launcher glyph.
 mod play_glyph;
-/// Opening and closing the bat screen, and drawing it with the debug strips.
-mod screen;
 /// Carries out the phone remote's commands by posting button presses to task 1.
 mod remote;
+/// Opening and closing the bat screen, and drawing it with the debug strips.
+mod screen;
 /// SDRAM after Qt's framebuffers, 0x87ea6004 to 0x87ffffff: zeroed by no init
 /// table entry and referred to by no stock code (checked in Ghidra). Mapped
 /// uncached, so the display controller sees what is written without cache
@@ -47,11 +47,11 @@ mod task;
 
 use guano_file::guano_hook;
 use keys::{key_hook, rec_key_hook, touch_hook};
-use mix_file::{file_mask_hook, open_take_hook};
 use launcher::{
     badge_hook, delete_hook, delete_mode_hook, free_slot_hook, icon_height_hook, icon_hook, icon_image_hook,
     icon_width_hook, power_off_save_hook, slot_hook, text_hook, tile_hook, title_y_hook,
 };
+use mix_file::{file_mask_hook, open_take_hook};
 
 type Handler = unsafe extern "C" fn(usize, usize, usize, usize) -> usize;
 

@@ -189,7 +189,10 @@ pub fn control_row(setting: Setting) -> Rectangle {
         Setting::DebugInfo => panel_switch_row(TESTS_DEBUG),
         Setting::Mark(kind) => {
             let j = Setting::MARKS.iter().position(|&k| k == kind).unwrap_or(0) as i32;
-            Rectangle::new(Point::new(6, SWITCHES_TOP + j * (SWITCH_ROW_H + SWITCH_ROW_GAP)), Size::new(308, SWITCH_ROW_H as u32))
+            Rectangle::new(
+                Point::new(6, SWITCHES_TOP + j * (SWITCH_ROW_H + SWITCH_ROW_GAP)),
+                Size::new(308, SWITCH_ROW_H as u32),
+            )
         }
         Setting::LowestBatCall => setting_row(0),
         Setting::ListenTo => setting_row(1),
@@ -234,7 +237,10 @@ pub fn switch(setting: Setting) -> Rectangle {
         _ => {
             let r = control_row(setting);
             let y = r.top_left.y + (r.size.height as i32 - SWITCH_H as i32) / 2;
-            Rectangle::new(Point::new(r.top_left.x + r.size.width as i32 - 10 - SWITCH_W as i32, y), Size::new(SWITCH_W, SWITCH_H))
+            Rectangle::new(
+                Point::new(r.top_left.x + r.size.width as i32 - 10 - SWITCH_W as i32, y),
+                Size::new(SWITCH_W, SWITCH_H),
+            )
         }
     }
 }

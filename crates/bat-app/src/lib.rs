@@ -27,8 +27,8 @@ mod remote;
 mod screen;
 mod stages;
 
-use bat_dsp::classify::{CallClassifier, DEFAULT_TRAIN_MIN_DB};
 pub use bat_dsp::classify::CallKind;
+use bat_dsp::classify::{CallClassifier, DEFAULT_TRAIN_MIN_DB};
 use bat_dsp::detector::{CallDetector, CallEvent, DEFAULT_AUDIBLE_BAND_HZ, DEFAULT_BAND_LO_HZ};
 use bat_dsp::freq_div::FrequencyDivider;
 use bat_dsp::heterodyne::{DEFAULT_COMB_SPACING_HZ, DEFAULT_CUTOFF_HZ, HetComb, Heterodyne};
@@ -397,7 +397,14 @@ pub struct Buffers {
 impl Buffers {
     /// All zero, with the chime test's decoders not built yet, for a `static`.
     pub const fn new() -> Self {
-        Self { wf: [0; WF_W * WF_H], history: [0; HISTORY * BINS], history_centre: [0; HISTORY], snapshot: [0; SNAP_W * SNAP_H], chime: [const { core::mem::MaybeUninit::uninit() }; 2], pitch_right: PitchShifter::unconfigured() }
+        Self {
+            wf: [0; WF_W * WF_H],
+            history: [0; HISTORY * BINS],
+            history_centre: [0; HISTORY],
+            snapshot: [0; SNAP_W * SNAP_H],
+            chime: [const { core::mem::MaybeUninit::uninit() }; 2],
+            pitch_right: PitchShifter::unconfigured(),
+        }
     }
 }
 
@@ -598,7 +605,12 @@ impl<'a> BatApp<'a> {
     ///
     /// `this` must be valid for writes and aligned. Whatever it held is
     /// overwritten without being dropped.
-    pub unsafe fn init_in_place(this: *mut Self, sample_rate: f32, te_storage: &'a mut [f32], buffers: &'a mut Buffers) {
+    pub unsafe fn init_in_place(
+        this: *mut Self,
+        sample_rate: f32,
+        te_storage: &'a mut [f32],
+        buffers: &'a mut Buffers,
+    ) {
         use core::ptr::addr_of_mut as field;
         /// Fill an array field element by element, without a temporary.
         unsafe fn fill<T: Copy, const N: usize>(array: *mut [T; N], value: T) {
@@ -812,7 +824,8 @@ impl<'a> BatApp<'a> {
         self.screen = Screen::Settings;
         if self.settings_page() != page {
             self.settings_page = page;
-            if let Some(i) = (0..Setting::ALL.len()).find(|&i| Setting::ALL[i].page() == page && self.setting_shown(i)) {
+            if let Some(i) = (0..Setting::ALL.len()).find(|&i| Setting::ALL[i].page() == page && self.setting_shown(i))
+            {
                 self.setting = i;
             }
         }
@@ -820,7 +833,11 @@ impl<'a> BatApp<'a> {
 
     /// The page shown: the one last picked, or Listen if this host no longer offers it.
     pub fn settings_page(&self) -> SettingsPage {
-        if self.settings_pages().any(|page| page == self.settings_page) { self.settings_page } else { SettingsPage::Listen }
+        if self.settings_pages().any(|page| page == self.settings_page) {
+            self.settings_page
+        } else {
+            SettingsPage::Listen
+        }
     }
 
     /// The pages this host has anything for: Record is left out when it offers none of the MIX
@@ -870,7 +887,8 @@ impl<'a> BatApp<'a> {
     /// Run the CPU test from its first row, on the main screen.
     pub fn start_cpu_test(&mut self) {
         self.cpu_test.plan(self.modes, self.inputs[1].is_some());
-        self.cpu_test.saved = Some(cpu_test::Saved { mode: self.mode, volume: self.level.volume(), source: self.source() });
+        self.cpu_test.saved =
+            Some(cpu_test::Saved { mode: self.mode, volume: self.level.volume(), source: self.source() });
         self.cpu_test.running = true;
         self.screen = Screen::Main;
         self.begin_cpu_test_row();
@@ -907,7 +925,14 @@ impl<'a> BatApp<'a> {
         }
         let recorder = self.recorder().0;
         let state = (recorder, self.take_mix_file);
-        let finished = self.cpu_test.figures(figures, state, self.skipped_chunks, &self.stages, self.samples, self.sample_rate as u64);
+        let finished = self.cpu_test.figures(
+            figures,
+            state,
+            self.skipped_chunks,
+            &self.stages,
+            self.samples,
+            self.sample_rate as u64,
+        );
         if finished {
             self.cpu_test.at += 1;
             self.begin_cpu_test_row();
@@ -1473,7 +1498,8 @@ impl<'a> BatApp<'a> {
             Screen::CpuTest => {
                 if layout::CPU_TEST_BACK.contains(p) {
                     self.screen = Screen::Settings;
-                } else if layout::CPU_TEST_START.contains(p) && self.inputs[0].is_some() && self.rate_warning.is_none() {
+                } else if layout::CPU_TEST_START.contains(p) && self.inputs[0].is_some() && self.rate_warning.is_none()
+                {
                     self.start_cpu_test();
                 } else if layout::CPU_TEST_CALLS.contains(p) {
                     self.cpu_test.test_calls = !self.cpu_test.test_calls;
@@ -1503,17 +1529,22 @@ impl<'a> BatApp<'a> {
     fn settings_touch(&mut self, x: i32, y: i32) {
         let p = embedded_graphics::prelude::Point::new(x, y);
         let pages = self.settings_pages().count();
-        let tapped = self.settings_pages().enumerate().find_map(|(i, page)| layout::tab(i, pages).contains(p).then_some(page));
+        let tapped =
+            self.settings_pages().enumerate().find_map(|(i, page)| layout::tab(i, pages).contains(p).then_some(page));
         if let Some(page) = tapped {
             self.open_settings_page(page);
             return;
         }
         match self.settings_page() {
-            SettingsPage::Record if self.guano_available && layout::panel_switch_row(layout::RECORD_GUANO).contains(p) => {
+            SettingsPage::Record
+                if self.guano_available && layout::panel_switch_row(layout::RECORD_GUANO).contains(p) =>
+            {
                 self.guano = !self.guano;
                 return;
             }
-            SettingsPage::Record if self.remote.available && layout::panel_switch_row(layout::RECORD_REMOTE).contains(p) => {
+            SettingsPage::Record
+                if self.remote.available && layout::panel_switch_row(layout::RECORD_REMOTE).contains(p) =>
+            {
                 self.remote.on = !self.remote.on;
                 return;
             }
@@ -1563,15 +1594,15 @@ impl<'a> BatApp<'a> {
     /// A finger moving after touching down at a point that was passed to
     /// [`touch`](Self::touch): on the waterfall, HET and COMB follow it.
     pub fn drag(&mut self, x: i32, y: i32) {
-        if self.screen == Screen::Main {
-            if let Some(hz) = layout::waterfall_freq_at(x, y) {
-                match self.mode {
-                    Mode::Het => self.set_het_lo(hz),
-                    // The LO grabbed at touch down stays under the finger. Choosing the nearest
-                    // LO again here made the comb jump once it stopped at either end of its range.
-                    Mode::Comb => self.set_comb_first(hz - self.comb_grip as f32 * DEFAULT_COMB_SPACING_HZ),
-                    _ => {}
-                }
+        if self.screen == Screen::Main
+            && let Some(hz) = layout::waterfall_freq_at(x, y)
+        {
+            match self.mode {
+                Mode::Het => self.set_het_lo(hz),
+                // The LO grabbed at touch down stays under the finger. Choosing the nearest
+                // LO again here made the comb jump once it stopped at either end of its range.
+                Mode::Comb => self.set_comb_first(hz - self.comb_grip as f32 * DEFAULT_COMB_SPACING_HZ),
+                _ => {}
             }
         }
     }
@@ -2073,7 +2104,9 @@ impl<'a> BatApp<'a> {
         }
         let p = embedded_graphics::prelude::Point::new(x, y);
         match self.screen {
-            Screen::ChimeTest => return layout::CLOCK_BACK.contains(p) || (self.phone.is_some() && layout::CLOCK_SET.contains(p)),
+            Screen::ChimeTest => {
+                return layout::CLOCK_BACK.contains(p) || (self.phone.is_some() && layout::CLOCK_SET.contains(p));
+            }
             Screen::CpuTest => {
                 return layout::CPU_TEST_BACK.contains(p)
                     || layout::CPU_TEST_START.contains(p)
