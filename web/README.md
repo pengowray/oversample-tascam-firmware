@@ -85,16 +85,18 @@ Both take `AUDIBLE=LO,HI` (Hz) to try another audible band.
 
 ## Testing a chime recording
 
-The phone page that plays the chime, `Bat recorder setup by sound`, is in its own repository,
-`batchi-chime`, beside this one in `~/projects`.
+The phone page that plays the chime, `Bat recorder setup by sound`, is a separate project that
+is not yet published.
 
-Firmware B235 and later can read the chime live: in the app's settings, tap `Chime test`, and
-the screen shows the time from the chime. It does not change the X8's clock. The emulator has
-the same screen. To test a recording on any firmware, record the chime on the X8 at 192 kHz,
-copy the WAV to the computer and run:
+Firmware B235 to B246 can read the chime live on the `Chime test` screen, opened from the app's
+settings, which shows the time from the chime. In B248 and later, the screen is at SETTINGS >
+Tests > `Phone time`, titled `PHONE TIME`, and `Set X8 clock` sets the X8's clock to the phone's
+time. The emulator shows the PHONE TIME screen. To test a recording on any firmware, record the chime on the X8
+at 192 kHz, copy the WAV to the computer, and run `decode_wav`. It is an example in the `chime/`
+folder of the Oversample repository (github.com/pengowray/oversample). In a checkout of Oversample,
+run:
 
 ```bash
-# in ~/projects/batchi, where the chime crate lives
 cargo run --release -p chime --example decode_wav -- FILE.wav
 ```
 
@@ -102,4 +104,4 @@ It reports the time in the chime, the signal level and SNR, and how far the X8's
 differs from the phone's. The X8's clock at the start of the file is the time in the WAV's
 `bext` chunk, which the X8 writes as it closes the file, less the file's length. That is
 accurate to about 1 s, so the difference is in whole seconds. It uses the same decoder as the firmware,
-the `chime` crate.
+the `chime` crate in the Oversample repository.

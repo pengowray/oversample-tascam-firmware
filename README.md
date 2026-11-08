@@ -19,9 +19,10 @@ untested. The current build, B248, has not yet run on a unit. The optional AK-BT
 has not been tried with the patch. [docs/HOMEBREW.md](docs/HOMEBREW.md) lists what each build changed
 and what to check.
 
-Installing TASCAM's official V2.03 update file the same way puts the X8 back to stock. As with any
-firmware update, losing power or removing the card during the update can leave the unit needing
-repair.
+Installing TASCAM's official V2.03 update file the same way should put the X8 back to stock: the
+updater checks only the version number, so it accepts the official file over a patched one. This
+has not been tried yet. As with any firmware update, losing power or removing the card during the
+update can leave the unit needing repair.
 
 ## What it adds
 

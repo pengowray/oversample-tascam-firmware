@@ -1,7 +1,33 @@
 # Homebrew firmware: findings and plan
 
 Notes from reading the V2.01 and V2.03 update files (`#PortaX8_0215.201`,
-`#PortaX8_0217.203`), 2 November 2026. Nothing here has been tested on a unit yet.
+`#PortaX8_0217.203`), started 2 November 2026. The notes are in the order the
+work was done, so earlier sections can describe plans and figures that later
+steps changed.
+
+**Status, 8 November 2026.** Test builds from B218 to B239 were installed and run
+on the owner's X8. Not every build in that range was installed: a step's heading
+says "installed" if its build ran on the unit, and "never installed" if a later
+build replaced it first. The last build installed is B239 (Step 21). The current
+build is B248 (Step 25 and the sections after it), which has not been installed
+yet, so GUANO metadata, setting the clock from phone chimes and the location log
+have not run on a unit.
+
+**Hardware tested.** One X8. Its Information screen (GENERAL SETTINGS > SYSTEM >
+Information) shows `F/W: Version 2.03 Build 217` and `H/W: Version 1.00 Build 010`.
+Units with other hardware versions have not been tested. See "Hardware version" in
+the [firmware map](#firmware-map-v203-in-progress).
+
+**Bluetooth.** The owner does not have TASCAM's optional AK-BT1 Bluetooth adapter,
+and nothing has been tested with it. The stock firmware's Bluetooth remote code
+(`FUN_80d96f68`) reads the transport state and the recorded time. This suggests
+that TASCAM's app could start and stop takes while the bat screen is open, as an
+alternative to the phone remote in Step 21. This has not been tested.
+
+**Files in `work/`.** Paths that start with `work/`, such as the update files
+built for each step and `work/notes/`, are in the author's local `work/` folder,
+which git ignores. These update files are not published. To make an update file,
+use the patcher page (see the [README](../README.md)) or `tools/x8patch.py`.
 
 Two names are used throughout:
 
@@ -139,7 +165,7 @@ bootloader, and refuses changes to the start-up and update-mode code listed in
 
 ## Step 2 test files (installed 2026-11-02: the X8 accepts a repacked file)
 
-**Result.** On 2026-11-02 the build 218 test file installed on the user's X8
+**Result.** On 2026-11-02 the build 218 test file installed on the test unit
 through the normal update procedure (the update screen showed B218), the unit
 started normally, and SONAR showed both as the app's name on the LAUNCHER screen
 and as the tuner app's title, in the stock font. So the updater accepts a
@@ -333,7 +359,7 @@ stored as raw configuration flash pages.
 
 ## Step 3 test file: patch code runs on a key press (installed 2026-11-02: works)
 
-**Result.** Installed on the user's X8 on 2026-11-02. The bar appeared and
+**Result.** Installed on the test unit on 2026-11-02. The bar appeared and
 flickered from the end of the boot screen onwards, over the main menu and in
 the apps, with no key pressed; everything kept working (apps open, buttons
 work) and nothing crashed. Opening the HOLD dialog paused it. So the stock
@@ -377,6 +403,8 @@ cargo build -p x8-patch --release --target thumbv7em-none-eabihf
 python3 tools/x8patch.py "Tascam_X8_official/extracted/#PortaX8_0217.203" target/thumbv7em-none-eabihf/release/x8-patch "work/patch/#PortaX8_0219.203" --build 219
 ```
 
+See the README for current build instructions.
+
 **What to expect.** Install it like the step 2 file (the update screen shows
 B219). In a recording app such as MANUAL, each press of MARK, PLAY or REC, or
 each wheel turn, should draw a coloured bar across the middle of the screen, a
@@ -393,7 +421,7 @@ the patch. The power button is read by the same task as the other buttons, so
 if that task hangs the unit may not turn off: then remove the batteries and USB
 power, and do the HOME and REC recovery.
 
-## Step 4 test file: live heterodyne (built 2026-11-02, not yet installed)
+## Step 4 test file: live heterodyne (built 2026-11-02, never installed: superseded by B221)
 
 `work/patch2/#PortaX8_0220.203` (B220, SHA-256 `7e06ff40…c2b00b0b`), built the
 same way from `crates/x8-patch` (header version 2, 43.7 KB including fonts). The
@@ -428,7 +456,7 @@ it (about when the launcher appears).
 
 ## Step 5 test file: the bat app on the X8 (installed 2026-11-02: runs, too slow)
 
-**Result.** Installed on the user's X8 on 2026-11-02, without microphones on
+**Result.** Installed on the test unit on 2026-11-02, without microphones on
 inputs 3 and 4. The bat screen opened with the three MARK presses and drew the
 app (title, status bar, meters, waterfall, last-call panel, mode buttons);
 PLAY changed mode and the wheel worked, both with a noticeable lag; HOME went
@@ -497,7 +525,7 @@ on clears everything (nothing is saved).
 
 ## Step 6 test file: the bat app in its own RTOS task (installed 2026-11-03: smoother, PITCH freezes)
 
-**Result** (user's X8, 2026-11-03). Much smoother and more responsive. The
+**Result** (test unit, 2026-11-03). Much smoother and more responsive. The
 task was created. In HET the strip read "dsp 73% draw 20%" (wall time), so the
 app used most of the time even in its cheapest mode. Choosing PITCH froze the
 screen and the unit would not power off; STOP brought it back. In PITCH the
@@ -627,7 +655,7 @@ power question shows first (the pop-up handling gives it the display) and the
 bat screen follows once it is answered. REC works as in MANUAL: the REC LED
 blinks in standby and lights while recording. Holding HOME returns to the
 LAUNCHER. Debug strip: app 2, st 1, dsp 55%, draw 14%. Audio, headphones and
-the wrong-rate notice were not tried. The user asked for PLAY instead of MARK
+the wrong-rate notice were not tried. The owner asked for PLAY instead of MARK
 x3 to switch screens (MARK x3 left marks in takes), touch for the mode buttons
 and HET tuning, the waterfall from 0 Hz, and a 1:1 mode: step 10.
 
@@ -682,7 +710,7 @@ Does holding HOME return to the LAUNCHER? At 48 kHz, does the notice show?
 
 **Result.** Works: touch, PLAY swapping screens and the 1:1 mode behaved as
 expected. HET, and maybe 1:1, seem slightly stuttery during a take; not yet
-checked again. The user asked for the bat app to have its own launcher tile,
+checked again. The owner asked for the bat app to have its own launcher tile,
 so that TUNER keeps working, and for a second tile to play existing recordings
 through the bat app: step 11. Still to do: listen to inputs other than 3 and 4,
 ideally the ones MANUAL has selected.
@@ -713,7 +741,7 @@ tuning line? Does PLAY swap screens both ways, also during a take? With mics
 and headphones: is there sound in 1:1 and HET, and does the 0 to 20 kHz part of
 the waterfall show audible sound?
 
-## Step 11 test file: BAT DETECTOR and BAT PLAYBACK tiles, TUNER back (built 2026-11-05, not yet installed)
+## Step 11 test file: BAT DETECTOR and BAT PLAYBACK tiles, TUNER back (built 2026-11-05, never installed: superseded by B229)
 
 `work/patch10/#PortaX8_0228.203` (B228, SHA-256 `6e24482a…c3b6f402`). B227
 (`work/patch9`) was the first build of this step; a review found that a tap
@@ -777,7 +805,7 @@ does), the wheel and HOME may not reach the patch while a file plays. With a
 48 kHz file, does the notice ask for a 192 kHz recording? With a preset in
 USER SETTINGS 1, what does SAVE USER SETTINGS do?
 
-## Step 12 test file: the bat app hears the inputs turned on in MANUAL (built 2026-11-06, not yet installed)
+## Step 12 test file: the bat app hears the inputs turned on in MANUAL (built 2026-11-06, never installed: superseded by B231)
 
 `work/patch11/#PortaX8_0229.203` (B229, SHA-256 `40435549…105dd302`). Includes step 11,
 which has not been installed either.
@@ -814,7 +842,7 @@ mic on input 1 or 2 alone, does it work at 192 kHz, and how far up does it reach
 With every track off: does the notice show, and what do words 0 and 6 read on the
 debug line? Is the stutter during a take better?
 
-## Step 13 test file: MANUAL's mix, debug figures on a switch, auto level, bat glyph (built 2026-11-06, not yet installed)
+## Step 13 test file: MANUAL's mix, debug figures on a switch, auto level, bat glyph (built 2026-11-06, installed: field report under Step 14)
 
 `work/patch13/#PortaX8_0231.203` (B231, SHA-256 `ee5d9a37…cd05d248`). Includes steps 11
 and 12.
@@ -889,7 +917,7 @@ info: do the lines update and fit? Record in each mode and note CPU,
 dry and lost. Turn on Auto volume: are quiet calls lifted without too much hiss
 between them?
 
-## Step 14 test file: headphones keep playing during a take, cheaper analysis, Auto volume with a noise limit, Bats only (built 2026-11-06, not yet installed)
+## Step 14 test file: headphones keep playing during a take, cheaper analysis, Auto volume with a noise limit, Bats only (built 2026-11-06, never installed: superseded by B233)
 
 `work/patch14/#PortaX8_0232.203` (B232, SHA-256 `47cc597a…d010bdb2`). Includes steps 11
 to 13. No hook, table word or header field changed, so `BUILDS` in `tools/x8patch.py` is
@@ -1140,7 +1168,7 @@ test) and `auto_volume` (the tables above). `calls.rs` takes `HOP=`, and `screen
 - Does `Press REC to record and listen` ever appear? If it does, note what was on screen before it.
 - Open BAT DETECTOR from the LAUNCHER after VOICE with REC PAUSE off: no notice should flash.
 
-## Step 15 test file: stereo headphones in HET, COMB and 1:1 (built 2026-11-07, not yet installed)
+## Step 15 test file: stereo headphones in HET, COMB and 1:1 (built 2026-11-07, never installed: superseded by B234)
 
 Install B234 (Step 16) in place of this file. B234 changes MANUAL's mix with one input on or none, and
 Step 16 lists those changes. The sizes below are B233's. The rest of this step applies to B234 as well.
@@ -1445,8 +1473,8 @@ so its figures stay comparable with Step 14. `web/README.md` says how to hear st
   one group be corrected? That would change the waterfall and the detector for that pair, which this
   step has kept bit-identical to B232.
 
-**What to check.** Everything in the "What to check" lists of steps 11 to 14 first, because none
-of those builds has been installed. Then:
+**What to check.** Everything in the "What to check" lists of steps 11 to 14 first, because of those
+builds only B231 has been installed (see its field report in Step 14). Then:
 
 - **Which ear.** With Listen to on `Inputs 3 and 4`, tap the mic on input 3. Is it in the left ear?
   The first sample of each output frame (word 0) is probably the left channel: the firmware shows
@@ -1482,7 +1510,7 @@ of those builds has been installed. Then:
   stays below about 85 and `skip` stays near 0. On the estimates here, C is 8 (COMB's predicted 50 here
   against 42 in Step 14), so that is 57 + 10 + 3.4 x 8 = 94, which is why FD stays mono for now.
 
-## Step 16 test file: one input turned on with MANUAL's mix plays in both ears, play button on BAT PLAYBACK (built 2026-11-07, not yet installed)
+## Step 16 test file: one input turned on with MANUAL's mix plays in both ears, play button on BAT PLAYBACK (built 2026-11-07, never installed: superseded by B235)
 
 `work/patch16/#PortaX8_0234.203` (B234, SHA-256 `a2f2ecfc…c08b89e4`). Includes steps 11 to 15. Install
 this file in place of B233. No stock hook site or header field changed, so `BUILDS` in `tools/x8patch.py`
@@ -1619,6 +1647,12 @@ so testing a chime no longer needs a recording and `decode_wav`. SETTINGS has a 
 beside `Done`, because Debug info fills the half row beside Auto volume on the X8. The button opens a screen
 titled `CHIME TEST`. The screen does not change the X8's clock, because we have not found where the firmware
 keeps the time.
+
+Step 25 renamed this screen `PHONE TIME` (SETTINGS, Tests tab, `Phone time`), and added `Set X8 clock`, which sets
+the X8's clock from the chime.
+
+`decode_wav` is an example in the `chime/` folder of the Oversample repository (github.com/pengowray/oversample). In
+a checkout of Oversample, run `cargo run --release -p chime --example decode_wav -- FILE.wav`.
 
 Below, a channel is one of the two signals the host passes to `BatApp::process`: an input, a side of
 MANUAL's mix, or a side of BAT PLAYBACK.
@@ -1809,7 +1843,7 @@ right side. It was not lost frames, so that failure does not point to the CPU. W
 known: the carrier was quiet, and the phone's distance and volume were not noted. The other questions in this step's list
 are still open.
 
-## Step 18 test file: start on the LAUNCHER after using a bat tile (built 2026-11-07, not yet installed)
+## Step 18 test file: start on the LAUNCHER after using a bat tile (built 2026-11-07, never installed: superseded by B237)
 
 `work/patch18/#PortaX8_0236.203` (B236, SHA-256 `fbf2ba14…900f18ee`). Includes steps 11 to 17. Install this file in
 place of B235. All the checks in `tools/x8patch.py` pass on this file. This step's change has not run on a real recorder.
@@ -1848,7 +1882,7 @@ powered off on the LAUNCHER, and factory settings also use 0.
 **If it goes wrong.** A hang at power-off needs the battery taken out. The next start then opens MANUAL, from the last
 periodic save. Recover as in "If it goes wrong" in the earlier steps.
 
-## Step 19 test file: TE reads its buffer less often, COMB uses one filter per ear (built 2026-11-07, not yet installed)
+## Step 19 test file: TE reads its buffer less often, COMB uses one filter per ear (built 2026-11-07, never installed: superseded by B238)
 
 `work/patch19/#PortaX8_0237.203` (B237, SHA-256 `5e97cb7d…8a174d69`). Includes steps 11 to 18. Install this file in place of
 B236. All the checks in `tools/x8patch.py` pass on this file. Nothing in this step has run on a real recorder.
@@ -1885,7 +1919,7 @@ uncached region.
 while calls or the dog repeller play, about a minute each, and note `dsp`, `dry`, `lost` and `skip`. Does TE's `dsp` fall from
 about 80, and its `skip` from about 200 a second? Does TE sound the same, and does COMB, after a change of tuning?
 
-## Step 20 test file: a MIX file switch for takes from BAT DETECTOR (built 2026-11-07, not yet installed)
+## Step 20 test file: a MIX file switch for takes from BAT DETECTOR (built 2026-11-07, never installed: superseded by B239)
 
 `work/patch20/#PortaX8_0238.203` (B238, SHA-256 `877da5fc…8879f414`). Includes steps 11 to 19. Install this file in place of
 B237. All the checks in `tools/x8patch.py` pass on this file. Nothing in this step has run on a real recorder.
@@ -1946,6 +1980,7 @@ Nothing in this step has run on a real recorder.
 
 **Tools screen.** SETTINGS' `Chime test` button is now `Tools`, in the same place. The Tools screen has the Phone remote switch,
 then `Chime test` and `CPU test`, each with a line of help, and `Back`. `Back` on the chime test now returns to Tools.
+Step 24 replaced the Tools screen with three tabs on SETTINGS: `Listen`, `Record` and `Tests`.
 
 ### CPU test
 
@@ -1985,10 +2020,11 @@ falling for stopped, one low note when it could not. A notice shows for 5 s in t
   measured). The CPU test's two decoder rows measure it on the unit.
 - **Range.** In the tests, with noise of -94 dBFS in the chime's 2 kHz band (what the unit showed in Step 17), the tone woke the
   decoders and the command was read every time down to a carrier of -88 dBFS, and half the time at -91 dBFS. So the tone check is no
-  less sensitive than the decoder. In 17 minutes of recordings from 6 and 7 November and `~/sync/default/bats`, nothing woke the
+  less sensitive than the decoder. In 17 minutes of recordings from 6 and 7 November and the owner's other bat recordings, nothing woke the
   decoders. Example `remote_check` runs this on any 192 kHz files.
-- **End to end.** WAVs made with the page's own encoder (`tools/chime_render.mjs`, deployment ID reversed as the connector does it),
-  after the tone, with gaps of 0.2 to 2 s, gave the command in the app every time.
+- **End to end.** WAVs made with a copy of the phone page's encoder (a script that is no longer in this repository, with the
+  deployment ID reversed as the connector does it), after the tone, with gaps of 0.2 to 2 s, gave the command in the app every
+  time. To make phone remote test files now, use the `chime_wavs` example in the Oversample repository's `chime/` folder.
 - **Pressing the buttons.** `remote.rs` in the patch posts REC (0x07) and HOME (0x06, which stops a take on the recording screen)
   as a button message to task 1's mailbox, with the stock block allocator `FUN_80d70026` and `snd_mbx`. These take a lock and are
   called from other tasks by the stock code. It does not call `FUN_80d6c058`, whose key translation keeps state that task 9 also
@@ -2002,7 +2038,8 @@ falling for stopped, one low note when it could not. A notice shows for 5 s in t
 - **The data in the take.** The stop chime is in the recording, and so is the start command's second play. `decode_wav` now prints
   the location and the deployment ID, and names the remote's commands, for example `Location -33.870000, 151.210000. Phone remote:
   stop recording (deployment ID 4241545852454302).`
-- **Phone page.** `batchi-chime`, Tascam X8 tab: `Start recording` and `Stop recording`, and `Add my location to the chime`.
+- **Phone page.** The phone page is a separate project, not yet published. Its Tascam X8 tab has `Start recording` and
+  `Stop recording`, and `Add my location to the chime`.
 
 | Item | B238 | B239 | Limit |
 |---|---|---|---|
@@ -2078,7 +2115,7 @@ the synthetic calls were off. `dsp (max)`:
   it could hold about 10,500 frames (55 ms), not twice as many. Or moving the DSP task's 32 KB stack out of DTCM would let the
   ring grow where it is to about 13,500 frames (70 ms). Not tried.
 
-## Step 22 test file: build number on the CPU test, decoder rows, column spacing (built 2026-11-08, not yet installed)
+## Step 22 test file: build number on the CPU test, decoder rows, column spacing (built 2026-11-08, never installed: superseded by B241)
 
 `work/patch22/#PortaX8_0240.203` (B240, SHA-256 `5f367997…c98b4e9a`). Includes steps 11 to 21. Install this file in place of
 B239. All the checks in `tools/x8patch.py` pass on this file. No stock hook site changed.
@@ -2107,7 +2144,7 @@ B239. All the checks in `tools/x8patch.py` pass on this file. No stock hook site
   test. Photograph the table when it ends. The FD decoder row is the heaviest case for the phone remote.
 - Do all the columns read apart?
 
-## Step 23 test file: audio hook in ITCM, Auto volume per block, CPU test Stages table (built 2026-11-08, not yet installed)
+## Step 23 test file: audio hook in ITCM, Auto volume per block, CPU test Stages table (built 2026-11-08, never installed: superseded by B246)
 
 `work/patch23/#PortaX8_0241.203` (B241, SHA-256 `16a6affd…56589e9257`). Includes steps 11 to 22. Install this file in place of
 B240 or B239. All the checks in `tools/x8patch.py` pass on this file. No stock hook site changed (header version 17).
@@ -2165,7 +2202,7 @@ DSP task shows as about 2 `dsp` points.
   volume off and on), COMB stereo 44 and 56.
 - **Auto volume.** Does On and Bats only sound as before?
 
-## Step 24 test file: GUANO metadata in takes from BAT DETECTOR, settings in three tabs, cheaper chime decoders (built 2026-11-08, not yet installed)
+## Step 24 test file: GUANO metadata in takes from BAT DETECTOR, settings in three tabs, cheaper chime decoders (built 2026-11-08, never installed: superseded by B248)
 
 `work/patch24/#PortaX8_0246.203` (B246, SHA-256 `d678c87b…3830dcf1f693`). Includes steps 11 to 23. Install this file in place of
 B241 or an earlier build. All the checks in `tools/x8patch.py` pass on this file. It has one new stock hook site, so the patch
@@ -2376,7 +2413,7 @@ READY is stored separately:
 
 The owner asked for a switch that applies only to bat tile takes, so MANUAL opened from its own tile
 keeps its MIX file. The stock toggle cannot do that, because MANUAL saves its state. [Step
-20](#step-20-test-file-a-mix-file-switch-for-takes-from-bat-detector-built-2026-11-07-not-yet-installed)
+20](#step-20-test-file-a-mix-file-switch-for-takes-from-bat-detector-built-2026-11-07-never-installed-superseded-by-b239)
 builds it by changing the file mask for the take and leaving MANUAL's on/off words alone.
 
 Two other hooks are rejected:
@@ -2426,7 +2463,7 @@ but only a measurement can show that.
 ## GUANO metadata (2026-11-08)
 
 How the stock recorder writes a WAV file's header, and why the patch puts GUANO metadata after the audio. Read in V2.03 with the
-Ghidra project and checked against takes from 2026-11-06. Built as [Step 24](#step-24-test-file-guano-metadata-in-takes-from-bat-detector-built-2026-11-08-not-yet-installed).
+Ghidra project and checked against takes from 2026-11-06. Built as [Step 24](#step-24-test-file-guano-metadata-in-takes-from-bat-detector-settings-in-three-tabs-cheaper-chime-decoders-built-2026-11-08-never-installed-superseded-by-b248).
 
 **Header layout.** Every take file has 5,548 bytes before its audio: `RIFF`, `bext` (1,116 bytes), a 4,380-byte area for marks,
 `fmt ` (16 bytes), then the `data` chunk's header. With no marks, the area is one `JUNK` chunk. With marks, `cue ` and a `LIST`
@@ -2852,6 +2889,12 @@ way. MARK's pop-up codes are the CAUTION message number + 4: 7 "No File",
 **Which files a take writes:** see [Turning off the MIX file while
 recording](#turning-off-the-mix-file-while-recording-2026-11-07).
 
+**Hardware version.** The Information screen (GENERAL SETTINGS > SYSTEM > Information) gets
+both version strings, F/W and H/W, from the firmware's C core in one message. The Qt bridge
+handler `FUN_80d8c488` calls the setters `FUN_80d4ebc4`, `FUN_80d4eae4` and `FUN_80d4eb50`,
+which format each string as `Version x.yy Build zzz` with `FUN_80d4ec6c`. Whether the C core
+reads H/W Version 1.00 Build 010 from the board or holds it as a constant has not been traced.
+
 **Not mapped yet:** how Qt reads the recording time.
 
 ## Keeping the bricking risk low
@@ -2946,6 +2989,12 @@ chapter of the RT1060 reference manual.
 
 ## Plan
 
+This is the original plan, written before the work started, and it is kept as written. Steps
+3 to 5 are done, some by other routes than planned (see the step sections above). Step 2 is
+done, except that these notes do not record the official file being installed again. Step 1
+continues in the [firmware map](#firmware-map-v203-in-progress). Step 0 has not been done, and
+the FPGA is left as it is, as Step 6 says.
+
 **Step 0: recovery path.** Open a unit and photograph both sides of the board. Find
 SWD pads, the BOOT_MODE resistors and the debug UART. Read the chip markings for the
 processor, SDRAM, flash, FPGA and headphone DAC. Prove the recovery path before
@@ -3016,7 +3065,7 @@ needing a JTAG cable to load a new FPGA design.
 
 ## Tools needed
 
-- Ghidra (not installed yet)
+- Ghidra
 - Rust target: `rustup target add thumbv7em-none-eabihf`
 - `cargo-binutils` or `arm-none-eabi` binutils, for disassembling patches
 - `probe-rs` and a debug probe, if SWD is reachable

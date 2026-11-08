@@ -1,5 +1,30 @@
 # Portacapture X8 as a bat detector: feasibility
 
+This is the original feasibility study, kept as written on 2 November 2026. Some
+of its open questions have since been answered, and some of its estimates have been
+replaced by measurements on a unit. For current results, see
+[HOMEBREW.md](HOMEBREW.md). Since this study was written:
+
+- **Live listening runs on the X8.** HET, COMB, FD, TE and 1:1 run on the owner's
+  unit while it records, and the CPU test measured each of them there (Step 21 in HOMEBREW.md).
+  PITCH was too slow on the X8 and is hidden there.
+- **Recording works from the bat screen.** Takes are recorded by the stock recorder
+  while the bat screen is open.
+- **Two launcher tiles open the bat app.** BAT DETECTOR and BAT PLAYBACK replace the
+  USER SETTINGS 2 and 3 tiles (installed from B231).
+- **The phone remote is installed, but not yet tested end to end.** The phone
+  page, a separate project that is not yet published, plays chimes that start and
+  stop a take (B239). The CPU cost of the X8's chime decoders was measured on the
+  unit, but no take has yet been reported as started or stopped by phone. The
+  AK-BT1 Bluetooth adapter has not been tested.
+- **GUANO metadata and setting the clock from phone chimes are built, not yet
+  installed.** B248 adds GUANO metadata to the WAV files of bat takes, and sets
+  the X8's clock from the time in a phone chime.
+
+This project is independent, and it is not affiliated with or endorsed by TASCAM.
+Route A (building the bat app into the firmware with Tascam) and the questions for
+Tascam in this study are options that the study considered.
+
 First assessment, 2 November 2026. Based on the V2.01 and V2.03 firmware update
 files, the Tascam reference manual (Rev H), and the AK5704 datasheet
 (019000890-E-01, 2022/01). No measurements on a unit yet. Figures marked
@@ -220,9 +245,9 @@ growable buffers, which the firmware cannot use. The real-time parts (for exampl
 the live heterodyne) need porting to a `no_std`, 32-bit float, fixed-buffer
 library. That library could also serve Oversample's own live microphone mode.
 
-## What to ask Tascam for
+## What we would ask Tascam
 
-In order of value:
+These are the questions we would ask Tascam, in order of value:
 
 1. **The linker map or ELF symbol file for the current firmware build.** With
    symbols, most functions already have names, so far less reverse engineering is
