@@ -1456,6 +1456,26 @@ fn history_covers_the_longest_call_and_its_snapshot_margins() {
     assert!(HISTORY as f32 >= columns_needed, "{HISTORY} columns, {columns_needed} needed");
 }
 
+/// The GUANO switch on the tools screen: on by default, offered only by a host that asks for it,
+/// and flipped by a tap on its row.
+#[test]
+fn guano_switch() {
+    let mut storage = vec![0.0f32; 1024];
+    let mut app = BatApp::new(FS, &mut storage, buffers());
+    let row = layout::TOOLS_GUANO_ROW.center();
+    app.open_tools();
+    assert!(app.guano());
+    assert!(!app.is_tappable(row.x, row.y));
+    app.touch(row.x, row.y);
+    assert!(app.guano());
+    app.set_guano_available(true);
+    assert!(app.is_tappable(row.x, row.y));
+    app.touch(row.x, row.y);
+    assert!(!app.guano());
+    app.touch(row.x, row.y);
+    assert!(app.guano());
+}
+
 /// The MIX file switch: on by default, offered only by a host that asks for it,
 /// and flipped by a tap on its row or by the wheel.
 #[test]

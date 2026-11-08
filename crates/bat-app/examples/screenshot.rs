@@ -158,6 +158,7 @@ fn main() {
         app.set_host_build(build.parse().unwrap());
     }
     app.set_mix_file_available(debug && std::env::var("PLAYBACK").is_err());
+    app.set_guano_available(debug && std::env::var("PLAYBACK").is_err());
     if let Ok(inputs) = std::env::var("INPUTS") {
         let name = |n: &str| {
             let short: &'static str = String::leak(n.to_string());

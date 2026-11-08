@@ -498,6 +498,8 @@ pub struct BatApp<'a> {
     stages: stages::StageClock,
     mix_file_available: bool,
     mix_file: bool,
+    guano_available: bool,
+    guano: bool,
     /// The mode buttons, left to right.
     modes: &'static [Mode],
     clock_s: u32,
@@ -637,6 +639,8 @@ impl<'a> BatApp<'a> {
             field!((*this).stages).write(stages::StageClock::new());
             field!((*this).mix_file_available).write(false);
             field!((*this).mix_file).write(true);
+            field!((*this).guano_available).write(false);
+            field!((*this).guano).write(true);
             field!((*this).modes).write(&Mode::ALL);
             field!((*this).clock_s).write(0);
             fill(field!((*this).mono), 0.0);
@@ -1095,6 +1099,21 @@ impl<'a> BatApp<'a> {
         self.mix_file
     }
 
+    /// The host can add GUANO metadata to its takes' WAV files: offer the switch on the tools
+    /// screen.
+    pub fn set_guano_available(&mut self, available: bool) {
+        self.guano_available = available;
+    }
+
+    pub fn guano_available(&self) -> bool {
+        self.guano_available
+    }
+
+    /// Whether takes should get GUANO metadata. On by default.
+    pub fn guano(&self) -> bool {
+        self.guano
+    }
+
     /// Whether switch `i` of `Setting::ALL` is shown on this host.
     fn setting_shown(&self, i: usize) -> bool {
         match Setting::ALL[i] {
@@ -1227,6 +1246,8 @@ impl<'a> BatApp<'a> {
                     self.open_cpu_test();
                 } else if layout::TOOLS_REMOTE_ROW.contains(p) && self.remote.available {
                     self.remote.on = !self.remote.on;
+                } else if layout::TOOLS_GUANO_ROW.contains(p) && self.guano_available {
+                    self.guano = !self.guano;
                 }
                 return;
             }
@@ -1786,7 +1807,8 @@ impl<'a> BatApp<'a> {
                 return layout::BACK.contains(p)
                     || layout::TOOLS_CHIME_TEST.contains(p)
                     || (self.debug_available && layout::TOOLS_CPU_TEST.contains(p))
-                    || (self.remote.available && layout::TOOLS_REMOTE_ROW.contains(p));
+                    || (self.remote.available && layout::TOOLS_REMOTE_ROW.contains(p))
+                    || (self.guano_available && layout::TOOLS_GUANO_ROW.contains(p));
             }
             Screen::CpuTest => {
                 return layout::CPU_TEST_BACK.contains(p)

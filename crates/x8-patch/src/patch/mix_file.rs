@@ -3,7 +3,7 @@ use core::sync::atomic::Ordering::Relaxed;
 
 use crate::file_mask::without_master;
 
-use super::state::{MIX_FILE_OFF, SCREEN_APP, TAKE_WITHOUT_MIX};
+use super::state::{GUANO_ON, MIX_FILE_OFF, SCREEN_APP, TAKE_GUANO, TAKE_WITHOUT_MIX};
 use super::{Handler, app_byte, read_byte, stock, system_mode};
 
 /// Takes that the patch may change: MANUAL's normal recording to WAV. Other file
@@ -35,9 +35,13 @@ fn remove_master() -> bool {
 }
 
 /// Replaces the one call that opens a take's files for recording, in
-/// `FUN_80dc99dc`, with r0 = the file names. The decision for the take is made
-/// here, so a change of the switch cannot apply to a file that is already open.
+/// `FUN_80dc99dc`, with r0 = the file names. The decisions for the take, the MIX
+/// file and GUANO metadata, are made here, so a change of either switch cannot apply
+/// to a take that has started. A split continues the take without coming here, so
+/// its files get the same decision.
 pub(super) unsafe extern "C" fn open_take_hook(names: usize, b: usize, c: usize, d: usize) -> usize {
+    let bat_take = system_mode() <= 1 && SCREEN_APP.load(Relaxed) == app_byte() as u32;
+    TAKE_GUANO.store(bat_take && GUANO_ON.load(Relaxed), Relaxed);
     if system_mode() <= 1 && read_byte(stock::FILES_OPEN) == 0 {
         let stale = TAKE_WITHOUT_MIX.swap(false, Relaxed);
         let wanted = MIX_FILE_OFF.load(Relaxed) && SCREEN_APP.load(Relaxed) == app_byte() as u32 && plain_recording();

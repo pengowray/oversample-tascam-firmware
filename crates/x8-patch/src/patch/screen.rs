@@ -17,7 +17,7 @@ use super::state::{
     APP, APP_READY, AUDIO_INSTALLED, AUDIO_SLOT_UNEXPECTED, AUDIO_STATE, BACKLOG_DROPPED,
     BAT_ACTIVE, BLOCKS, BUFFERS, CALLS_PER_S, COPY_PERMILLE, CYCLES_PER_S, DEBUG_SHOWN, DRAW_PERMILLE, DSP_PERMILLE,
     DUMMY_LCDIF, FRAME, HEAR_MIX, HEARD_WORDS, HOOK_CYCLES_PER_S, HOOK_IN_ITCM, ITCM_OK, IN_DROPPED, IN_READ, IN_WAITING_MOST, IN_WRITE,
-    LAST_EVENT, LAUNCH_AT, MIX_FILE_OFF, LOAD_WINDOW_START, LAUNCH_FROM, LAUNCHING, MUTE_SEEN, MUTE_SEEN_AT, NO_APP, NO_INPUT_WORDS, OUT_LAST, OUT_READ,
+    GUANO_ON, LAST_EVENT, LAUNCH_AT, MIX_FILE_OFF, LOAD_WINDOW_START, LAUNCH_FROM, LAUNCHING, MUTE_SEEN, MUTE_SEEN_AT, NO_APP, NO_INPUT_WORDS, OUT_LAST, OUT_READ,
     OUT_WRITE, PENDING, PLAYBACK, POPUP_HIDDEN, PRIMED, SAVED_BUFFER, SAVED_LITERAL, SCREEN_APP, SESSION,
     SOURCE_PEAK, STOCK_CYCLES_PER_S, TASK, TEST_DSP_MAX, TEST_SETTINGS, TEST_START_BLOCKS, TEST_START_DRY,
     TEST_START_BACKLOG, TEST_START_LOST, TEST_START_SKIPPED, UNDERRUNS, WORD_PEAKS, WORK_ENTER,
@@ -408,6 +408,7 @@ fn update_status(app: &mut BatApp<'static>) {
         app.set_mix_available(false);
         app.set_mix_file_available(false);
         app.set_remote_available(false);
+        app.set_guano_available(false);
         MIX_FILE_OFF.store(false, Relaxed);
         app.set_inputs([Some(PLAYBACK_LEFT), Some(PLAYBACK_RIGHT)]);
     } else {
@@ -415,12 +416,14 @@ fn update_status(app: &mut BatApp<'static>) {
         app.set_mix_available(true);
         app.set_mix_file_available(true);
         app.set_remote_available(true);
+        app.set_guano_available(true);
         MIX_FILE_OFF.store(!app.mix_file(), Relaxed);
         let [first, second] = selected_inputs();
         let words = first.map_or(NO_INPUT_WORDS, |first| first.word | second.unwrap_or(first).word << 8);
         HEARD_WORDS.store(words, Relaxed);
         app.set_inputs([first, second].map(|input| input.map(|input| input.name)));
     }
+    GUANO_ON.store(app.guano(), Relaxed);
     let hear_mix = !PLAYBACK.load(Relaxed) && app.feed() == Feed::Mix;
     HEAR_MIX.store(hear_mix, Relaxed);
     // A page comes first: it mutes whatever REC PAUSE does, and REC does nothing

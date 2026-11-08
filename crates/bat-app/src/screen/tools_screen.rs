@@ -1,7 +1,7 @@
 //! The tools screen, and the phone remote's notices on the main screen.
 
 use super::{BODY, BODY_BOLD, CENTER, Fb, LEFT, SMALL, rounded, switch_control, text};
-use crate::layout::{BACK, TOOLS_CHIME_TEST, TOOLS_CPU_TEST, TOOLS_REMOTE, TOOLS_REMOTE_SWITCH};
+use crate::layout::{BACK, TOOLS_CHIME_TEST, TOOLS_CPU_TEST, TOOLS_GUANO, TOOLS_GUANO_SWITCH, TOOLS_REMOTE, TOOLS_REMOTE_SWITCH};
 use crate::palette::*;
 use crate::{BatApp, RemoteCommand, RemoteResult};
 
@@ -18,6 +18,9 @@ pub(super) const CHIME_TEST_HELP: &str = "Shows if the X8 reads the phone's chim
 pub(super) const CPU_TEST_NAME: &str = "CPU test";
 pub(super) const CPU_TEST_HELP: [&str; 2] =
     ["Runs every listening mode with each Auto volume choice,", "8 s each, up to 3.5 min. Lists CPU load and lost input."];
+pub(super) const GUANO_NAME: &str = "GUANO metadata";
+pub(super) const GUANO_HELP: [&str; 2] =
+    ["Adds a timestamp and recorder model to each WAV file.", "Bat analysis apps read GUANO. Most audio apps ignore it."];
 
 pub(super) fn draw(app: &BatApp, fb: Fb) {
     if app.remote_available() {
@@ -32,6 +35,15 @@ pub(super) fn draw(app: &BatApp, fb: Fb) {
         let (x, y) = (TOOLS_CPU_TEST.top_left.x + 10, TOOLS_CPU_TEST.top_left.y);
         text(fb, &BODY_BOLD, CPU_TEST_NAME, x, y + 19, LEFT, TEXT);
         for (line, y) in CPU_TEST_HELP.iter().zip([y + 37, y + 51]) {
+            text(fb, &SMALL, *line, x, y, LEFT, TEXT_MUTED);
+        }
+    }
+    if app.guano_available() {
+        rounded(fb, TOOLS_GUANO, 6, PANEL);
+        let (x, y) = (TOOLS_GUANO.top_left.x + 10, TOOLS_GUANO.top_left.y);
+        text(fb, &BODY, GUANO_NAME, x, y + 20, LEFT, TEXT);
+        switch_control(fb, TOOLS_GUANO_SWITCH, app.guano());
+        for (line, y) in GUANO_HELP.iter().zip([y + 44, y + 58]) {
             text(fb, &SMALL, *line, x, y, LEFT, TEXT_MUTED);
         }
     }
@@ -105,10 +117,11 @@ pub(crate) fn lines_with_widths() -> std::vec::Vec<(std::string::String, i32, i3
     let mut lines = Vec::new();
     let mut add = |font: &FontRenderer, line: &str, room: i32| lines.push((line.to_string(), width(font, line), room));
     let inside = TOOLS_REMOTE.size.width as i32 - 20;
-    for line in REMOTE_HELP.iter().chain(&CPU_TEST_HELP).chain([&REMOTE_BEEPS, &CHIME_TEST_HELP]) {
+    for line in REMOTE_HELP.iter().chain(&CPU_TEST_HELP).chain(&GUANO_HELP).chain([&REMOTE_BEEPS, &CHIME_TEST_HELP]) {
         add(&SMALL, line, inside);
     }
     add(&BODY, REMOTE_NAME, 240);
+    add(&BODY, GUANO_NAME, 240);
     add(&SMALL, "Tones heard 100. Chimes read 100, failed 100.", inside);
     add(&SMALL, "Last: Start, 3600 s ago, carrier -100 dBFS", inside);
     for result in [

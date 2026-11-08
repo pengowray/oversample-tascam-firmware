@@ -194,6 +194,12 @@ pub(super) static DRAGGING: AtomicBool = AtomicBool::new(false);
 pub(super) static MIX_FILE_OFF: AtomicBool = AtomicBool::new(false);
 /// The file mask has no master file for the take in progress (see `mix_file`).
 pub(super) static TAKE_WITHOUT_MIX: AtomicBool = AtomicBool::new(false);
+/// The app's GUANO switch is on (the default). The context running the app sets it;
+/// `mix_file::open_take_hook` reads it when a take starts.
+pub(super) static GUANO_ON: AtomicBool = AtomicBool::new(true);
+/// The take in progress started from a bat tile with the GUANO switch on, so its WAV files get
+/// GUANO metadata as they are closed (see `guano_file`). Set when a take's files are opened.
+pub(super) static TAKE_GUANO: AtomicBool = AtomicBool::new(false);
 /// The most input frames waiting at the start of a chunk since the CPU test last read this.
 /// The context running the app both writes and reads it.
 pub(super) static IN_WAITING_MOST: AtomicU32 = AtomicU32::new(0);

@@ -12,13 +12,15 @@
 //! The bat app: the BAT DETECTOR and BAT PLAYBACK tiles on the LAUNCHER
 //! (USER SETTINGS 2 and 3) open MANUAL with the bat screen over it, fed from
 //! the inputs turned on in MANUAL or from the X8's playback. See
-//! docs/HOMEBREW.md, steps 9 to 23.
+//! docs/HOMEBREW.md, steps 9 to 24.
 
 #![cfg_attr(target_os = "none", no_std)]
 #![cfg_attr(target_os = "none", no_main)]
 
 #[cfg_attr(not(target_os = "none"), allow(dead_code))]
 mod file_mask;
+#[cfg_attr(not(target_os = "none"), allow(dead_code))]
+mod guano;
 
 #[cfg(target_os = "none")]
 mod patch;

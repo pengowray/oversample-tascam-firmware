@@ -108,6 +108,9 @@ BUILDS = {
             # FUN_80db63d0's call to the remaining time function, straight after it
             # has rebuilt the file mask. That function's other callers are left alone.
             ("file mask built", 0x80DB6532, 0x80DB1DC8, "file_mask_hook"),
+            # FUN_80db216c's call to the file size function, straight after it has rewritten a WAV
+            # file's header at the end of a take or a split. Its two earlier calls are left alone.
+            ("WAV header rewritten", 0x80DB236A, 0x80DE77CE, "guano_hook"),
         ],
         "facts": [
             # The veneer FUN_80e06310 goes to ITCM 0x1e484, which returns 0x1e498,
@@ -131,11 +134,11 @@ HEADER_FIELDS = ["magic", "version", "key_hook", "rec_key_hook", "touch_hook", "
                  "line5_hook", "line6_hook", "label_hook", "title_y_hook", "delete_mode_hook", "delete_hook",
                  "badge2_hook", "badge3_hook", "icon2_hook", "icon3_hook", "icon_image2_hook", "icon_image3_hook",
                  "icon_height2_hook", "icon_height3_hook", "icon_width2_hook", "icon_width3_hook",
-                 "power_off_save_hook", "open_take_hook", "file_mask_hook", "build"]
-HEADER_FORMAT = "<4s32I"
+                 "power_off_save_hook", "open_take_hook", "file_mask_hook", "guano_hook", "build"]
+HEADER_FORMAT = "<4s33I"
 # The packer writes the update file's build number here, for the CPU test to show.
 BUILD_OFFSET = struct.calcsize(HEADER_FORMAT) - 4
-HEADER_VERSION = 17
+HEADER_VERSION = 18
 
 B_W, BL = 0x9000, 0xD000   # bits 15, 14 and 12 of the second halfword
 

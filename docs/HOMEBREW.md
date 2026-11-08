@@ -2165,6 +2165,54 @@ DSP task shows as about 2 `dsp` points.
   volume off and on), COMB stereo 44 and 56.
 - **Auto volume.** Does On and Bats only sound as before?
 
+## Step 24 test file: GUANO metadata in takes from BAT DETECTOR (built 2026-11-08, not yet installed)
+
+`work/patch24/#PortaX8_0242.203` (B242, SHA-256 `96083599…62b8e349`). Includes steps 11 to 23. Install this file in place of
+B241 or an earlier build. All the checks in `tools/x8patch.py` pass on this file. It has one new stock hook site, so the patch
+header is now version 18.
+
+- **GUANO metadata.** Each WAV file of a take recorded with the bat screen open gets a GUANO chunk (`guan`) after its audio. The
+  patch adds it when the stock recorder closes the file, at the end of the take and when a long take splits at about 4 GB, so each
+  file of a split take has its own. How and why is in [GUANO metadata](#guano-metadata-2026-11-08).
+- **Switch.** TOOLS has a `GUANO metadata` switch below CPU test, on by default. Like the other bat settings it goes back to on
+  when the recorder is turned off. The patch reads it when a take starts, so a change applies from the next take.
+- **Fields.** This is the text the patch's code wrote to a PC copy of `261106_0095_3-4.wav` (a take with 2 marks). Oversample's
+  GUANO reader and its reader for chunks after the audio both read it, and ffprobe still reads 5.904 s of audio:
+
+  ```
+  GUANO|Version: 1.0
+  Timestamp: 2026-11-06T21:30:49
+  Length: 5.904000
+  Samplerate: 192000
+  Make: TASCAM
+  Model: Portacapture X8
+  Firmware Version: V2.03 with bat patch B242
+  Original Filename: 261106_0095_3-4.wav
+  ```
+
+  `Timestamp` is the X8's clock with no time zone: the `bext` chunk's date and time, which the stock recorder writes when it
+  closes the file, less the length, to the nearest second. `Original Filename` is the name the file was opened with, after the
+  last `/`; the patch leaves the field out if the name is not printable ASCII. The name's form in the take's file table has not been
+  seen on a unit.
+
+| Item | B241 | B242 | Limit |
+|---|---|---|---|
+| ITCM | 82.5 KB | 82.5 KB | 89.2 KB |
+| DTCM | 141.5 KB | 141.5 KB | 152.8 KB |
+| `.noinit`, the end of the patch's memory | ends at 0x818ed558 | ends at 0x818ee890 | 0x81900000 |
+
+**What to check.**
+
+1. Record a take of about 30 s from BAT DETECTOR and press MARK twice during it. On a computer, open the WAV file in Oversample.
+   Does it list the GUANO fields? Is `Timestamp` within 2 s of when the recording started (the second REC press)? Is
+   `Original Filename` the file's name? Without Oversample, `tail -c 600 FILE.wav | strings` prints the text.
+2. On the X8, play the take with PLAY in MANUAL and on BAT PLAYBACK. Do both marks show? Add a mark during playback, then check
+   on the computer that the file has 3 marks and still has its GUANO text.
+3. Turn `GUANO metadata` off in TOOLS and record a take. Its files should end with the audio, as stock files do.
+4. Record a take in MANUAL opened from its own tile. It should have no GUANO text.
+5. If there is time: a take longer than about 46 min at 192 kHz with inputs 3 and 4 splits at about 4 GB. Does each file have its
+   own GUANO text, with a `Timestamp` about 46 min apart?
+
 ## Checking takes for cuts in the WAV (2026-11-07)
 
 Files from B231 (`to-2026-11-06`, 13.8 minutes in 9 takes) and B235 (`to-2026-11-07`, 5.7 minutes in 6 takes). Scripts were
@@ -2296,6 +2344,63 @@ of CPU time:
 The mixer, the meters and the hook keep running. If the card writes use DMA, the write task's share
 could be smaller. Fewer files may also shorten the longest gaps, which matters for `dry` and `lost`,
 but only a measurement can show that.
+
+## GUANO metadata (2026-11-08)
+
+How the stock recorder writes a WAV file's header, and why the patch puts GUANO metadata after the audio. Read in V2.03 with the
+Ghidra project and checked against takes from 2026-11-06. Built as [Step 24](#step-24-test-file-guano-metadata-in-takes-from-bat-detector-built-2026-11-08-not-yet-installed).
+
+**Header layout.** Every take file has 5,548 bytes before its audio: `RIFF`, `bext` (1,116 bytes), a 4,380-byte area for marks,
+`fmt ` (16 bytes), then the `data` chunk's header. With no marks, the area is one `JUNK` chunk. With marks, `cue ` and a `LIST`
+`adtl` chunk (labels `MARK_01` and on) fill its start and a smaller `JUNK` the rest. Each mark takes 44 bytes, plus 24 for the
+two chunk headers, so 99 marks, the most the X8 allows, fill all 4,380 bytes. `FUN_80df54d0` builds the header.
+
+**When the header is written.** `FUN_80db19b8` writes a header as it opens each file. At the end of a take `FUN_80db2102`, and
+at a split `FUN_80dbba78`, first writes out the audio still buffered, then calls `FUN_80db216c(slot)` for each WAV file.
+`FUN_80db216c` builds the header again in the buffer at 0x87b40190 from the file's size (RIFF size = size - 8, data size =
+size - 5,548), seeks to 0 and writes it. Then it calls the file size function `FUN_80de77ce` once more, for the free space
+count (`FUN_80dd0478`) and the table of file dates (`FUN_80dbd002`). After that come the `.bin` project file and the closing of
+each file. MP3 files go through `FUN_80db2106`, and overdub closes its files by another path.
+
+**The times in `bext`.** OriginationDate and OriginationTime are read from the clock when the header is built, so they hold the
+end of the take, to the second. TimeReference holds an earlier time: in takes 0090 to 0092 of 2026-11-06 it is 3 to 10 s before
+the end time less the length. That fits the first REC press (record standby), which was not checked.
+
+**Why not in the header.** The mark writer `FUN_80df19c8` rewrites `cue ` and `LIST` in place. It runs at the end of a take and
+when marks change during playback (`FUN_80df1d0c`, `FUN_80df187a`). It finds the chunks with `FUN_80df18de` and returns -1
+without writing unless `cue `, `LIST` and `JUNK` follow each other and add up to exactly 4,380 bytes, so a `guan` chunk in that
+area would stop marks being saved. Making room by shortening `bext` is no better: `FUN_80df51cc` copies 0x200 bytes from
+`bext` + 0x262 when it reads a file.
+
+**After the audio.** The GUANO spec allows the chunk anywhere in the file and says a writer may put it at the end. The stock
+readers stop at `data` (`FUN_80df5386`, `FUN_80df51cc`) and take the audio's length from the data chunk's size, not the file's
+size. The chunk search `FUN_80df5896` goes from chunk to chunk, rounding odd sizes up, and `FUN_80df18de` stops at the RIFF
+size, so a `guan` chunk that the RIFF size counts is passed over. `FUN_80df19c8` gives up only when the file is longer than the
+data offset plus the RIFF size, which a chunk of under 1 KB cannot cause. Oversample's streaming loader reads up to 64 KB after
+the data chunk to find GUANO.
+
+**The hook.** The packer retargets `bl 0x80de77ce` at 0x80db236a, the size call after the header write in `FUN_80db216c`, to
+`guano_hook` (`crates/x8-patch/src/patch/guano_file.rs`). It acts only on a take that started with the bat screen open and the
+switch on (decided in `open_take_hook`), and not during overdub or mix down. It:
+
+1. reads the file's size,
+2. reads the header just written from the stock buffer, and checks that the RIFF size and the data chunk both end at that size,
+3. builds the chunk at buffer + 0x8000 (`crates/x8-patch/src/guano.rs`, which has host tests),
+4. seeks to the end of the file and writes the chunk, then writes the new RIFF size at offset 4,
+5. calls the stock size function, so the free space count includes the chunk.
+
+It uses the C library calls the recorder uses (`FUN_80de74cc` to seek, `FUN_80de74b6` to write) on the recorder's own file handle,
+from the recorder's own task, and writes from the stock header buffer as the stock code does. The file's name comes from the
+take's file table at 0x81cbacac: 24 slots of 0x204 bytes, each a file handle then the path it was opened with. If any check
+fails, the file stays as the stock code wrote it.
+
+**Not checked.**
+
+- A card that fills up while the chunk is written. Up to 1 KB could be left after the RIFF size, which readers skip, and the stock
+  close might then report a write error.
+- Overdub and punch-in in MANUAL on a take that has GUANO. Overdub's branch of `FUN_80db2102` works from file sizes, so it might
+  read the chunk as audio.
+- The form of the paths in the take's file table, which the `Original Filename` field depends on.
 
 ## Firmware map (V2.03, in progress)
 

@@ -252,13 +252,19 @@ pub fn waterfall_freq_at(x: i32, y: i32) -> Option<f32> {
 }
 
 /// Tools screen: the phone remote's panel, with its switch at the right, then a full-width
-/// button for each test, with its help inside the button.
+/// button for each test, with its help inside the button, then the GUANO panel, which is laid out
+/// like the remote's. GUANO comes last because it is rarely changed, and so the buttons above stay
+/// where they were. Its place is fixed, so on a host with no CPU test it sits below a gap.
 pub const TOOLS_REMOTE: Rectangle = Rectangle::new(Point::new(6, 32), Size::new(308, 118));
 /// The top of that panel, where a tap flips the switch.
 pub const TOOLS_REMOTE_ROW: Rectangle = Rectangle::new(Point::new(6, 32), Size::new(308, 40));
 pub const TOOLS_REMOTE_SWITCH: Rectangle = Rectangle::new(Point::new(260, 40), Size::new(SWITCH_W, SWITCH_H));
 pub const TOOLS_CHIME_TEST: Rectangle = Rectangle::new(Point::new(6, 158), Size::new(308, 48));
 pub const TOOLS_CPU_TEST: Rectangle = Rectangle::new(Point::new(6, 214), Size::new(308, 62));
+pub const TOOLS_GUANO: Rectangle = Rectangle::new(Point::new(6, 284), Size::new(308, 68));
+/// The top of that panel, where a tap flips the switch.
+pub const TOOLS_GUANO_ROW: Rectangle = Rectangle::new(Point::new(6, 284), Size::new(308, 40));
+pub const TOOLS_GUANO_SWITCH: Rectangle = Rectangle::new(Point::new(260, 292), Size::new(SWITCH_W, SWITCH_H));
 
 /// CPU test screen. Row pitch and baselines are as small as the text allows, because with two
 /// inputs on the table has 26 rows and 4 headings.

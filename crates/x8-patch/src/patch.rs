@@ -11,6 +11,8 @@ mod audio;
 mod inputs;
 /// Copies the hot code into ITCM and checks that it stays unchanged.
 mod itcm;
+/// Adds GUANO metadata to the WAV files of takes from a bat tile as the stock recorder closes them.
+mod guano_file;
 /// The key and touch hooks, and passing their events on to the app.
 mod keys;
 /// The bat tiles on the LAUNCHER: slots, texts, title position, delete mode, badges and icons.
@@ -37,6 +39,7 @@ mod stock;
 /// The DSP task, the patch stack and the bat app they run.
 mod task;
 
+use guano_file::guano_hook;
 use keys::{key_hook, rec_key_hook, touch_hook};
 use mix_file::{file_mask_hook, open_take_hook};
 use launcher::{
@@ -89,6 +92,8 @@ pub struct Header {
     open_take_hook: Handler,
     /// Replaces the file mask function's call to the remaining time function.
     file_mask_hook: Handler,
+    /// Replaces the WAV header rewrite's call to the file size function, at the end of a take or a split.
+    guano_hook: Handler,
     /// The build number on the update screen. 0 here: `tools/x8patch.py` writes it into the
     /// update file, so read it with [`patch_build`].
     build: u32,
@@ -98,7 +103,7 @@ pub struct Header {
 #[unsafe(link_section = ".header")]
 pub static X8_PATCH_HEADER: Header = Header {
     magic: *b"BATX",
-    version: 17,
+    version: 18,
     key_hook,
     rec_key_hook,
     touch_hook,
@@ -119,6 +124,7 @@ pub static X8_PATCH_HEADER: Header = Header {
     power_off_save_hook,
     open_take_hook,
     file_mask_hook,
+    guano_hook,
     build: 0,
 };
 

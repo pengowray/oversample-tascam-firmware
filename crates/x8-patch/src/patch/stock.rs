@@ -201,3 +201,25 @@ pub const HOLD_ON: usize = 0x80da_ca31;
 pub const RECORDING_GUIDE: *const u8 = 0x81e8_ca12 as *const u8;
 /// `FUN_80db1dc8()`: works out the remaining recording time (Thumb address).
 pub const UPDATE_REMAINING_TIME: usize = 0x80db_1dc9;
+/// Settings + 0x265: non-zero during overdub, which closes its files by another path.
+pub const OVERDUB: *const u8 = 0x81e8_cae1 as *const u8;
+/// The C library's file calls that the recorder uses (Thumb addresses). `FUN_80de77ce(file,
+/// &size)` stores the file's size; `FUN_80de74cc(file, _, offset_low, offset_high, whence)`
+/// seeks (whence 0 from the start) and returns a negative number on failure;
+/// `FUN_80de74b6(buffer, count, file)` writes and returns the bytes written.
+pub const FILE_SIZE: usize = 0x80de_77cf;
+pub const FILE_SEEK: usize = 0x80de_74cd;
+pub const FILE_WRITE: usize = 0x80de_74b7;
+/// The buffer `FUN_80db216c` builds a WAV header in and writes it to the card from, at the end of
+/// a take and when a take splits. It zeroes all of it before each header.
+pub const HEADER_BUFFER: *mut u8 = 0x87b4_0190 as *mut u8;
+pub const HEADER_BUFFER_BYTES: usize = 0x4_0000;
+/// A take's open files, one entry for each file slot: the file handle (0 when the slot is not
+/// written), then the path it was opened with, a C string of up to 0x200 bytes
+/// (block 0x81cb7a48 + 0x3264, filled by `FUN_80db19b8`).
+pub const TAKE_FILES: usize = 0x81cb_acac;
+pub const TAKE_FILE_STEP: usize = 0x204;
+pub const TAKE_FILE_PATH_BYTES: usize = 0x200;
+pub const FILE_SLOTS: usize = 24;
+/// The stock firmware the patch is built on, as the X8's information screen shows it.
+pub const FIRMWARE_VERSION: &str = "V2.03";
