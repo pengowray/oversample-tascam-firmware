@@ -2165,11 +2165,17 @@ DSP task shows as about 2 `dsp` points.
   volume off and on), COMB stereo 44 and 56.
 - **Auto volume.** Does On and Bats only sound as before?
 
-## Step 24 test file: GUANO metadata in takes from BAT DETECTOR, settings in three tabs (built 2026-11-08, not yet installed)
+## Step 24 test file: GUANO metadata in takes from BAT DETECTOR, settings in three tabs, cheaper chime decoders (built 2026-11-08, not yet installed)
 
-`work/patch24/#PortaX8_0245.203` (B245, SHA-256 `d3c2641f…fb031f4e9b7`). Includes steps 11 to 23. Install this file in place of
+`work/patch24/#PortaX8_0246.203` (B246, SHA-256 `d678c87b…3830dcf1f693`). Includes steps 11 to 23. Install this file in place of
 B241 or an earlier build. All the checks in `tools/x8patch.py` pass on this file. It has one new stock hook site, so the patch
-header is now version 18. B242 to B244 were built earlier the same day and never installed; their files have been deleted.
+header is now version 18. B242 to B245 were built earlier the same day and never installed; their files have been deleted.
+
+- **Cheaper chime decoders.** The phone remote's and the chime test's decoders now mix and decimate 192 kHz to 24 kHz in a
+  3rd-order CIC stage before the 1 kHz Butterworth, which was 98% of a listening decoder's cost. On the PC, one decoder went
+  from 1.76 to 0.62 ms of CPU a second while listening, and from 2.76 to 1.6 during a chime. The decoding tables match the
+  old decoder within one trial at the threshold. Details are in the `chime` commits merged on 2026-11-08 (`b60e708` and
+  after); `cargo run --release -p chime --example cost` times the stages.
 
 - **Settings in three tabs.** SETTINGS has tabs under the title bar, and the TOOLS screen is gone. `Listen` has Lowest bat
   call, Listen to, Auto volume (full width, with wider choices) and the sounds to mark. `Record` has MIX file, GUANO metadata
@@ -2193,7 +2199,7 @@ header is now version 18. B242 to B244 were built earlier the same day and never
   Samplerate: 192000
   Make: TASCAM
   Model: Portacapture X8
-  Firmware Version: V2.03 with bat patch B245
+  Firmware Version: V2.03 with bat patch B246
   Original Filename: 261106_0095_3-4.wav
   ```
 
@@ -2212,11 +2218,11 @@ header is now version 18. B242 to B244 were built earlier the same day and never
   2 KB free (it uses about 0.7 KB), or on a stack the table does not list. A file left without GUANO this way looks like a
   stock file.
 
-| Item | B241 | B245 | Limit |
+| Item | B241 | B246 | Limit |
 |---|---|---|---|
-| ITCM | 82.5 KB | 82.2 KB | 89.2 KB |
+| ITCM | 82.5 KB | 84.0 KB | 89.2 KB |
 | DTCM | 141.5 KB | 141.5 KB | 152.8 KB |
-| `.noinit`, the end of the patch's memory | ends at 0x818ed558 | ends at 0x818ef828 | 0x81900000 |
+| `.noinit`, the end of the patch's memory | ends at 0x818ed558 | ends at 0x818f0568 | 0x81900000 |
 
 **What to check.**
 
@@ -2232,7 +2238,10 @@ header is now version 18. B242 to B244 were built earlier the same day and never
 6. CPU test while recording: does the summary line say `MIX file on.`, or `MIX file off.` with the MIX file switch off?
 7. The tabs: does each open its page, and does the wheel change only the outlined setting on the page shown? Does Back on the
    chime test and the CPU test return to `Tests`? Does SETTINGS reopen on the tab last used?
-8. If there is time: a take longer than about 46 min at 192 kHz with inputs 3 and 4 splits at about 4 GB. Does each file have its
+8. CPU test while recording, synthetic calls on, then `Stages`: photograph both tables. The two rows with the chime decoders
+   running, and the `dec` column, show what the cheaper decoders save against B239's run. Does the phone remote start and stop
+   a take while recording now, with no lost input?
+9. If there is time: a take longer than about 46 min at 192 kHz with inputs 3 and 4 splits at about 4 GB. Does each file have its
    own GUANO text, with a `Timestamp` about 46 min apart? A split file without GUANO would mean the stack check stopped it: the
    split runs on a task that has not been identified.
 
