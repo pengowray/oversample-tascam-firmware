@@ -63,6 +63,9 @@ pub struct RowResult {
     pub waiting_most: u32,
     /// The recorder's state, or `None` if it changed during the row.
     pub recorder: Option<Recorder>,
+    /// Whether the take had a MIX file when the measuring started, or None with no take's files
+    /// open.
+    pub mix_file: Option<bool>,
 }
 
 /// One combination to run.
@@ -138,6 +141,7 @@ pub(crate) struct CpuTest {
     last_window: u32,
     /// The state at the start of the measuring, and whether it has stayed the same.
     recorder: Option<Recorder>,
+    mix_file: Option<bool>,
     calls: TestCalls,
 }
 
@@ -171,6 +175,7 @@ impl CpuTest {
             sums: Sums { windows: 0, irq: 0, hook: 0, dsp: 0, draw: 0, copy: 0, dsp_max: 0, waiting_most: 0 },
             last_window: 0,
             recorder: None,
+            mix_file: None,
             calls: TestCalls::new(),
         }
     }
@@ -227,7 +232,7 @@ impl CpuTest {
     pub(crate) fn figures(
         &mut self,
         figures: HostFigures,
-        recorder: Recorder,
+        (recorder, mix_file): (Recorder, Option<bool>),
         skipped: u32,
         stages: &StageClock,
         now: u64,
@@ -244,6 +249,7 @@ impl CpuTest {
                 self.sums = Sums::default();
                 self.last_window = figures.window;
                 self.recorder = Some(recorder);
+                self.mix_file = mix_file;
             }
             return false;
         }
@@ -292,6 +298,7 @@ impl CpuTest {
             skip_percent: (skipped_frames * 100 / measured_frames).min(100) as u32,
             waiting_most: sums.waiting_most,
             recorder: self.recorder,
+            mix_file: self.mix_file,
         };
         if let Some(row) = self.rows.get_mut(self.at) {
             row.result = Some(result);

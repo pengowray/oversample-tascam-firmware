@@ -6,6 +6,21 @@
 /// Slot 6 is a mono `_MIX` file and slot 19 a stereo one.
 const MASTER_SLOTS: u32 = 1 << 6 | 1 << 19;
 
+/// Bits 6 and 7 of MANUAL's track on/off words (settings + 0x200 and + 0x204) are the master
+/// track: bit 6 of the first for a mono master, bits 6 and 7 of the second for a stereo one. With
+/// none set, REC READY is off for MASTER and takes have no MIX file.
+const MASTER_TRACK_BITS: u32 = 0xc0;
+
+/// Whether REC READY is on for MASTER in MANUAL, from the two track on/off words.
+pub fn master_rec_ready(words: [u32; 2]) -> bool {
+    (words[0] | words[1]) & MASTER_TRACK_BITS != 0
+}
+
+/// Whether a file mask includes a MIX file.
+pub fn has_master(mask: u32) -> bool {
+    mask & MASTER_SLOTS != 0
+}
+
 /// The mask without the master file, and its lowest slot, which the stock code
 /// keeps in a separate byte: the end of a take looks at that slot's file handle
 /// and stops early if it is null, so the byte must name a file that was opened.
@@ -45,6 +60,16 @@ mod tests {
     fn a_master_on_its_own_stays() {
         assert_eq!(without_master(MONO_MIX), None);
         assert_eq!(without_master(STEREO_MIX), None);
+    }
+
+    /// MANUAL's defaults: 0x7c and 3 with a mono master, 0x3c and 0xc3 with a stereo one.
+    #[test]
+    fn rec_ready_for_master() {
+        assert!(super::master_rec_ready([0x7c, 3]));
+        assert!(super::master_rec_ready([0x3c, 0xc3]));
+        assert!(!super::master_rec_ready([0x3c, 3]));
+        assert!(super::has_master(STEREO_3_4 | MONO_MIX));
+        assert!(!super::has_master(STEREO_3_4));
     }
 
     #[test]

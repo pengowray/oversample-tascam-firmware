@@ -1456,6 +1456,27 @@ fn history_covers_the_longest_call_and_its_snapshot_margins() {
     assert!(HISTORY as f32 >= columns_needed, "{HISTORY} columns, {columns_needed} needed");
 }
 
+/// With REC READY off for MASTER in MANUAL, no take has a MIX file: the switch shows off, and
+/// taps and the wheel leave the app's own setting alone for when REC READY is back on.
+#[test]
+fn mix_file_switch_follows_rec_ready() {
+    let mut storage = vec![0.0f32; 1024];
+    let mut app = BatApp::new(FS, &mut storage, buffers());
+    let index = Setting::ALL.iter().position(|&s| s == Setting::MixFile).unwrap();
+    let row = layout::switch_row(index - Setting::STEPPED).center();
+    app.set_mix_file_available(true);
+    app.open_settings();
+    app.set_manual_mix_file(false);
+    assert!(!app.is_tappable(row.x, row.y));
+    app.touch(row.x, row.y);
+    app.wheel(-1);
+    assert!(app.mix_file());
+    app.set_manual_mix_file(true);
+    assert!(app.is_tappable(row.x, row.y));
+    app.touch(row.x, row.y);
+    assert!(!app.mix_file());
+}
+
 /// The GUANO switch on the tools screen: on by default, offered only by a host that asks for it,
 /// and flipped by a tap on its row.
 #[test]

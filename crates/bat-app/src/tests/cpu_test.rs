@@ -271,13 +271,13 @@ fn a_stage_clock_adds_each_stage_and_rows_keep_their_shares() {
     let rate = FS as u64;
     let figures = HostFigures { dsp_percent: 40, draw_percent: 18, copy_percent: 8, ..Default::default() };
     let settle = crate::cpu_test::SETTLE_S * rate;
-    assert!(!test.figures(figures, Recorder::Stopped, 0, &clock, settle, rate));
+    assert!(!test.figures(figures, (Recorder::Stopped, None), 0, &clock, settle, rate));
     let start = clock.totals;
     clock.totals[Stage::Analysis as usize] = start[Stage::Analysis as usize] + 48_000 * 6 / 4;
     clock.totals[Stage::Mode as usize] = start[Stage::Mode as usize] + 48_000 * 6 / 20;
     let end = (crate::cpu_test::SETTLE_S + crate::cpu_test::MEASURE_S) * rate;
     let next = HostFigures { window: 1, ..figures };
-    assert!(test.figures(next, Recorder::Stopped, 0, &clock, end, rate));
+    assert!(test.figures(next, (Recorder::Stopped, None), 0, &clock, end, rate));
     let result = test.rows[0].result.expect("the row finished");
     let stages = result.stages.expect("the clock was running");
     assert_eq!(stages[Stage::Analysis as usize], 25);

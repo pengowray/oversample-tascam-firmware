@@ -498,6 +498,10 @@ pub struct BatApp<'a> {
     stages: stages::StageClock,
     mix_file_available: bool,
     mix_file: bool,
+    /// MANUAL's MASTER has REC READY on, so a take can have a MIX file.
+    manual_mix_file: bool,
+    /// Whether the take being recorded writes a MIX file, or None with no take's files open.
+    take_mix_file: Option<bool>,
     guano_available: bool,
     guano: bool,
     /// The mode buttons, left to right.
@@ -639,6 +643,8 @@ impl<'a> BatApp<'a> {
             field!((*this).stages).write(stages::StageClock::new());
             field!((*this).mix_file_available).write(false);
             field!((*this).mix_file).write(true);
+            field!((*this).manual_mix_file).write(true);
+            field!((*this).take_mix_file).write(None);
             field!((*this).guano_available).write(false);
             field!((*this).guano).write(true);
             field!((*this).modes).write(&Mode::ALL);
@@ -796,7 +802,8 @@ impl<'a> BatApp<'a> {
             return;
         }
         let recorder = self.recorder().0;
-        let finished = self.cpu_test.figures(figures, recorder, self.skipped_chunks, &self.stages, self.samples, self.sample_rate as u64);
+        let state = (recorder, self.take_mix_file);
+        let finished = self.cpu_test.figures(figures, state, self.skipped_chunks, &self.stages, self.samples, self.sample_rate as u64);
         if finished {
             self.cpu_test.at += 1;
             self.begin_cpu_test_row();
@@ -912,7 +919,7 @@ impl<'a> BatApp<'a> {
             // Turning the wheel up switches on, down switches off.
             Setting::DebugInfo if steps != 0 => self.debug_info = steps > 0,
             Setting::DebugInfo => {}
-            Setting::MixFile if steps != 0 => self.mix_file = steps > 0,
+            Setting::MixFile if steps != 0 && self.manual_mix_file => self.mix_file = steps > 0,
             Setting::MixFile => {}
             // Turning the wheel up switches on, down switches off.
             Setting::Mark(kind) if steps != 0 => self.set_marked(kind, steps > 0),
@@ -1094,9 +1101,31 @@ impl<'a> BatApp<'a> {
         self.mix_file_available
     }
 
-    /// Whether takes should write the MIX file, which is the stock behaviour.
+    /// Whether takes should write the MIX file, which is the stock behaviour. This is the switch's
+    /// own setting: with REC READY off in MANUAL ([`set_manual_mix_file`](Self::set_manual_mix_file)),
+    /// no take has a MIX file whatever it says.
     pub fn mix_file(&self) -> bool {
         self.mix_file
+    }
+
+    /// Whether MANUAL's MASTER has REC READY on, so a take can have a MIX file. With it off, the
+    /// MIX file switch shows off and can't be changed here: only MANUAL can turn it back on.
+    pub fn set_manual_mix_file(&mut self, on: bool) {
+        self.manual_mix_file = on;
+    }
+
+    pub fn manual_mix_file(&self) -> bool {
+        self.manual_mix_file
+    }
+
+    /// Whether the take being recorded writes a MIX file, or None with no take's files open. The CPU
+    /// test shows it, since the MIX file costs CPU while recording.
+    pub fn set_take_mix_file(&mut self, written: Option<bool>) {
+        self.take_mix_file = written;
+    }
+
+    pub fn take_mix_file(&self) -> Option<bool> {
+        self.take_mix_file
     }
 
     /// The host can add GUANO metadata to its takes' WAV files: offer the switch on the tools
@@ -1283,7 +1312,7 @@ impl<'a> BatApp<'a> {
                         Setting::Mark(kind) => self.set_marked(kind, !self.is_marked(kind)),
                         Setting::AutoLevel => self.level.set_volume(layout::auto_volume_at(x, i - Setting::STEPPED)),
                         Setting::DebugInfo => self.debug_info = !self.debug_info,
-                        Setting::MixFile => self.mix_file = !self.mix_file,
+                        Setting::MixFile if self.manual_mix_file => self.mix_file = !self.mix_file,
                         _ => {}
                     }
                 }
@@ -1825,7 +1854,9 @@ impl<'a> BatApp<'a> {
         }
         if self.screen == Screen::Settings {
             return match layout::settings_hit(x, y, Setting::STEPPED, Setting::ALL.len()) {
-                Some(layout::SettingsHit::Switch(i)) => self.setting_shown(i),
+                Some(layout::SettingsHit::Switch(i)) => {
+                    self.setting_shown(i) && (Setting::ALL[i] != Setting::MixFile || self.manual_mix_file)
+                }
                 Some(layout::SettingsHit::Minus(i) | layout::SettingsHit::Plus(i)) => {
                     Setting::ALL[i] != Setting::ListenTo || self.listen_has_choices()
                 }

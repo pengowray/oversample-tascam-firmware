@@ -27,6 +27,9 @@
 //! longest debug lines over the last-call panel, to check that they fit.
 //! `AUTO=on` or `AUTO=bats` sets Auto volume, for the settings screen.
 //! `GUANO=off` turns the GUANO metadata switch off, for the tools screen.
+//! `REC_READY=off` shows MANUAL's MASTER with REC READY off, for the settings screen's MIX file row.
+//! `TAKE_MIX=on` or `TAKE_MIX=off` says whether the take being recorded has a MIX file, for the CPU
+//! test.
 //! `LISTEN=first` or `LISTEN=second` chooses one side in Listen to, for the settings
 //! screen; the default is both.
 
@@ -161,6 +164,12 @@ fn main() {
     app.set_mix_file_available(debug && std::env::var("PLAYBACK").is_err());
     app.set_guano_available(debug && std::env::var("PLAYBACK").is_err());
     app.set_guano(std::env::var("GUANO").as_deref() != Ok("off"));
+    app.set_manual_mix_file(std::env::var("REC_READY").as_deref() != Ok("off"));
+    app.set_take_mix_file(match std::env::var("TAKE_MIX").as_deref() {
+        Ok("on") => Some(true),
+        Ok("off") => Some(false),
+        _ => None,
+    });
     if let Ok(inputs) = std::env::var("INPUTS") {
         let name = |n: &str| {
             let short: &'static str = String::leak(n.to_string());

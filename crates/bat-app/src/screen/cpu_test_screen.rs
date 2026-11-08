@@ -70,10 +70,19 @@ pub(super) const VIEW_TOTALS: &str = "Totals";
 /// What the recorder was doing for every row.
 fn every_row(state: Recorder) -> &'static str {
     match state {
-        Recorder::Recording => "Recorder was recording for every row.",
-        Recorder::Standby => "Recorder was in standby for every row.",
-        Recorder::Paused => "Recorder was paused for every row.",
-        Recorder::Stopped => "Recorder was stopped for every row.",
+        Recorder::Recording => "Recording for every row.",
+        Recorder::Standby => "Record standby for every row.",
+        Recorder::Paused => "Recording paused for every row.",
+        Recorder::Stopped => "Recorder stopped for every row.",
+    }
+}
+
+/// After the recorder's state while recording: whether the take writes a MIX file, which costs CPU.
+fn mix_note(mix_file: Option<bool>) -> &'static str {
+    match mix_file {
+        Some(true) => " MIX file on.",
+        Some(false) => " MIX file off.",
+        None => "",
     }
 }
 
@@ -141,6 +150,8 @@ fn summary(app: &BatApp, fb: Fb) {
     let Some(first) = rows.iter().find_map(|row| row.result) else {
         let state = app.recorder().0;
         let line = match state {
+            Recorder::Recording if app.take_mix_file() == Some(true) => "Recording, MIX file on. The test runs while recording.",
+            Recorder::Recording if app.take_mix_file() == Some(false) => "Recording, MIX file off. The test runs while recording.",
             Recorder::Recording => "Recording. The test runs while recording.",
             Recorder::Standby => "Record standby. Press REC to test while recording.",
             Recorder::Paused => "Recording paused. Press REC to test while recording.",
@@ -149,9 +160,15 @@ fn summary(app: &BatApp, fb: Fb) {
         text(fb, &SMALL, line, LABEL_X, y, LEFT, TEXT);
         return;
     };
-    let same = rows.iter().filter_map(|row| row.result).all(|result| result.recorder == first.recorder);
+    let same = rows
+        .iter()
+        .filter_map(|row| row.result)
+        .all(|result| result.recorder == first.recorder && result.mix_file == first.mix_file);
     let x = match (same, first.recorder) {
-        (true, Some(state)) => text(fb, &SMALL, every_row(state), LABEL_X, y, LEFT, TEXT),
+        (true, Some(state)) => {
+            let x = text(fb, &SMALL, every_row(state), LABEL_X, y, LEFT, TEXT);
+            text(fb, &SMALL, mix_note(first.mix_file), x, y, LEFT, TEXT)
+        }
         _ => text(fb, &SMALL, STATE_CHANGED, LABEL_X, y, LEFT, METER_YELLOW),
     };
     if ran < rows.len() {
@@ -187,7 +204,7 @@ fn table(app: &BatApp, fb: Fb) {
     }
     hline(fb, LABEL_X, SKIP_X, CPU_TEST_COLUMNS + 2, LINE);
     let rows = app.cpu_test_rows();
-    let first_state = rows.iter().find_map(|row| row.result).and_then(|result| result.recorder);
+    let first = rows.iter().find_map(|row| row.result).map(|result| (result.recorder, result.mix_file));
     let mut y = CPU_TEST_FIRST_ROW;
     let mut heading = "";
     for row in rows {
@@ -201,7 +218,7 @@ fn table(app: &BatApp, fb: Fb) {
         let x = text(fb, &SMALL, mode, LABEL_X + ROW_INDENT, y, LEFT, TEXT);
         let x = text(fb, &SMALL, suffix, x, y, LEFT, TEXT);
         if let Some(result) = row.result {
-            if result.recorder != first_state {
+            if Some((result.recorder, result.mix_file)) != first {
                 text(fb, &SMALL, "*", x + 1, y, LEFT, METER_YELLOW);
             }
             match view {
@@ -341,6 +358,9 @@ pub(crate) fn lines_with_widths() -> std::vec::Vec<(std::string::String, i32, i3
     for state in [Recorder::Recording, Recorder::Standby, Recorder::Paused, Recorder::Stopped] {
         add(&SMALL, &format!("{} Ended at 25 of 26.", every_row(state)), full);
     }
+    add(&SMALL, &format!("{}{} Ended at 25 of 26.", every_row(Recorder::Recording), mix_note(Some(false))), full);
+    add(&SMALL, "Recording, MIX file on. The test runs while recording.", full);
+    add(&SMALL, "Recording, MIX file off. The test runs while recording.", full);
     add(&SMALL, &format!("{STATE_CHANGED} Ended at 25 of 26."), full);
     add(&SMALL, "Recording paused. Press REC to test while recording.", full);
     add(&SMALL, "Recorder stopped. Press REC to test while recording.", full);

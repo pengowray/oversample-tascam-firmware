@@ -10,6 +10,7 @@ use embedded_graphics::primitives::Rectangle;
 use u8g2_fonts::types::{FontColor, VerticalPosition};
 use u8g2_fonts::{FontRenderer, fonts};
 
+use x8_patch::file_mask::{has_master, master_rec_ready};
 use super::inputs::{PLAYBACK_LEFT, PLAYBACK_RIGHT, on_tracks_muted, selected_inputs, tracks_on};
 use super::audio::{OUTPUT_GAIN, use_itcm_hook};
 use super::itcm::load_itcm;
@@ -417,6 +418,9 @@ fn update_status(app: &mut BatApp<'static>) {
         app.set_mix_file_available(true);
         app.set_remote_available(true);
         app.set_guano_available(true);
+        // SAFETY: MANUAL's track on/off words, which the stock code writes from task 1.
+        let words = stock::TRACKS_ON.map(|word| unsafe { ptr::read_volatile(word) });
+        app.set_manual_mix_file(master_rec_ready(words));
         MIX_FILE_OFF.store(!app.mix_file(), Relaxed);
         let [first, second] = selected_inputs();
         let words = first.map_or(NO_INPUT_WORDS, |first| first.word | second.unwrap_or(first).word << 8);
@@ -424,6 +428,9 @@ fn update_status(app: &mut BatApp<'static>) {
         app.set_inputs([first, second].map(|input| input.map(|input| input.name)));
     }
     GUANO_ON.store(app.guano(), Relaxed);
+    // SAFETY: the stock file mask, read only while the take's files are open.
+    let take_mask = (read_byte(stock::FILES_OPEN) != 0).then(|| unsafe { ptr::read_volatile(stock::FILE_MASK) });
+    app.set_take_mix_file(take_mask.map(has_master));
     let hear_mix = !PLAYBACK.load(Relaxed) && app.feed() == Feed::Mix;
     HEAR_MIX.store(hear_mix, Relaxed);
     // A page comes first: it mutes whatever REC PAUSE does, and REC does nothing

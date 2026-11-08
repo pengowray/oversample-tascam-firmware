@@ -678,6 +678,9 @@ fn switch_control(fb: Fb, sw: Rectangle, on: bool) {
     let _ = Circle::with_center(Point::new(knob_x, sw.center().y), h - 6).into_styled(PrimitiveStyle::with_fill(TEXT)).draw(fb);
 }
 
+/// The MIX file row's help when MANUAL's MASTER has REC READY off.
+pub(crate) const MIX_FILE_OFF_IN_MANUAL: &str = "REC READY is off for MASTER in MANUAL.";
+
 fn settings(app: &BatApp, fb: Fb) {
     for (i, setting) in Setting::ALL.iter().enumerate() {
         let selected = app.selected_setting() == *setting;
@@ -718,6 +721,12 @@ fn settings(app: &BatApp, fb: Fb) {
                 Setting::AutoLevel => {
                     auto_volume_row(app, fb, i - Setting::STEPPED);
                     continue;
+                }
+                Setting::MixFile if !app.manual_mix_file() => {
+                    // MANUAL decides: the switch shows what a take will get, and taps do nothing.
+                    text(fb, &BODY, "MIX file", x + 10, y + 14, LEFT, TEXT_MUTED);
+                    text(fb, &SMALL, MIX_FILE_OFF_IN_MANUAL, x + 10, y + 28, LEFT, TEXT_MUTED);
+                    false
                 }
                 Setting::MixFile => {
                     text(fb, &BODY, "MIX file", x + 10, y + 14, LEFT, TEXT);
