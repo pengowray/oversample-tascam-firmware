@@ -98,11 +98,7 @@ impl ChimeTest {
         for (channel, (slot, block)) in decoders.iter_mut().zip(blocks).enumerate().take(channels) {
             // SAFETY: `ready` is set only after `restart` has built both decoders.
             let decoder = unsafe { slot.assume_init_mut() };
-            for (i, &x) in block.iter().enumerate() {
-                if let Some(event) = decoder.push(x) {
-                    self.record(channel, event, sample + i as u64);
-                }
-            }
+            decoder.push_block(block, |i, event| self.record(channel, event, sample + i as u64));
             self.channels[channel].band_dbfs = decoder.band_level_dbfs();
         }
     }

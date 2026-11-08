@@ -72,17 +72,21 @@ fn chimes_in_noise(name: &'static str, gain_db: f64, noise_rms: f64) -> Signal {
 
 /// Seconds of CPU spent in the chime parts and in the others, in one run, and the number of
 /// chimes read.
-fn time(signal: &Signal, stage: Stage) -> (f64, f64, usize) {
+fn time(signal: &Signal, stage: Stage, per_sample: bool) -> (f64, f64, usize) {
     let mut decoder = Decoder::new(RATE).unwrap();
     decoder.set_last_stage(stage);
     let (mut in_chimes, mut between, mut chimes) = (0.0, 0.0, 0);
     for &(start, end, is_chime) in &signal.parts {
         let started = Instant::now();
         for chunk in signal.samples[start..end].chunks(CHUNK) {
-            for &x in black_box(chunk) {
-                if let Some(Event::Chime(_)) = decoder.push(x) {
-                    chimes += 1;
+            if per_sample {
+                for &x in black_box(chunk) {
+                    if let Some(Event::Chime(_)) = decoder.push(x) {
+                        chimes += 1;
+                    }
                 }
+            } else {
+                decoder.push_block(black_box(chunk), |_, event| chimes += matches!(event, Event::Chime(_)) as usize);
             }
         }
         let t = started.elapsed().as_secs_f64();
@@ -97,11 +101,11 @@ fn time(signal: &Signal, stage: Stage) -> (f64, f64, usize) {
 
 /// For each stage, the smallest times of `RUNS` runs. The stages take turns within each run,
 /// so that a change in the machine's clock speed falls on all of them.
-fn time_stages(signal: &Signal, stages: &[Stage]) -> Vec<(f64, f64, usize)> {
+fn time_stages(signal: &Signal, stages: &[Stage], per_sample: bool) -> Vec<(f64, f64, usize)> {
     let mut best = vec![(f64::MAX, f64::MAX, 0); stages.len()];
     for _ in 0..RUNS {
         for (best, &stage) in best.iter_mut().zip(stages) {
-            let (in_chimes, between, chimes) = time(signal, stage);
+            let (in_chimes, between, chimes) = time(signal, stage, per_sample);
             *best = (best.0.min(in_chimes), best.1.min(between), chimes);
         }
     }
@@ -115,34 +119,35 @@ fn main() {
         chimes_in_noise("Chimes 30 dB down, noise -60 dBFS", -30.0, 0.001),
     ];
     let stages = [Stage::FrontEnd, Stage::Search, Stage::Walk];
-    println!("One decoder, ms of CPU per second of 192 kHz audio, smallest of {RUNS} runs:");
-    println!();
-    println!("{:<42}{:>11}{:>11}{:>9}{:>9}{:>7}", "", "front end", "detection", "walk", "total", "read");
-    for signal in &signals {
-        let times = time_stages(signal, &stages);
-        let samples = |chime: bool| -> usize {
-            signal.parts.iter().filter(|p| p.2 == chime).map(|p| p.1 - p.0).sum()
-        };
-        for chime in [false, true] {
-            let n = samples(chime);
-            if n == 0 {
-                continue;
-            }
-            let seconds = n as f64 / RATE as f64;
-            let at = |i: usize| if chime { times[i].0 } else { times[i].1 } * 1000.0 / seconds;
-            let label = match (chime, signal.parts.len()) {
-                (_, 1) => signal.name.to_string(),
-                (false, _) => format!("{}: gaps", signal.name),
-                (true, _) => format!("{}: chimes", signal.name),
-            };
-            let read = if chime { format!("{}/8", times[2].2) } else { String::new() };
-            println!(
-                "{label:<42}{:>11.2}{:>11.2}{:>9.2}{:>9.2}{read:>7}",
-                at(0),
-                at(1) - at(0),
-                at(2) - at(1),
-                at(2),
-            );
+    for (per_sample, heading) in [
+        (false, "with push_block, in chunks of 1024 samples, as the app feeds it"),
+        (true, "with push, one sample at a time"),
+    ] {
+        println!("One decoder {heading}, ms of CPU per second of 192 kHz audio, smallest of {RUNS} runs:");
+        println!();
+        println!("{:<42}{:>11}{:>11}{:>9}{:>9}{:>7}", "", "front end", "detection", "walk", "total", "read");
+        for signal in &signals {
+            print_rows(signal, &time_stages(signal, &stages, per_sample));
         }
+        println!();
+    }
+}
+
+fn print_rows(signal: &Signal, times: &[(f64, f64, usize)]) {
+    let samples = |chime: bool| -> usize { signal.parts.iter().filter(|p| p.2 == chime).map(|p| p.1 - p.0).sum() };
+    for chime in [false, true] {
+        let n = samples(chime);
+        if n == 0 {
+            continue;
+        }
+        let seconds = n as f64 / RATE as f64;
+        let at = |i: usize| if chime { times[i].0 } else { times[i].1 } * 1000.0 / seconds;
+        let label = match (chime, signal.parts.len()) {
+            (_, 1) => signal.name.to_string(),
+            (false, _) => format!("{}: gaps", signal.name),
+            (true, _) => format!("{}: chimes", signal.name),
+        };
+        let read = if chime { format!("{}/8", times[2].2) } else { String::new() };
+        println!("{label:<42}{:>11.2}{:>11.2}{:>9.2}{:>9.2}{read:>7}", at(0), at(1) - at(0), at(2) - at(1), at(2));
     }
 }
