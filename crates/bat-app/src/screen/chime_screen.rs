@@ -1,4 +1,5 @@
-//! The chime test screen.
+//! The phone time screen: what the chimes read, the phone's time and location from the latest
+//! one, how the X8's clock compares, and a button that sets the X8's clock to the phone's time.
 
 use core::fmt;
 
@@ -9,15 +10,16 @@ use u8g2_fonts::{FontRenderer, fonts};
 
 use super::{BODY, BODY_BOLD, CENTER, Fb, LEFT, SMALL, VALUE, fill, mix_silence_lines, no_input_notice, rate_warning, rounded, text};
 use crate::chime_test::{Channel, ChimeClock, Failure, FailureReason};
-use crate::layout::BACK;
+use crate::layout::{CLOCK_BACK, CLOCK_SET};
 use crate::palette::*;
-use crate::{BatApp, Feed};
+use crate::{BatApp, ClockState, Feed};
 
 /// Large enough to read at arm's length with the phone in the other hand. Its digits are
 /// all the same width, so the clock does not move as it ticks.
 pub(super) const CLOCK: FontRenderer = FontRenderer::new::<fonts::u8g2_font_logisoso50_tn>();
 
-pub(super) const LABEL_READ: &str = "Time from the chime. X8 clock not changed.";
+pub(crate) const TITLE: &str = "PHONE TIME";
+pub(super) const LABEL_READ: &str = "Phone time from the last chime";
 pub(super) const LABEL_NONE: &str = "No chime read yet";
 pub(super) const ROW_LABELS: [&str; 5] = ["Chimes read", "Chimes failed", "Last carrier dBFS", "Last SNR dB", "17-19 kHz now"];
 pub(super) const SNR_NOT_MEASURED: &str = "not measured";
@@ -28,27 +30,36 @@ pub(super) const ANALYSIS: [&str; 3] = [
     "A recording in progress continues.",
 ];
 
+pub(super) const SET_LABEL: &str = "Set X8 clock";
+pub(super) const LOCATION_NONE: &str = "Location: not in this chime";
+pub(super) const STATE_SETTING: &str = "Setting the X8 clock...";
+pub(super) const STATE_AFTER_TAKE: &str = "X8 clock will be set when this take ends.";
+pub(super) const STATE_FAILED: &str = "Could not set the X8 clock. Try again.";
+
 const LABEL_Y: i32 = 44;
 pub(crate) const CLOCK_Y: i32 = 102;
 const DATE_Y: i32 = 126;
 const AGE_Y: i32 = 144;
+const LOCATION_Y: i32 = 160;
 /// The table: a label and up to two columns of values.
-const TABLE: Rectangle = Rectangle::new(Point::new(6, 152), Size::new(308, 124));
+const TABLE: Rectangle = Rectangle::new(Point::new(6, 168), Size::new(308, 124));
 const TABLE_LABEL_X: i32 = 16;
 pub(crate) const COLUMN_X: [i32; 2] = [124, 222];
 const COLUMN_W: u32 = 84;
-const HEADER_Y: i32 = 168;
-pub(crate) const ROW_Y: i32 = 186;
+const HEADER_Y: i32 = 184;
+pub(crate) const ROW_Y: i32 = 202;
 pub(crate) const ROW_H: i32 = 18;
 const BAR_H: u32 = 5;
 /// The range of the 17 to 19 kHz bar, in dBFS. It reaches 0 so that an input close to
 /// overload shows. It is grey at every level, because the level a chime needs is not known.
 const BAR_RANGE_DB: (f32, f32) = (-100.0, 0.0);
-pub(crate) const FAILURE_Y: i32 = 294;
+pub(crate) const FAILURE_Y: i32 = 308;
 /// Above the debug strip, which covers y 334 to 398.
 const MIX_NOTICE_Y: [i32; 2] = [310, 326];
 const HELP_Y: [i32; 2] = [326, 342];
 const ANALYSIS_Y: [i32; 3] = [364, 380, 396];
+/// What the X8's clock is doing, just above the buttons.
+const STATE_Y: i32 = 418;
 
 /// The names of the blocks being listened to, as Listen to names them.
 pub(crate) fn columns(app: &BatApp) -> [Option<&'static str>; 2] {
@@ -59,17 +70,62 @@ pub(crate) fn columns(app: &BatApp) -> [Option<&'static str>; 2] {
     }
 }
 
-/// How long ago the latest chime was read.
-pub(super) struct Age(pub(super) u64);
+/// A length of time, in the unit that keeps the line short: seconds, minutes, hours, then days.
+struct Span(u64);
+
+impl fmt::Display for Span {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self.0 {
+            s @ 0..60 => write!(f, "{s} s"),
+            s @ 60..3600 => write!(f, "{} min", s / 60),
+            s @ 3600..172_800 => write!(f, "{} h", s / 3600),
+            s => write!(f, "{} days", s / 86_400),
+        }
+    }
+}
+
+/// How the X8's clock compares with the phone's, and how long ago the latest chime was read.
+pub(super) struct Age {
+    /// The X8's clock less the phone's, in seconds, when the X8's is known.
+    pub(super) x8_minus_phone: Option<i64>,
+    pub(super) read_s_ago: u64,
+}
 
 impl fmt::Display for Age {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        let s = self.0;
-        f.write_str("Last chime read ")?;
-        match s {
-            0..60 => write!(f, "{s} s ago"),
-            60..3600 => write!(f, "{} min {} s ago", s / 60, s % 60),
-            _ => write!(f, "{} h {} min ago", s / 3600, s / 60 % 60),
+        match self.x8_minus_phone {
+            None => f.write_str("X8 clock time not known yet.")?,
+            Some(0) => f.write_str("X8 clock same as phone.")?,
+            Some(d) if d < 0 => write!(f, "X8 clock {} behind phone.", Span(d.unsigned_abs()))?,
+            Some(d) => write!(f, "X8 clock {} ahead of phone.", Span(d.unsigned_abs()))?,
+        }
+        write!(f, " Chime read {} ago.", Span(self.read_s_ago))
+    }
+}
+
+/// The location from the latest chime, in degrees: 5 decimals is about 1 m, the chime's precision.
+struct Location(f64, f64);
+
+impl fmt::Display for Location {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "Location: {:.5}, {:.5}", self.0, self.1)
+    }
+}
+
+/// The set button's line: what the X8's clock is doing.
+struct StateLine(ClockState);
+
+impl fmt::Display for StateLine {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self.0 {
+            ClockState::Idle => Ok(()),
+            ClockState::Setting => f.write_str(STATE_SETTING),
+            ClockState::AfterTake => f.write_str(STATE_AFTER_TAKE),
+            ClockState::Failed => f.write_str(STATE_FAILED),
+            ClockState::Set(seconds) => {
+                let t = seconds.rem_euclid(86_400);
+                write!(f, "X8 clock set to {:02}:{:02}:{:02}.", t / 3600, t / 60 % 60, t % 60)
+            }
         }
     }
 }
@@ -131,13 +187,20 @@ fn column_values(fb: Fb, x: i32, channel: &Channel) {
     level_bar(fb, x, row(4) + 4, channel.band_dbfs);
 }
 
-fn back_button(fb: Fb) {
-    rounded(fb, BACK, 4, BUTTON);
-    text(fb, &BODY_BOLD, "Back", BACK.center().x, BACK.top_left.y + 28, CENTER, TEXT);
+fn buttons(app: &BatApp, fb: Fb) {
+    rounded(fb, CLOCK_BACK, 4, BUTTON);
+    text(fb, &BODY_BOLD, "Back", CLOCK_BACK.center().x, CLOCK_BACK.top_left.y + 28, CENTER, TEXT);
+    // Filled in the accent colour once a chime has given a time to set.
+    let ready = app.phone.is_some();
+    rounded(fb, CLOCK_SET, 4, if ready { ACCENT } else { BUTTON });
+    let colour = if ready { TEXT } else { TEXT_MUTED };
+    text(fb, &BODY_BOLD, SET_LABEL, CLOCK_SET.center().x, CLOCK_SET.top_left.y + 28, CENTER, colour);
+    let colour = if app.clock_state() == ClockState::Failed { METER_YELLOW } else { TEXT_MUTED };
+    text(fb, &SMALL, format_args!("{}", StateLine(app.clock_state())), 16, STATE_Y, LEFT, colour);
 }
 
 pub(super) fn draw(app: &BatApp, fb: Fb) {
-    back_button(fb);
+    buttons(app, fb);
     // With the wrong sample rate or no input, nothing can be read, so these say why and
     // nothing else shows.
     if let Some(rate) = app.rate_warning() {
@@ -157,7 +220,12 @@ pub(super) fn draw(app: &BatApp, fb: Fb) {
             let time = format_args!("{:02}:{:02}:{:02}", local.hour, local.minute, local.second);
             text(fb, &CLOCK, time, 160, CLOCK_Y, CENTER, TEXT);
             text(fb, &VALUE, format_args!("{}", DateLine(clock)), 160, DATE_Y, CENTER, TEXT);
-            text(fb, &SMALL, format_args!("{}", Age(read_s_ago)), 160, AGE_Y, CENTER, TEXT_MUTED);
+            let x8_minus_phone = app.clocks_now().map(|(phone, x8)| x8 - phone);
+            text(fb, &SMALL, format_args!("{}", Age { x8_minus_phone, read_s_ago }), 160, AGE_Y, CENTER, TEXT_MUTED);
+            match app.phone.and_then(|reading| reading.location) {
+                Some((latitude, longitude)) => text(fb, &SMALL, format_args!("{}", Location(latitude, longitude)), 160, LOCATION_Y, CENTER, TEXT_MUTED),
+                None => text(fb, &SMALL, LOCATION_NONE, 160, LOCATION_Y, CENTER, TEXT_MUTED),
+            };
         }
         None => {
             text(fb, &CLOCK, "--:--:--", 160, CLOCK_Y, CENTER, TEXT_MUTED);
@@ -215,7 +283,11 @@ pub(crate) mod chime_text {
     use super::{Age, ChimeClock, DateLine};
 
     pub(crate) fn age(seconds: u64) -> String {
-        Age(seconds).to_string()
+        Age { x8_minus_phone: None, read_s_ago: seconds }.to_string()
+    }
+
+    pub(crate) fn compared(x8_minus_phone: i64, seconds: u64) -> String {
+        Age { x8_minus_phone: Some(x8_minus_phone), read_s_ago: seconds }.to_string()
     }
 
     pub(crate) fn date(local_seconds: i64, timezone_minutes: i16) -> String {
@@ -242,7 +314,15 @@ pub(crate) fn lines_with_widths() -> std::vec::Vec<(std::string::String, i32, i3
         add(&SMALL, line, full);
     }
     add(&VALUE, "2026-11-07  UTC+10:00", full);
-    add(&SMALL, "Last chime read 59 min 59 s ago", full);
+    for x8_minus_phone in [None, Some(0), Some(-59), Some(-3599), Some(-172_799), Some(999 * 86_400)] {
+        add(&SMALL, &Age { x8_minus_phone, read_s_ago: 3599 }.to_string(), full);
+    }
+    add(&SMALL, &Location(-89.99999, -179.99999).to_string(), full);
+    add(&SMALL, LOCATION_NONE, full);
+    for state in [ClockState::Setting, ClockState::AfterTake, ClockState::Failed, ClockState::Set(86_399)] {
+        add(&SMALL, &StateLine(state).to_string(), full);
+    }
+    add(&BODY_BOLD, SET_LABEL, CLOCK_SET.size.width as i32 - 12);
     for label in ROW_LABELS {
         add(&SMALL, label, COLUMN_X[0] - TABLE_LABEL_X - 4);
     }

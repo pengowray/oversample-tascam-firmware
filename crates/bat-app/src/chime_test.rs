@@ -1,10 +1,12 @@
-//! The chime test screen's listening: while the screen is open, a decoder runs on each
-//! block of input, and this keeps what they read. Nothing here changes any clock.
+//! The clock screen's listening: while the screen is open, a decoder runs on each block of
+//! input, and this keeps what they read. Setting the clock is up to the host.
 
 use core::mem::MaybeUninit;
 
 use chime::format::{LocalTime, TimeMessage};
 use chime::{Decoder, Event, UnreadableReason};
+
+use crate::phone_time::Reading;
 
 /// What one block of input has given since the test started.
 #[derive(Clone, Copy)]
@@ -17,17 +19,6 @@ pub(crate) struct Channel {
     pub(crate) snr_db: Option<f32>,
     /// The level in the 17 to 19 kHz band now, in dBFS.
     pub(crate) band_dbfs: f32,
-}
-
-/// The latest chime read, with its samples counted as the app counts them.
-#[derive(Clone, Copy)]
-struct Reading {
-    unix_time: u32,
-    timezone_minutes: i16,
-    /// Where the first start symbol began. The time in the chime is the time of this sample.
-    start_sample: i64,
-    /// Where the decoder finished.
-    end_sample: u64,
 }
 
 /// Why a chime was not read.
@@ -62,6 +53,8 @@ pub(crate) struct ChimeTest {
     ready: bool,
     pub(crate) channels: [Channel; 2],
     reading: Option<Reading>,
+    /// `reading` has not been passed on yet.
+    fresh: bool,
     pub(crate) failure: Option<Failure>,
     /// The app's sample count just after the latest lost frames.
     last_jump: u64,
@@ -71,7 +64,7 @@ const NOTHING_YET: Channel = Channel { read: 0, failed: 0, carrier_dbfs: None, s
 
 impl ChimeTest {
     pub(crate) const fn new() -> Self {
-        Self { rate_hz: 0, ready: false, channels: [NOTHING_YET; 2], reading: None, failure: None, last_jump: 0 }
+        Self { rate_hz: 0, ready: false, channels: [NOTHING_YET; 2], reading: None, fresh: false, failure: None, last_jump: 0 }
     }
 
     /// Forget everything and build new decoders, whose sample counts start from 0.
@@ -122,12 +115,10 @@ impl ChimeTest {
                 results.snr_db = Some(chime.snr_db);
                 self.failure = None;
                 if let Some(message) = TimeMessage::parse(&chime.payload[..chime.payload_len]) {
-                    self.reading = Some(Reading {
-                        unix_time: message.unix_time,
-                        timezone_minutes: message.timezone_minutes,
-                        start_sample,
-                        end_sample: now,
-                    });
+                    // The same chime on the other input gives the same time: pass it on once.
+                    let repeat = self.reading.is_some_and(|last| last.unix_time == message.unix_time);
+                    self.reading = Some(Reading::new(&message, start_sample, now));
+                    self.fresh |= !repeat;
                 }
             }
             Event::Unreadable(unreadable) => {
@@ -136,6 +127,11 @@ impl ChimeTest {
                 self.failure = Some(Failure { channel, reason, bytes: unreadable.bytes_received });
             }
         }
+    }
+
+    /// The latest reading, once: the app passes it on to the host.
+    pub(crate) fn take_reading(&mut self) -> Option<Reading> {
+        core::mem::take(&mut self.fresh).then_some(self.reading).flatten()
     }
 
     /// The time at sample `now`, if a chime has been read.

@@ -4,7 +4,7 @@
 use embedded_graphics::primitives::Rectangle;
 
 use super::{BODY, BODY_BOLD, Fb, LEFT, SMALL, outline_selected, rounded, switch_control, switch_control_fixed_off, text};
-use crate::layout::{RECORD_GUANO, RECORD_MIX_FILE, RECORD_REMOTE, TESTS_CHIME_TEST, TESTS_CPU_TEST, TESTS_DEBUG, panel_switch};
+use crate::layout::{RECORD_CLOCK, RECORD_GUANO, RECORD_MIX_FILE, RECORD_REMOTE, TESTS_CHIME_TEST, TESTS_CPU_TEST, TESTS_DEBUG, panel_switch};
 use crate::palette::*;
 use crate::{BatApp, RemoteCommand, RemoteResult, Setting};
 
@@ -16,15 +16,17 @@ pub(super) const REMOTE_NAME: &str = "Phone remote (experimental)";
 pub(super) const REMOTE_HELP: [&str; 2] =
     ["Phone chimes start or stop recording about 4 s later.", "BAT DETECTOR only. Almost no CPU until the phone plays."];
 pub(super) const REMOTE_BEEPS: &str = "Two notes up: started. Two down: stopped. One low: failed.";
-pub(super) const CHIME_TEST_NAME: &str = "Chime test";
-pub(super) const CHIME_TEST_HELP: &str = "Shows if the X8 reads the phone's chimes, and the level.";
+pub(super) const CHIME_TEST_NAME: &str = "Phone time";
+pub(super) const CHIME_TEST_HELP: &str = "Shows if the X8 reads chimes. Can set the X8 clock.";
+pub(super) const CLOCK_FROM_REMOTE_NAME: &str = "Set X8 clock from chimes";
+pub(super) const CLOCK_FROM_REMOTE_HELP: &str = "During a take, the X8 clock is set when the take ends.";
 pub(super) const CPU_TEST_NAME: &str = "CPU test";
 pub(super) const CPU_TEST_HELP: [&str; 2] =
     ["Runs every listening mode with each Auto volume choice,", "8 s each, up to 3.5 min. Lists CPU load and lost input."];
 pub(super) const MIX_FILE_NAME: &str = "MIX file";
 pub(super) const MIX_FILE_HELP: &str = "Needed to play a take from BROWSE.";
 /// The MIX file's help when MANUAL's MASTER has REC READY off.
-pub(crate) const MIX_FILE_OFF_IN_MANUAL: &str = "REC READY is off for MASTER in MANUAL.";
+pub(super) const MIX_FILE_OFF_IN_MANUAL: &str = "REC READY is off for MASTER in MANUAL.";
 pub(super) const DEBUG_NAME: &str = "Debug info";
 pub(super) const DEBUG_HELP: &str = "Shows CPU and input figures over the last call panel.";
 pub(super) const GUANO_NAME: &str = "GUANO metadata";
@@ -78,6 +80,8 @@ pub(super) fn record(app: &BatApp, fb: Fb) {
     }
     if app.remote_available() {
         remote_panel(app, fb);
+        let selected = app.selected_setting() == Setting::ClockFromRemote;
+        switch_panel(fb, RECORD_CLOCK, CLOCK_FROM_REMOTE_NAME, &[CLOCK_FROM_REMOTE_HELP], app.clock_from_remote(), false, selected);
     }
 }
 
@@ -162,11 +166,11 @@ pub(crate) fn lines_with_widths() -> std::vec::Vec<(std::string::String, i32, i3
     for line in REMOTE_HELP.iter().chain(&CPU_TEST_HELP).chain(&GUANO_HELP).chain([&REMOTE_BEEPS, &CHIME_TEST_HELP]) {
         add(&SMALL, line, inside);
     }
-    for line in [MIX_FILE_HELP, MIX_FILE_OFF_IN_MANUAL, DEBUG_HELP] {
+    for line in [MIX_FILE_HELP, MIX_FILE_OFF_IN_MANUAL, DEBUG_HELP, CLOCK_FROM_REMOTE_HELP] {
         add(&SMALL, line, inside);
     }
     // The name's line ends at the switch.
-    for name in [REMOTE_NAME, GUANO_NAME, MIX_FILE_NAME, DEBUG_NAME] {
+    for name in [REMOTE_NAME, GUANO_NAME, MIX_FILE_NAME, DEBUG_NAME, CLOCK_FROM_REMOTE_NAME] {
         add(&BODY, name, 240);
     }
     add(&SMALL, "Tones heard 100. Chimes read 100, failed 100.", inside);

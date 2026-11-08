@@ -90,7 +90,12 @@ fn the_screen_opens_from_settings_and_goes_back() {
     assert!(!app.is_tappable(160, 100));
     app.touch(160, 100);
     assert_eq!(app.screen(), Screen::ChimeTest);
-    let back = layout::BACK.center();
+    // Set X8 clock does nothing before a chime has given a time.
+    let set = layout::CLOCK_SET.center();
+    assert!(!app.is_tappable(set.x, set.y));
+    app.touch(set.x, set.y);
+    assert_eq!(app.take_phone_time(), None);
+    let back = layout::CLOCK_BACK.center();
     assert!(app.is_tappable(back.x, back.y));
     app.touch(back.x, back.y);
     assert_eq!(app.screen(), Screen::Settings);
@@ -506,10 +511,46 @@ fn the_text_fits() {
 #[test]
 fn the_age_and_the_date_read_as_they_should() {
     use crate::screen::chime_text;
-    assert_eq!(chime_text::age(0), "Last chime read 0 s ago");
-    assert_eq!(chime_text::age(59), "Last chime read 59 s ago");
-    assert_eq!(chime_text::age(252), "Last chime read 4 min 12 s ago");
-    assert_eq!(chime_text::age(4320), "Last chime read 1 h 12 min ago");
+    assert_eq!(chime_text::age(0), "X8 clock time not known yet. Chime read 0 s ago.");
+    assert_eq!(chime_text::age(252), "X8 clock time not known yet. Chime read 4 min ago.");
+    assert_eq!(chime_text::compared(-12, 3), "X8 clock 12 s behind phone. Chime read 3 s ago.");
+    assert_eq!(chime_text::compared(12, 59), "X8 clock 12 s ahead of phone. Chime read 59 s ago.");
+    assert_eq!(chime_text::compared(0, 4320), "X8 clock same as phone. Chime read 1 h ago.");
+    assert_eq!(chime_text::compared(-3 * 86_400, 3), "X8 clock 3 days behind phone. Chime read 3 s ago.");
     assert_eq!(chime_text::date(UNIX as i64 + 330 * 60, 330), "2026-10-26  UTC+05:30");
     assert_eq!(chime_text::date(UNIX as i64 - 210 * 60, -210), "2026-10-26  UTC-03:30");
+}
+
+/// A chime read on the phone time screen goes to the host once, with the phone's local time now and
+/// no clock set; Set X8 clock then asks the host to set its clock from it.
+#[test]
+fn a_chime_gives_the_host_the_phone_time_and_the_button_asks_for_a_set() {
+    let chime = chime_at(UNIX, 660);
+    let first = chime_in_silence(SECOND / 2, &chime, SECOND);
+    let mut storage = vec![0.0f32; 1024];
+    let mut app = BatApp::new(FS, &mut storage, buffers());
+    app.open_chime_test();
+    run_two(&mut app, &first, &first);
+    let time = app.take_phone_time().expect("the chime's time");
+    assert!(!time.set_clock);
+    assert_eq!(time.timezone_minutes, 660);
+    assert_eq!(time.location, None);
+    // The time now: the chime's time plus what has been heard since it started.
+    let since_start_ms = ((app.samples - SECOND as u64 / 2) * 1000 / SECOND as u64) as i64;
+    let expected = (UNIX as i64 + 660 * 60) * 1000 + since_start_ms;
+    assert!((time.local_ms - expected).abs() <= 1, "{} {expected}", time.local_ms);
+    // Both inputs heard the same chime: it goes to the host once.
+    assert_eq!(app.take_phone_time(), None);
+
+    let set = layout::CLOCK_SET.center();
+    assert!(app.is_tappable(set.x, set.y));
+    app.touch(set.x, set.y);
+    let time = app.take_phone_time().expect("the set request");
+    assert!(time.set_clock);
+    // The host's clock, once known, is compared with the phone's.
+    app.set_host_clock(Some(time.local_ms.div_euclid(1000) - 12));
+    let (phone, host) = app.clocks_now().unwrap();
+    assert_eq!(host - phone, -12);
+    app.set_clock_state(ClockState::AfterTake);
+    assert!(draw(&app).iter().any(|&p| p != 0));
 }

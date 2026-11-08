@@ -61,7 +61,14 @@ unsafe fn add_guano(file: usize) -> Option<()> {
     if header.riff_size.checked_add(8)? != size || header.data_end()? != size {
         return None;
     }
-    let recorder = Recorder { firmware: stock::FIRMWARE_VERSION, patch_build: patch_build(), file_name: path(file).and_then(guano::file_name) };
+    let (phone_now, utc_offset_minutes) = super::clock::take_times();
+    let recorder = Recorder {
+        firmware: stock::FIRMWARE_VERSION,
+        patch_build: patch_build(),
+        file_name: path(file).and_then(guano::file_name),
+        phone_now,
+        utc_offset_minutes,
+    };
     // SAFETY: as above; CHUNK_AT + CHUNK_BYTES is within the buffer and after the header.
     let out = unsafe { slice::from_raw_parts_mut(stock::HEADER_BUFFER.add(CHUNK_AT), CHUNK_BYTES) };
     let added = take_guano::write_chunk(&header, &recorder, out)?;

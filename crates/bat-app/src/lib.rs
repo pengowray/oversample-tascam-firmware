@@ -22,6 +22,7 @@ pub mod fb;
 mod layout;
 mod level;
 pub mod palette;
+mod phone_time;
 mod remote;
 mod screen;
 mod stages;
@@ -39,6 +40,7 @@ pub use cpu_test::{HostFigures, Row as CpuTestRow, RowResult as CpuTestResult};
 pub use fb::Rgb565Buffer;
 use layout::{SNAP_H, SNAP_W, WF_H, WF_W};
 pub use level::AutoVolume;
+pub use phone_time::{ClockState, PhoneTime};
 pub use remote::{RemoteCommand, RemoteResult};
 pub use stages::Stage;
 
@@ -213,18 +215,21 @@ pub enum Setting {
     /// Whether a take also writes the stock recorder's MIX file: see
     /// [`BatApp::set_mix_file_available`].
     MixFile,
+    /// Whether a phone remote chime also sets the host's clock: see [`PhoneTime`].
+    ClockFromRemote,
     /// Whether detections of this kind are marked: a tick under the
     /// waterfall, the last-call panel, and time expansion. On or off.
     Mark(CallKind),
 }
 
 impl Setting {
-    pub const ALL: [Setting; 9] = [
+    pub const ALL: [Setting; 10] = [
         Setting::LowestBatCall,
         Setting::ListenTo,
         Setting::AutoLevel,
         Setting::DebugInfo,
         Setting::MixFile,
+        Setting::ClockFromRemote,
         Setting::Mark(CallKind::Bat),
         Setting::Mark(CallKind::Tone),
         Setting::Mark(CallKind::Audible),
@@ -235,7 +240,7 @@ impl Setting {
 
     pub fn page(self) -> SettingsPage {
         match self {
-            Setting::MixFile => SettingsPage::Record,
+            Setting::MixFile | Setting::ClockFromRemote => SettingsPage::Record,
             Setting::DebugInfo => SettingsPage::Tests,
             _ => SettingsPage::Listen,
         }
@@ -532,6 +537,14 @@ pub struct BatApp<'a> {
     manual_mix_file: bool,
     /// Whether the take being recorded writes a MIX file, or None with no take's files open.
     take_mix_file: Option<bool>,
+    /// The latest chime that gave the phone's time, and one not yet passed to the host with
+    /// whether to set the clock from it.
+    phone: Option<phone_time::Reading>,
+    phone_out: Option<(phone_time::Reading, bool)>,
+    clock_from_remote: bool,
+    /// The host's clock: local seconds since 1970 at an app sample.
+    host_clock: Option<(i64, u64)>,
+    clock_state: ClockState,
     guano_available: bool,
     guano: bool,
     /// The mode buttons, left to right.
@@ -676,6 +689,11 @@ impl<'a> BatApp<'a> {
             field!((*this).mix_file).write(true);
             field!((*this).manual_mix_file).write(true);
             field!((*this).take_mix_file).write(None);
+            field!((*this).phone).write(None);
+            field!((*this).phone_out).write(None);
+            field!((*this).clock_from_remote).write(true);
+            field!((*this).host_clock).write(None);
+            field!((*this).clock_state).write(ClockState::Idle);
             field!((*this).guano_available).write(false);
             field!((*this).guano).write(true);
             field!((*this).modes).write(&Mode::ALL);
@@ -979,6 +997,8 @@ impl<'a> BatApp<'a> {
             Setting::DebugInfo => {}
             Setting::MixFile if steps != 0 && self.manual_mix_file => self.mix_file = steps > 0,
             Setting::MixFile => {}
+            Setting::ClockFromRemote if steps != 0 => self.clock_from_remote = steps > 0,
+            Setting::ClockFromRemote => {}
             // Turning the wheel up switches on, down switches off.
             Setting::Mark(kind) if steps != 0 => self.set_marked(kind, steps > 0),
             Setting::Mark(_) => {}
@@ -1186,6 +1206,68 @@ impl<'a> BatApp<'a> {
         self.take_mix_file
     }
 
+    /// The phone's time from the latest chime read, once for each chime: from the phone remote on
+    /// the main screen, and from the clock screen. `set_clock` says whether to set the host's
+    /// clock from it.
+    pub fn take_phone_time(&mut self) -> Option<PhoneTime> {
+        let (reading, set_clock) = self.phone_out.take()?;
+        Some(PhoneTime {
+            local_ms: reading.local_ms_at(self.samples, self.sample_rate as u32),
+            timezone_minutes: reading.timezone_minutes,
+            location: reading.location,
+            set_clock,
+        })
+    }
+
+    /// The host's clock now, as local seconds since 1970, for the clock screen to compare with the
+    /// phone's. None when the host has not read it.
+    pub fn set_host_clock(&mut self, local_seconds: Option<i64>) {
+        self.host_clock = local_seconds.map(|s| (s, self.samples));
+    }
+
+    /// What the host's clock is doing, for the clock screen.
+    pub fn set_clock_state(&mut self, state: ClockState) {
+        self.clock_state = state;
+    }
+
+    pub fn clock_state(&self) -> ClockState {
+        self.clock_state
+    }
+
+    /// Whether a phone remote chime also sets the host's clock. On by default.
+    pub fn clock_from_remote(&self) -> bool {
+        self.clock_from_remote
+    }
+
+    /// Ask the host to set its clock from the latest chime, as the clock screen's button does.
+    /// Does nothing before a chime has been read.
+    pub fn set_clock_from_phone(&mut self) {
+        if let Some(reading) = self.phone {
+            self.phone_out = Some((reading, true));
+        }
+    }
+
+    /// The phone's time now and the host's, as local seconds since 1970, once both are known.
+    pub(crate) fn clocks_now(&self) -> Option<(i64, i64)> {
+        let phone = self.phone?.local_ms_at(self.samples, self.sample_rate as u32).div_euclid(1000);
+        let (host, at) = self.host_clock?;
+        Some((phone, host + (self.samples.saturating_sub(at) as f32 / self.sample_rate) as i64))
+    }
+
+    /// The readings the decoders gave this chunk, kept and queued for the host. Not inlined, so
+    /// it stays out of `process`, which the X8 patch runs from ITCM.
+    #[inline(never)]
+    fn collect_phone_readings(&mut self) {
+        if let Some(reading) = self.chime.take_reading() {
+            self.phone = Some(reading);
+            self.phone_out = Some((reading, false));
+        }
+        if let Some(reading) = self.remote.take_reading() {
+            self.phone = Some(reading);
+            self.phone_out = Some((reading, self.clock_from_remote));
+        }
+    }
+
     /// The host can add GUANO metadata to its takes' WAV files: offer the switch on the tools
     /// screen.
     pub fn set_guano_available(&mut self, available: bool) {
@@ -1211,6 +1293,7 @@ impl<'a> BatApp<'a> {
         match Setting::ALL[i] {
             Setting::DebugInfo => self.debug_available,
             Setting::MixFile => self.mix_file_available,
+            Setting::ClockFromRemote => self.remote.available,
             _ => true,
         }
     }
@@ -1327,8 +1410,10 @@ impl<'a> BatApp<'a> {
         let p = embedded_graphics::prelude::Point::new(x, y);
         match self.screen {
             Screen::ChimeTest => {
-                if layout::BACK.contains(p) {
+                if layout::CLOCK_BACK.contains(p) {
                     self.screen = Screen::Settings;
+                } else if layout::CLOCK_SET.contains(p) {
+                    self.set_clock_from_phone();
                 }
                 return;
             }
@@ -1404,6 +1489,7 @@ impl<'a> BatApp<'a> {
                     Setting::AutoLevel => self.level.set_volume(layout::auto_volume_at(x)),
                     Setting::DebugInfo => self.debug_info = !self.debug_info,
                     Setting::MixFile if self.manual_mix_file => self.mix_file = !self.mix_file,
+                    Setting::ClockFromRemote => self.clock_from_remote = !self.clock_from_remote,
                     _ => {}
                 }
             }
@@ -1584,6 +1670,7 @@ impl<'a> BatApp<'a> {
         } else {
             self.remote.sleep_if_done(self.samples);
         }
+        self.collect_phone_readings();
         self.stages.lap(Stage::Decoders);
 
         let source = self.source();
@@ -1917,7 +2004,7 @@ impl<'a> BatApp<'a> {
         }
         let p = embedded_graphics::prelude::Point::new(x, y);
         match self.screen {
-            Screen::ChimeTest => return layout::BACK.contains(p),
+            Screen::ChimeTest => return layout::CLOCK_BACK.contains(p) || (self.phone.is_some() && layout::CLOCK_SET.contains(p)),
             Screen::CpuTest => {
                 return layout::CPU_TEST_BACK.contains(p)
                     || layout::CPU_TEST_START.contains(p)

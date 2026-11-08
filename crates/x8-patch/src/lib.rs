@@ -3,5 +3,6 @@
 
 #![cfg_attr(not(test), no_std)]
 
+pub mod clock_record;
 pub mod file_mask;
 pub mod take_guano;

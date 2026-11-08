@@ -228,3 +228,13 @@ pub const FIRMWARE_VERSION: &str = "V2.03";
 /// 4 (17 KB of stack); the split's task was not found, and the recorder's tasks 5 and 6 have 6 KB.
 pub const TASK_TABLE: *const [u32; 7] = 0x8131_dac4 as *const [u32; 7];
 pub const TASK_TABLE_ENTRIES: usize = 18;
+/// `FUN_80dc9308(command, parameter)`: gives the recorder's task 4 a command with a pointer
+/// parameter and starts the task, which runs the command and ends. Commands 75 and 76 read and set
+/// the clock chip (Thumb address).
+pub const TASK_4_COMMAND: usize = 0x80dc_9309;
+/// `FUN_80dc9356()`: non-zero while task 4 is running a command (Thumb address).
+pub const TASK_4_BUSY: usize = 0x80dc_9357;
+pub const COMMAND_READ_CLOCK: i32 = 75;
+pub const COMMAND_SET_CLOCK: i32 = 76;
+/// Where command 75 leaves the clock record it read (see `clock_record`).
+pub const CLOCK_RECORD: *const [u8; 10] = 0x81e9_adc8 as *const [u8; 10];

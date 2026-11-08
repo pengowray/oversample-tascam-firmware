@@ -290,3 +290,26 @@ fn the_screen_text_fits() {
         assert!(width <= room, "{line}: {width} px in {room} px");
     }
 }
+
+/// A command chime also gives the host the phone's time, with a clock set when the setting is on
+/// (the default), and without one when it is off.
+#[test]
+fn a_command_chime_gives_the_phone_time() {
+    let mut storage = vec![0.0f32; SECOND];
+    let mut buffers = Box::new(Buffers::new());
+    let mut app = remote_app(&mut storage, &mut buffers);
+    assert!(app.clock_from_remote());
+    assert_eq!(run(&mut app, &press(START, UNIX, 0.1, 1e-4)), [RemoteCommand::Start]);
+    let time = app.take_phone_time().expect("the chime's time");
+    assert!(time.set_clock);
+    assert_eq!(app.take_phone_time(), None);
+
+    app.open_settings_page(crate::SettingsPage::Record);
+    let row = layout::control_row(Setting::ClockFromRemote).center();
+    assert!(app.is_tappable(row.x, row.y));
+    app.touch(row.x, row.y);
+    assert!(!app.clock_from_remote());
+    app.button(Button::Home);
+    assert_eq!(run(&mut app, &press(STOP, UNIX + 20, 0.1, 1e-4)), [RemoteCommand::Stop]);
+    assert!(!app.take_phone_time().expect("the chime's time").set_clock);
+}

@@ -121,8 +121,9 @@ const SWITCH_H: u32 = 24;
 pub const SETTINGS_NOTE: i32 = 426;
 /// Closes the settings screen, where the mode buttons are on the main screen.
 pub const DONE: Rectangle = Rectangle::new(Point::new(6, BUTTONS_Y), Size::new(308, BUTTON_H as u32));
-/// Goes back from the chime test to the settings screen.
-pub const BACK: Rectangle = Rectangle::new(Point::new(6, BUTTONS_Y), Size::new(308, BUTTON_H as u32));
+/// The clock screen's buttons: Back, and setting the X8's clock from the latest chime.
+pub const CLOCK_BACK: Rectangle = Rectangle::new(Point::new(6, BUTTONS_Y), Size::new(90, BUTTON_H as u32));
+pub const CLOCK_SET: Rectangle = Rectangle::new(Point::new(102, BUTTONS_Y), Size::new(212, BUTTON_H as u32));
 
 /// Tab `i` of `count`, left to right.
 pub fn tab(i: usize, count: usize) -> Rectangle {
@@ -152,6 +153,8 @@ pub const fn panel_switch(panel: Rectangle) -> Rectangle {
 pub const RECORD_MIX_FILE: Rectangle = panel(PAGE_TOP, 54);
 pub const RECORD_GUANO: Rectangle = panel(PAGE_TOP + 62, 68);
 pub const RECORD_REMOTE: Rectangle = panel(PAGE_TOP + 138, 118);
+/// Under the phone remote, because only its chimes are heard on the main screen.
+pub const RECORD_CLOCK: Rectangle = panel(PAGE_TOP + 264, 54);
 /// Tests page: the debug figures' switch, then a button for each test, with its help inside.
 pub const TESTS_DEBUG: Rectangle = panel(PAGE_TOP, 54);
 pub const TESTS_CHIME_TEST: Rectangle = panel(PAGE_TOP + 62, 48);
@@ -178,6 +181,7 @@ pub fn control_row(setting: Setting) -> Rectangle {
     match setting {
         Setting::AutoLevel => AUTO_VOLUME_ROW,
         Setting::MixFile => panel_switch_row(RECORD_MIX_FILE),
+        Setting::ClockFromRemote => panel_switch_row(RECORD_CLOCK),
         Setting::DebugInfo => panel_switch_row(TESTS_DEBUG),
         Setting::Mark(kind) => {
             let j = Setting::MARKS.iter().position(|&k| k == kind).unwrap_or(0) as i32;
@@ -220,6 +224,7 @@ pub fn auto_volume_at(x: i32) -> AutoVolume {
 pub fn switch(setting: Setting) -> Rectangle {
     match setting {
         Setting::MixFile => panel_switch(RECORD_MIX_FILE),
+        Setting::ClockFromRemote => panel_switch(RECORD_CLOCK),
         Setting::DebugInfo => panel_switch(TESTS_DEBUG),
         _ => {
             let r = control_row(setting);

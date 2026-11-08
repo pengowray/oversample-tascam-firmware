@@ -16,6 +16,7 @@ use core::mem::MaybeUninit;
 
 use chime::format::TimeMessage;
 use chime::{Decoder, Event};
+use crate::phone_time::Reading;
 
 /// What a chime's deployment ID holds for a command, in the order the decoder gives it: these
 /// seven bytes, then the command. The phone page's encoder reverses the bytes it is given.
@@ -121,6 +122,8 @@ pub(crate) struct Remote {
     pub(crate) last: Option<LastCommand>,
     /// The time in the latest command's chime, so its reading on the other input is ignored.
     last_unix: u32,
+    /// The latest chime's time, not yet passed on.
+    reading: Option<Reading>,
     pending: Option<RemoteCommand>,
     result: Option<(RemoteResult, u64)>,
     beep: Beep,
@@ -143,6 +146,7 @@ impl Remote {
             chimes_failed: 0,
             last: None,
             last_unix: 0,
+            reading: None,
             pending: None,
             result: None,
             beep: Beep::new(),
@@ -236,6 +240,12 @@ impl Remote {
             Event::Chime(chime) => {
                 let Some(message) = TimeMessage::parse(&chime.payload[..chime.payload_len]) else { return };
                 self.chimes_read += 1;
+                // The decoder counts samples from when it was built; the time since the chime
+                // started is the same in both counts.
+                let start_sample = now as i64 - (chime.end_sample as i64 - chime.start_sample);
+                if self.last_unix != message.unix_time {
+                    self.reading = Some(Reading::new(&message, start_sample, now));
+                }
                 let Some(command) = command_in(&message) else { return };
                 let same_chime = self.last.is_some_and(|last| last.command == command) && self.last_unix == message.unix_time;
                 self.last = Some(LastCommand { command, read_at: now, level_dbfs: chime.level_dbfs });
@@ -248,6 +258,11 @@ impl Remote {
             }
             Event::Unreadable(_) => self.chimes_failed += 1,
         }
+    }
+
+    /// The latest chime's time, once.
+    pub(crate) fn take_reading(&mut self) -> Option<Reading> {
+        self.reading.take()
     }
 
     pub(crate) fn take_command(&mut self) -> Option<RemoteCommand> {

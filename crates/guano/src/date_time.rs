@@ -34,6 +34,11 @@ impl DateTime {
         Some(Self { days: days_from_civil(year, month, day), seconds: hour * 3600 + minute * 60 + second })
     }
 
+    /// The date and time `seconds` after 1970-01-01 00:00, with no time zone applied.
+    pub fn from_seconds(seconds: i64) -> Option<Self> {
+        Some(Self { days: i32::try_from(seconds.div_euclid(SECONDS_PER_DAY)).ok()?, seconds: seconds.rem_euclid(SECONDS_PER_DAY) as u32 })
+    }
+
     /// The date and time `seconds` earlier.
     pub fn minus_seconds(self, seconds: u64) -> Option<Self> {
         let total = i64::from(self.days) * SECONDS_PER_DAY + i64::from(self.seconds) - i64::try_from(seconds).ok()?;
@@ -95,6 +100,11 @@ mod tests {
         assert_eq!(at(b"2026-11-06", b"19:08:08").minus_seconds(58).unwrap().to_string(), "2026-11-06T19:07:10");
         assert_eq!(at(b"2024-03-01", b"00:00:30").minus_seconds(120).unwrap().to_string(), "2024-02-29T23:58:30");
         assert_eq!(at(b"2027-01-01", b"00:00:10").minus_seconds(60).unwrap().to_string(), "2026-12-31T23:59:10");
+    }
+
+    #[test]
+    fn from_seconds_matches_parse() {
+        assert_eq!(DateTime::from_seconds(1_794_173_449), Some(at(b"2026-11-08", b"21:30:49")));
     }
 
     #[test]

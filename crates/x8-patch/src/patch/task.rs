@@ -5,6 +5,7 @@ use bat_app::BatApp;
 use super::audio::{ANALYSIS_OFF_ABOVE, process_input, use_itcm_hook};
 use super::itcm::itcm_still_ok;
 use super::keys::{apply_actions, apply_touches};
+use super::clock::run_clock;
 use super::remote::run_remote;
 use super::screen::{draw_frame, hide_for_popup, render, show_frame};
 use super::state::{
@@ -240,6 +241,8 @@ extern "C" fn dsp_task(_: isize) {
         new_session(app);
         apply_actions(app);
         apply_touches(app);
+        // The clock first: a start chime's REC press waits until a clock set has finished.
+        run_clock(app);
         run_remote(app);
         let start = BLOCKS.load(Relaxed);
         process_input(app, u32::MAX, PASS_BLOCKS);
@@ -291,6 +294,7 @@ pub(super) extern "C" fn tick_work() {
     new_session(app);
     apply_actions(app);
     apply_touches(app);
+    run_clock(app);
     run_remote(app);
     process_input(app, MAX_FRAMES_PER_CALL, PASS_BLOCKS);
     let now = BLOCKS.load(Relaxed);

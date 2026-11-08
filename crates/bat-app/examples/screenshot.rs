@@ -200,6 +200,16 @@ fn main() {
         app.process(&a[k..e], &b[k..e], &mut l[k..e], &mut r[k..e]);
     }
 
+    // X8_BEHIND=N: the X8's clock N s behind the phone's, after a chime on the phone time screen;
+    // CLOCK_STATE=after shows the status line for a set waiting for the take to end.
+    if let Ok(behind) = std::env::var("X8_BEHIND") {
+        if let Some(time) = app.take_phone_time() {
+            app.set_host_clock(Some(time.local_ms.div_euclid(1000) - behind.parse::<i64>().unwrap()));
+        }
+    }
+    if std::env::var("CLOCK_STATE").as_deref() == Ok("after") {
+        app.set_clock_state(bat_app::ClockState::AfterTake);
+    }
     if args.get(4).map(String::as_str) == Some("settings") {
         app.open_settings_page(match std::env::var("PAGE").as_deref() {
             Ok("record") => bat_app::SettingsPage::Record,

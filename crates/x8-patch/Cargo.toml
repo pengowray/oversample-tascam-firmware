@@ -16,6 +16,7 @@ bench = false
 bat-dsp = { path = "../bat-dsp" }
 bat-app = { path = "../bat-app" }
 guano = { path = "../guano" }
+chime = { path = "../chime" }
 embedded-graphics = "0.8.2"
 u8g2-fonts = "0.8.0"
 libm = "0.2.16"

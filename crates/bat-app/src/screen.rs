@@ -90,7 +90,7 @@ pub fn draw(app: &BatApp, fb: Fb) {
         return;
     }
     if app.screen == Screen::ChimeTest {
-        title_bar(fb, "CHIME TEST", false);
+        title_bar(fb, chime_screen::TITLE, false);
         chime_screen::draw(app, fb);
         return;
     }

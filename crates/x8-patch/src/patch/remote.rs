@@ -67,8 +67,13 @@ fn guide_on() -> bool {
     read_byte(stock::RECORDING_GUIDE) == 1
 }
 
-/// Press `code` unless it was pressed in the last `PRESS_AGAIN_S`.
+/// Press `code` unless it was pressed in the last `PRESS_AGAIN_S`, or a clock command is under
+/// way: task 1 ignores REC while task 4 is busy, and a start chime sets the clock first so that
+/// the take's names and `bext` times use the new time.
 fn press(code: i32, now: u32) {
+    if super::clock::busy() {
+        return;
+    }
     if now.wrapping_sub(LAST_PRESS.load(Relaxed)) >= PRESS_AGAIN_S * blocks_per_second() {
         LAST_PRESS.store(now, Relaxed);
         post_button(code);

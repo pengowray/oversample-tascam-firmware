@@ -539,6 +539,7 @@ version = "0.1.0"
 dependencies = [
  "bat-app",
  "bat-dsp",
+ "chime",
  "embedded-graphics",
  "guano",
  "libm",

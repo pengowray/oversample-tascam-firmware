@@ -1,7 +1,9 @@
 //! The GUANO metadata the patch adds to the WAV files of takes from a bat tile (docs/HOMEBREW.md,
 //! "GUANO metadata"). This part has no firmware addresses, so the host tests can run it.
 
-use guano::{ChunkWriter, Header};
+use core::fmt;
+
+use guano::{ChunkWriter, DateTime, Header};
 
 /// What goes in the metadata besides the header's figures.
 #[derive(Clone, Copy, Debug)]
@@ -12,6 +14,27 @@ pub struct Recorder<'a> {
     pub patch_build: u32,
     /// The file's name, from [`guano::file_name`].
     pub file_name: Option<&'a str>,
+    /// The phone's local time now, as seconds since 1970, when the X8's clock is to be set from it
+    /// after this take: the start is then worked out from it instead of from the `bext` time.
+    pub phone_now: Option<i64>,
+    /// The UTC offset of the time the start is in, in minutes, when known: the phone's zone, once
+    /// the clock keeps the phone's time.
+    pub utc_offset_minutes: Option<i16>,
+}
+
+/// A start time with its UTC offset, as ISO 8601 takes it: `2026-11-08T21:30:49+11:00`.
+struct Timestamp(DateTime, Option<i16>);
+
+impl fmt::Display for Timestamp {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{}", self.0)?;
+        if let Some(minutes) = self.1 {
+            let sign = if minutes < 0 { '-' } else { '+' };
+            let size = minutes.unsigned_abs();
+            write!(f, "{sign}{:02}:{:02}", size / 60, size % 60)?;
+        }
+        Ok(())
+    }
 }
 
 /// Writes the bytes to add at [`Header::data_end`] into `out`: a pad byte if the audio has an odd
@@ -23,9 +46,13 @@ pub struct Recorder<'a> {
 pub fn write_chunk(header: &Header, recorder: &Recorder, out: &mut [u8]) -> Option<usize> {
     let mut chunk = ChunkWriter::new(out, header.data_end()?);
     let length_us = header.length_us();
-    let started = header.origination.zip(length_us).and_then(|(end, us)| end.minus_seconds((us + 500_000) / 1_000_000));
+    let end = match recorder.phone_now {
+        Some(seconds) => DateTime::from_seconds(seconds),
+        None => header.origination,
+    };
+    let started = end.zip(length_us).and_then(|(end, us)| end.minus_seconds((us + 500_000) / 1_000_000));
     if let Some(started) = started {
-        chunk.field("Timestamp", started);
+        chunk.field("Timestamp", Timestamp(started, recorder.utc_offset_minutes));
     }
     if let Some(us) = length_us {
         chunk.field("Length", format_args!("{}.{:06}", us / 1_000_000, us % 1_000_000));
@@ -48,7 +75,7 @@ mod tests {
     use guano::DateTime;
     use std::string::String;
 
-    const RECORDER: Recorder = Recorder { firmware: "V2.03", patch_build: 242, file_name: Some("261106_0090_3-4.wav") };
+    const RECORDER: Recorder = Recorder { firmware: "V2.03", patch_build: 242, file_name: Some("261106_0090_3-4.wav"), phone_now: None, utc_offset_minutes: None };
 
     /// A header as the X8 writes one, 5548 bytes before the audio.
     fn header(data_size: u32, block_align: u16, date: &[u8], time: &[u8]) -> Header {
@@ -86,6 +113,20 @@ mod tests {
         );
     }
 
+    /// A chime during the take: the X8's clock is 1 h 2 min slow, and the start comes from the
+    /// phone's time at the close, with the phone's UTC offset.
+    #[test]
+    fn a_chime_during_the_take_corrects_the_start() {
+        // 2026-11-06 20:10:08.
+        let phone_now = 1_793_995_808;
+        let recorder = Recorder { phone_now: Some(phone_now), utc_offset_minutes: Some(660), ..RECORDER };
+        let t = text(&header(89_210_880, 8, b"2026-11-06", b"19:08:08"), &recorder);
+        assert!(t.contains("Timestamp: 2026-11-06T20:09:10+11:00\n"), "{t}");
+        let west = Recorder { utc_offset_minutes: Some(-210), ..RECORDER };
+        let t = text(&header(89_210_880, 8, b"2026-11-06", b"19:08:08"), &west);
+        assert!(t.contains("Timestamp: 2026-11-06T19:07:10-03:30\n"), "{t}");
+    }
+
     #[test]
     fn the_start_can_fall_on_the_day_before() {
         let t = text(&header(120 * 192_000 * 8, 8, b"2024-03-01", b"00:00:30"), &RECORDER);
@@ -112,7 +153,7 @@ mod tests {
 
     #[test]
     fn without_a_build_or_name() {
-        let recorder = Recorder { firmware: "V2.03", patch_build: 0, file_name: None };
+        let recorder = Recorder { firmware: "V2.03", patch_build: 0, file_name: None, phone_now: None, utc_offset_minutes: None };
         let t = text(&header(192_000 * 8, 8, b"2026-11-06", b"19:08:08"), &recorder);
         assert!(t.contains("Firmware Version: V2.03 with bat patch\n"));
         assert!(!t.contains("Original Filename"));
@@ -140,7 +181,7 @@ mod tests {
         assert_eq!(header.data_end(), Some(size));
         let name = std::path::Path::new(&input).file_name().unwrap().to_str().unwrap();
         let path = std::format!("{name}\0");
-        let recorder = Recorder { firmware: "V2.03", patch_build: 242, file_name: guano::file_name(path.as_bytes()) };
+        let recorder = Recorder { firmware: "V2.03", patch_build: 242, file_name: guano::file_name(path.as_bytes()), phone_now: None, utc_offset_minutes: None };
         let mut out = [0u8; 0x400];
         let added = write_chunk(&header, &recorder, &mut out).unwrap();
         file.seek(SeekFrom::Start(u64::from(size))).unwrap();
