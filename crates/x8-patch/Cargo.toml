@@ -6,6 +6,7 @@ license.workspace = true
 description = "Code patched into the Portacapture X8 firmware, linked to run from SDRAM after the stock image"
 publish = false
 
+# The host tests are in the library target (src/lib.rs); the binary is the patch itself.
 [[bin]]
 name = "x8-patch"
 test = false
@@ -14,6 +15,7 @@ bench = false
 [dependencies]
 bat-dsp = { path = "../bat-dsp" }
 bat-app = { path = "../bat-app" }
+guano = { path = "../guano" }
 embedded-graphics = "0.8.2"
 u8g2-fonts = "0.8.0"
 libm = "0.2.16"

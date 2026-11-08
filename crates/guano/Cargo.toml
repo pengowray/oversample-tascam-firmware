@@ -1,0 +1,7 @@
+[package]
+name = "guano"
+version = "0.1.0"
+edition.workspace = true
+license.workspace = true
+description = "GUANO bat-recording metadata for WAV files: a guan chunk writer and a WAV header reader. no_std, no allocation."
+publish = false

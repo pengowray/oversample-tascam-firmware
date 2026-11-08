@@ -1,7 +1,7 @@
 use core::ptr;
 use core::sync::atomic::Ordering::Relaxed;
 
-use crate::file_mask::without_master;
+use x8_patch::file_mask::without_master;
 
 use super::state::{GUANO_ON, MIX_FILE_OFF, SCREEN_APP, TAKE_GUANO, TAKE_WITHOUT_MIX};
 use super::{Handler, app_byte, read_byte, stock, system_mode};

@@ -2,7 +2,7 @@ use core::ptr;
 use core::slice;
 use core::sync::atomic::Ordering::Relaxed;
 
-use crate::guano::{self, Recorder};
+use x8_patch::take_guano::{self, Recorder};
 
 use super::state::TAKE_GUANO;
 use super::{Handler, patch_build, read_byte, stock, system_mode};
@@ -18,6 +18,9 @@ const HEADER_READ: usize = 0x2000;
 const CHUNK_AT: usize = 0x8000;
 const CHUNK_BYTES: usize = 0x400;
 const _: () = assert!(HEADER_READ <= CHUNK_AT && CHUNK_AT + CHUNK_BYTES <= stock::HEADER_BUFFER_BYTES);
+/// Free stack the hook requires before it adds a chunk. It uses about 0.7 KB (its frame and the
+/// text formatting); the rest is a margin.
+const STACK_NEEDED: usize = 2048;
 
 /// Replaces `FUN_80db216c`'s call to the file size function, straight after it has rewritten a WAV
 /// file's header from the file's size, at the end of a take and when a take splits. The file is
@@ -29,6 +32,7 @@ pub(super) unsafe extern "C" fn guano_hook(file: usize, size_out: usize, c: usiz
         && TAKE_GUANO.load(Relaxed)
         && read_byte(stock::RENDER_KIND) == 0
         && read_byte(stock::OVERDUB) == 0
+        && stack_left().is_some_and(|left| left >= STACK_NEEDED)
     {
         // SAFETY: the open file the stock code has just written the header of, from its own task.
         unsafe { add_guano(file) };
@@ -60,7 +64,7 @@ unsafe fn add_guano(file: usize) -> Option<()> {
     let recorder = Recorder { firmware: stock::FIRMWARE_VERSION, patch_build: patch_build(), file_name: path(file).and_then(guano::file_name) };
     // SAFETY: as above; CHUNK_AT + CHUNK_BYTES is within the buffer and after the header.
     let out = unsafe { slice::from_raw_parts_mut(stock::HEADER_BUFFER.add(CHUNK_AT), CHUNK_BYTES) };
-    let added = guano::write_chunk(&header, &recorder, out)?;
+    let added = take_guano::write_chunk(&header, &recorder, out)?;
     let riff_size = header.riff_size.checked_add(u32::try_from(added).ok()?)?;
     riff_size.checked_add(8)?;
     unsafe {
@@ -74,6 +78,20 @@ unsafe fn add_guano(file: usize) -> Option<()> {
         write(out.as_ptr(), 4, file);
     }
     Some(())
+}
+
+/// Bytes of stack below the caller's, on a task from the stock task table. None on any other stack,
+/// so the hook adds nothing where it can't tell how much room there is.
+fn stack_left() -> Option<usize> {
+    let sp: usize;
+    // SAFETY: reads the stack pointer.
+    unsafe { core::arch::asm!("mov {}, sp", out(reg) sp, options(nomem, nostack, preserves_flags)) };
+    (0..stock::TASK_TABLE_ENTRIES).find_map(|i| {
+        // SAFETY: the stock task table, constant after start-up.
+        let [_, _, _, _, _, size, low] = unsafe { ptr::read_volatile(stock::TASK_TABLE.add(i)) };
+        let (low, size) = (low as usize, size as usize);
+        (sp >= low && sp < low + size).then(|| sp - low)
+    })
 }
 
 /// The path the take's file slot holding `file` was opened with.

@@ -1,5 +1,5 @@
 [workspace]
-members = ["crates/bat-dsp", "crates/bat-app", "crates/bat-app-web", "crates/x8-patch", "crates/chime"]
+members = ["crates/bat-dsp", "crates/bat-app", "crates/bat-app-web", "crates/x8-patch", "crates/chime", "crates/guano"]
 resolver = "3"
 
 [workspace.package]

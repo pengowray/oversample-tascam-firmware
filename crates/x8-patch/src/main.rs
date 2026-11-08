@@ -17,11 +17,6 @@
 #![cfg_attr(target_os = "none", no_std)]
 #![cfg_attr(target_os = "none", no_main)]
 
-#[cfg_attr(not(target_os = "none"), allow(dead_code))]
-mod file_mask;
-#[cfg_attr(not(target_os = "none"), allow(dead_code))]
-mod guano;
-
 #[cfg(target_os = "none")]
 mod patch;
 

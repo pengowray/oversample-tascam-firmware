@@ -223,3 +223,8 @@ pub const TAKE_FILE_PATH_BYTES: usize = 0x200;
 pub const FILE_SLOTS: usize = 24;
 /// The stock firmware the patch is built on, as the X8's information screen shows it.
 pub const FIRMWARE_VERSION: &str = "V2.03";
+/// The RTOS's task creation table: for each task created at start-up, 7 words: id, attribute,
+/// extended info, entry, priority, stack size, lowest stack address. The end of a take runs on task
+/// 4 (17 KB of stack); the split's task was not found, and the recorder's tasks 5 and 6 have 6 KB.
+pub const TASK_TABLE: *const [u32; 7] = 0x8131_dac4 as *const [u32; 7];
+pub const TASK_TABLE_ENTRIES: usize = 18;

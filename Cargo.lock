@@ -179,6 +179,10 @@ dependencies = [
 ]
 
 [[package]]
+name = "guano"
+version = "0.1.0"
+
+[[package]]
 name = "hound"
 version = "3.5.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -536,6 +540,7 @@ dependencies = [
  "bat-app",
  "bat-dsp",
  "embedded-graphics",
+ "guano",
  "libm",
  "u8g2-fonts",
 ]

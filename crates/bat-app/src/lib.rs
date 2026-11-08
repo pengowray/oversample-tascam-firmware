@@ -1114,6 +1114,11 @@ impl<'a> BatApp<'a> {
         self.guano
     }
 
+    /// Turn GUANO metadata on or off, as the switch does.
+    pub fn set_guano(&mut self, on: bool) {
+        self.guano = on;
+    }
+
     /// Whether switch `i` of `Setting::ALL` is shown on this host.
     fn setting_shown(&self, i: usize) -> bool {
         match Setting::ALL[i] {

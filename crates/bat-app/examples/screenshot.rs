@@ -26,6 +26,7 @@
 //! on; REC PAUSE off; a settings page open). `DEBUG=1` offers the debug switch and draws the X8 patch's
 //! longest debug lines over the last-call panel, to check that they fit.
 //! `AUTO=on` or `AUTO=bats` sets Auto volume, for the settings screen.
+//! `GUANO=off` turns the GUANO metadata switch off, for the tools screen.
 //! `LISTEN=first` or `LISTEN=second` chooses one side in Listen to, for the settings
 //! screen; the default is both.
 
@@ -159,6 +160,7 @@ fn main() {
     }
     app.set_mix_file_available(debug && std::env::var("PLAYBACK").is_err());
     app.set_guano_available(debug && std::env::var("PLAYBACK").is_err());
+    app.set_guano(std::env::var("GUANO").as_deref() != Ok("off"));
     if let Ok(inputs) = std::env::var("INPUTS") {
         let name = |n: &str| {
             let short: &'static str = String::leak(n.to_string());
