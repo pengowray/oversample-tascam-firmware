@@ -3,7 +3,7 @@
 
 use embedded_graphics::primitives::Rectangle;
 
-use super::{BODY, BODY_BOLD, Fb, LEFT, SMALL, outline_selected, rounded, switch_control, text};
+use super::{BODY, BODY_BOLD, Fb, LEFT, SMALL, outline_selected, rounded, switch_control, switch_control_fixed_off, text};
 use crate::layout::{RECORD_GUANO, RECORD_MIX_FILE, RECORD_REMOTE, TESTS_CHIME_TEST, TESTS_CPU_TEST, TESTS_DEBUG, panel_switch};
 use crate::palette::*;
 use crate::{BatApp, RemoteCommand, RemoteResult, Setting};
@@ -32,15 +32,20 @@ pub(super) const GUANO_HELP: [&str; 2] =
     ["Adds a timestamp and recorder model to each WAV file.", "Bat analysis apps read GUANO. Most audio apps ignore it."];
 
 /// A panel with a name, a switch at the right of the name, and help lines under it. Muted when
-/// the switch can't be changed here.
+/// the switch can't be changed here: then the switch is drawn as an outline and the panel gets no
+/// wheel outline, since the wheel can't change it either.
 fn switch_panel(fb: Fb, panel: Rectangle, name: &str, help: &[&str], on: bool, muted: bool, selected: bool) {
     rounded(fb, panel, 6, PANEL);
-    if selected {
+    if selected && !muted {
         outline_selected(fb, panel);
     }
     let (x, y) = (panel.top_left.x + 10, panel.top_left.y);
     text(fb, &BODY, name, x, y + 20, LEFT, if muted { TEXT_MUTED } else { TEXT });
-    switch_control(fb, panel_switch(panel), on);
+    if muted {
+        switch_control_fixed_off(fb, panel_switch(panel));
+    } else {
+        switch_control(fb, panel_switch(panel), on);
+    }
     for (line, y) in help.iter().zip([y + 44, y + 58]) {
         text(fb, &SMALL, *line, x, y, LEFT, TEXT_MUTED);
     }

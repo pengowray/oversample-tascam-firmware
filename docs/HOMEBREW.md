@@ -2165,16 +2165,23 @@ DSP task shows as about 2 `dsp` points.
   volume off and on), COMB stereo 44 and 56.
 - **Auto volume.** Does On and Bats only sound as before?
 
-## Step 24 test file: GUANO metadata in takes from BAT DETECTOR, MIX file switch follows REC READY (built 2026-11-08, not yet installed)
+## Step 24 test file: GUANO metadata in takes from BAT DETECTOR, settings in three tabs (built 2026-11-08, not yet installed)
 
-`work/patch24/#PortaX8_0244.203` (B244, SHA-256 `918fbbbb…11dc66c04b`). Includes steps 11 to 23. Install this file in place of
+`work/patch24/#PortaX8_0245.203` (B245, SHA-256 `d3c2641f…fb031f4e9b7`). Includes steps 11 to 23. Install this file in place of
 B241 or an earlier build. All the checks in `tools/x8patch.py` pass on this file. It has one new stock hook site, so the patch
-header is now version 18. B242 and B243 were built earlier the same day and never installed; their files have been deleted.
+header is now version 18. B242 to B244 were built earlier the same day and never installed; their files have been deleted.
+
+- **Settings in three tabs.** SETTINGS has tabs under the title bar, and the TOOLS screen is gone. `Listen` has Lowest bat
+  call, Listen to, Auto volume (full width, with wider choices) and the sounds to mark. `Record` has MIX file, GUANO metadata
+  and the phone remote. `Tests` has Debug info, Chime test and CPU test. Every page ends with the power-off note and a
+  full-width Done. The screen opens on the page it last showed. The wheel changes the selected setting only while its page
+  shows, and a tab selects its page's first setting. Back on the chime test and the CPU test returns to `Tests`. BAT PLAYBACK,
+  which offers nothing on `Record`, has two tabs.
 
 - **GUANO metadata.** Each WAV file of a take recorded with the bat screen open gets a GUANO chunk (`guan`) after its audio. The
   patch adds it when the stock recorder closes the file, at the end of the take and when a long take splits at about 4 GB, so each
   file of a split take has its own. How and why is in [GUANO metadata](#guano-metadata-2026-11-08).
-- **Switch.** TOOLS has a `GUANO metadata` switch below CPU test, on by default. Like the other bat settings it goes back to on
+- **Switch.** SETTINGS, `Record` has a `GUANO metadata` switch, on by default. Like the other bat settings it goes back to on
   when the recorder is turned off. The patch reads it when a take starts, so a change applies from the next take.
 - **Fields.** This is the text the patch's code wrote to a PC copy of `261106_0095_3-4.wav` (a take with 2 marks). Oversample's
   GUANO reader and its reader for chunks after the audio both read it, and ffprobe still reads 5.904 s of audio:
@@ -2186,7 +2193,7 @@ header is now version 18. B242 and B243 were built earlier the same day and neve
   Samplerate: 192000
   Make: TASCAM
   Model: Portacapture X8
-  Firmware Version: V2.03 with bat patch B244
+  Firmware Version: V2.03 with bat patch B245
   Original Filename: 261106_0095_3-4.wav
   ```
 
@@ -2195,9 +2202,9 @@ header is now version 18. B242 and B243 were built earlier the same day and neve
   command stores the bare name (such as `261106_0095_3-4.wav`), read from the code; the patch leaves the field out if the name is
   not printable ASCII.
 - **MIX file switch and REC READY.** With REC READY off for MASTER in MANUAL, no take has a MIX file, but SETTINGS still showed
-  the MIX file switch on. The patch now reads MANUAL's track on/off words (bits 6 and 7 are the master), and the switch shows off
-  and greyed with `REC READY is off for MASTER in MANUAL.` Taps and the wheel do nothing there; the app keeps its own setting for
-  when REC READY is back on.
+  the MIX file switch on. The patch now reads MANUAL's track on/off words (bits 6 and 7 are the master). The switch is then
+  drawn as an outline, the name greyed, with `REC READY is off for MASTER in MANUAL.` Taps and the wheel do nothing there; the
+  app keeps its own setting for when REC READY is back on.
 - **CPU test.** While recording, the summary line says whether the take has a MIX file (`MIX file on.` or `MIX file off.`), from
   the stock file mask, since the MIX file costs CPU. A row whose MIX status differs from row 1 gets the `*` that a change of
   recorder state gets. The state lines are shorter, for example `Recording for every row.`, so `Ended at 25 of 26.` still fits.
@@ -2205,11 +2212,11 @@ header is now version 18. B242 and B243 were built earlier the same day and neve
   2 KB free (it uses about 0.7 KB), or on a stack the table does not list. A file left without GUANO this way looks like a
   stock file.
 
-| Item | B241 | B244 | Limit |
+| Item | B241 | B245 | Limit |
 |---|---|---|---|
 | ITCM | 82.5 KB | 82.2 KB | 89.2 KB |
 | DTCM | 141.5 KB | 141.5 KB | 152.8 KB |
-| `.noinit`, the end of the patch's memory | ends at 0x818ed558 | ends at 0x818ef8a8 | 0x81900000 |
+| `.noinit`, the end of the patch's memory | ends at 0x818ed558 | ends at 0x818ef828 | 0x81900000 |
 
 **What to check.**
 
@@ -2218,12 +2225,14 @@ header is now version 18. B242 and B243 were built earlier the same day and neve
    `Original Filename` the file's name? Without Oversample, `tail -c 600 FILE.wav | strings` prints the text.
 2. On the X8, play the take with PLAY in MANUAL and on BAT PLAYBACK. Do both marks show? Add a mark during playback, then check
    on the computer that the file has 3 marks and still has its GUANO text.
-3. Turn `GUANO metadata` off in TOOLS and record a take. Its files should end with the audio, as stock files do.
+3. Turn `GUANO metadata` off on SETTINGS' `Record` tab and record a take. Its files should end with the audio, as stock files do.
 4. Record a take in MANUAL opened from its own tile. It should have no GUANO text.
-5. In MANUAL, tap MASTER and turn REC READY off, then open BAT DETECTOR. Is SETTINGS' MIX file switch off and greyed, with the
-   REC READY line? Turn REC READY back on: does the switch show its earlier setting again?
+5. In MANUAL, tap MASTER and turn REC READY off, then open BAT DETECTOR. On SETTINGS' `Record` tab, is the MIX file switch an
+   outline, with the REC READY line? Turn REC READY back on: does the switch show its earlier setting again?
 6. CPU test while recording: does the summary line say `MIX file on.`, or `MIX file off.` with the MIX file switch off?
-7. If there is time: a take longer than about 46 min at 192 kHz with inputs 3 and 4 splits at about 4 GB. Does each file have its
+7. The tabs: does each open its page, and does the wheel change only the outlined setting on the page shown? Does Back on the
+   chime test and the CPU test return to `Tests`? Does SETTINGS reopen on the tab last used?
+8. If there is time: a take longer than about 46 min at 192 kHz with inputs 3 and 4 splits at about 4 GB. Does each file have its
    own GUANO text, with a `Timestamp` about 46 min apart? A split file without GUANO would mean the stack check stopped it: the
    split runs on a task that has not been identified.
 
