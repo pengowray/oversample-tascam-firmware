@@ -2245,6 +2245,48 @@ header is now version 18. B242 to B245 were built earlier the same day and never
    own GUANO text, with a `Timestamp` about 46 min apart? A split file without GUANO would mean the stack check stopped it: the
    split runs on a task that has not been identified.
 
+## Step 25 test file: phone chimes set the clock, location log, no pauses in bat takes (built 2026-11-08, not yet installed)
+
+`work/patch24/#PortaX8_0247.203` (B247, SHA-256 `6ce037cb…f147869c`). Includes steps 11 to 24. Install this file in place of
+B241 or an earlier build: B246 was never installed, and its file has been deleted. All the checks in `tools/x8patch.py` pass on
+this file. No new stock hook site (header version 18).
+
+How the parts work is in [Setting the clock, locations and pauses](#setting-the-clock-locations-and-pauses-2026-11-08).
+
+- **PHONE TIME screen.** The Chime test screen is now `PHONE TIME` (Tests tab, `Phone time`). Under the phone's time it says how
+  the X8's clock compares (`X8 clock 12 s behind phone. Chime read 3 s ago.`) and the chime's location. `Set X8 clock` sets the
+  X8's clock to the phone's local time. The line above the buttons says what happened.
+- **Set X8 clock from chimes.** A new switch on the Record tab, on by default: a chime the phone remote hears on the main screen
+  also sets the clock. During a take the set waits until the take ends, and that take's GUANO `Timestamp` comes from the phone's
+  time. Once the clock is set from a chime, `Timestamp` carries the phone's UTC offset, for example `2026-11-08T21:30:49+11:00`.
+- **Locations.** A chime with a location gives a take's GUANO `Loc Position` when it was read during the take or up to 1 h
+  before it started. Locations are also added to `BAT_LOCATIONS.CSV`, beside the takes (`time,latitude,longitude`), once a take,
+  as the take's files close. A location read with no take after it is lost at power-off.
+- **REC pauses takes.** A new switch on the Record tab, off by default. With it off, REC does nothing while a take from a bat
+  tile records, and the main screen says `Pausing is off. STOP ends the take.` Pauses that do happen get a mark where they end
+  and GUANO fields `X8Bat|Pauses` and `X8Bat|Paused` (seconds). Takes with no pauses say `X8Bat|Pauses: 0`.
+
+| Item | B241 | B247 | Limit |
+|---|---|---|---|
+| ITCM | 82.5 KB | 84.3 KB | 89.2 KB |
+| DTCM | 141.5 KB | 141.7 KB | 152.8 KB |
+| `.noinit`, the end of the patch's memory | ends at 0x818ed558 | ends at 0x818f39e0 | 0x81900000 |
+
+**What to check.** Do these first, in this order: setting the clock writes to the clock chip, and the log writes a new file.
+
+1. **Set the clock by hand.** Stopped, open SETTINGS, Tests, `Phone time`, and play chimes on the phone. Does the screen show how
+   the X8's clock compares? Press `Set X8 clock`. Does it say `X8 clock set to hh:mm:ss.`, and does the X8's own clock (the
+   status bar, or the date and time in MANUAL's settings) now show the phone's time? Does the date stay right?
+2. **Set from the remote.** Stopped, with the phone remote on, play a Start chime. Does the take start, and is the clock set
+   first? Then change the X8's clock by a minute in its menu, record, and play a Stop chime during the take. Is the clock left
+   alone until the take ends, then set? Does that take's GUANO `Timestamp` match the phone's time, with `+hh:mm`?
+3. **Location.** With location on in the phone page, does `Phone time` show it? After a take, is `Loc Position` in its GUANO,
+   and is there a `BAT_LOCATIONS.CSV` beside the takes, with a header line and one line for each chime with a location?
+4. **No pauses.** During a take from BAT DETECTOR, press REC. Does the take carry on, with the notice? Its GUANO should say
+   `X8Bat|Pauses: 0`.
+5. **Pauses.** Turn `REC pauses takes` on, then pause and resume a take twice, once for about 10 s. Is there a mark at each
+   resume, and do `X8Bat|Pauses: 2` and `X8Bat|Paused` match? Does MARK still make TE captures when pressed by hand?
+
 ## Checking takes for cuts in the WAV (2026-11-07)
 
 Files from B231 (`to-2026-11-06`, 13.8 minutes in 9 takes) and B235 (`to-2026-11-07`, 5.7 minutes in 6 takes). Scripts were
@@ -2462,6 +2504,44 @@ nothing with under 2 KB free or on a stack the table does not list.
   length as its size less the header (`local_2ac = size - piVar28[1]`), so it would count the chunk's bytes as audio. Reasoned
   from the code, not run.
 - Which task runs the split, and so whether split files get GUANO (see Stack).
+
+## Setting the clock, locations and pauses (2026-11-08)
+
+Read in V2.03 with the Ghidra project. Built as [Step 25](#step-25-test-file-phone-chimes-set-the-clock-location-log-no-pauses-in-bat-takes-built-2026-11-08-not-yet-installed).
+
+**The clock chip.** The X8's clock is an I2C chip on bus 2, not the processor's own clock (no code refers to the SNVS registers).
+`FUN_80dfd966` reads its date (register 0x32, 7 bytes) and `FUN_80dfd822` its time (0x33, 3 bytes), in BCD; `FUN_80dfd8a6` and
+`FUN_80dfd770` set them. `FUN_80dfd608` and `FUN_80dfd65a` take and give back the bus. The stock code keeps a 10-byte record:
+a two-digit year (u16), month, day, weekday (& 7), a spare byte, then a flag (bit 6 of the hours register), hours, minutes and
+seconds.
+
+**The commands.** Task 4 runs one command at a time from its table at 0x8196b714. `FUN_80dc9308(command, parameter)` stores the
+command at 0x8196b2fc + 0x414 and a pointer at + 0x580, and starts the task, which runs the command and ends; `FUN_80dc9356` is
+non-zero while it runs. Command 75 (`0x80dce433`) reads the clock into the record at 0x81e9adc8. Command 76 (`0x80dce469`) copies
+10 bytes from the pointer and sets the clock, as the X8's own date and time menu does, then tells task 1. The patch
+(`crates/x8-patch/src/patch/clock.rs`) gives these commands from the DSP task only when the recorder is stopped, task 4 is idle
+and a take ended at least 1 s ago. It reads the clock first, writes the record with the chip's own weekday numbering and flag
+byte (`crates/x8-patch/src/clock_record.rs`, host tests), then reads it back: a set counts only within 2 s of the phone's time.
+While a command runs, task 1 ignores REC, so the phone remote holds its presses until the clock is done, and the PHONE TIME screen
+reads the clock only every 5 s.
+
+**Not checked:** whether the flag byte is a 12-hour mode. The patch keeps it as read and writes 24-hour hours; the read-back
+would show a mismatch.
+
+**The phone's time during a take.** The DSP task keeps the phone's local time with the block count it was read at. For a take
+with a set waiting, the GUANO hook takes the start as that time, counted on to the moment the files close, less the length. Once
+the clock has been set from a chime, the bext times are the phone's local time, and `Timestamp` gets the phone's UTC offset.
+
+**Locations.** `crates/x8-patch/src/patch/location.rs`. The GUANO hook writes the log, since the recorder's own task, closing a
+take, is the only place the patch is known to use the card safely. It opens `BAT_LOCATIONS.CSV` with `FUN_80de7366` in mode
+"r+", or "w+" for a new file (the stock code uses only "w+", "r+" and "r"), seeks to its size, writes, and closes it with
+`FUN_80de744c`. It needs 8 KB of free stack, since what the file system uses has not been measured. The file lands in the folder
+the takes are opened in: the record command opens them by bare name (`sprintf("%s", name)` from the table `FUN_80dd14e8` builds).
+
+**Pauses.** `crates/x8-patch/src/patch/pauses.rs`. The key hook keeps REC from the recording screen's handler (`FUN_80dd4214`,
+where REC in state 3 pauses) while a bat take records with the switch off. Transport 4 is a REC pause and 6 a pause by an event;
+both are counted. MARK in state 3 adds a mark at the recorded position (`FUN_80df217c(0, FUN_80dae75c())`), so a MARK posted
+right after a resume marks where the gap is.
 
 ## Firmware map (V2.03, in progress)
 
