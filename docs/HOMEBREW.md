@@ -5,13 +5,13 @@ Notes from reading the V2.01 and V2.03 update files (`#PortaX8_0215.201`,
 work was done, so earlier sections can describe plans and figures that later
 steps changed.
 
-**Status, 8 November 2026.** Test builds from B218 to B251 were installed and run
+**Status, 9 November 2026.** Test builds from B218 to B251 were installed and run
 on the owner's X8. Not every build in that range was installed: a step's heading
 says "installed" if its build ran on the unit, and "never installed" if a later
 build replaced it first. B250 hung as soon as a bat screen opened (Step 28 says
 why). The last build installed is B251 (Step 28), and its bat screens open. GUANO
 metadata, setting the clock from phone chimes and the location log have not been
-checked on a unit yet. The current build is B252 (Step 29), which has not been
+checked on a unit yet. The current build is B253 (Step 30), which has not been
 installed.
 
 **Hardware tested.** One X8. Its Information screen (GENERAL SETTINGS > SYSTEM >
@@ -2357,7 +2357,49 @@ B241 or an earlier build. All the checks in `tools/x8patch.py` pass on this file
 1. **Start and stop.** With Phone remote on and the phone page reloaded, do `Start recording` and `Stop recording` work as before?
 2. **Old phone page.** If a phone still has the old page cached, its commands should do nothing at all. Reload the page.
 
-## Step 29 test file: dragging the comb past either end (built 2026-11-08, not yet installed)
+## Step 30 test file: PITCH about 40% cheaper (built 2026-11-09, not yet installed)
+
+`work/patch29/#PortaX8_0253.203` (B253, SHA-256 `e98a6b47…3608a59a4`). Includes steps 11 to 29. Install this file in place of
+any earlier build. All the checks in `tools/x8patch.py` pass on this file. No new stock hook site (header version 18).
+
+The aim is to make mono PITCH fit while recording. On B251 PITCH's own cost was 41 to 49 points (Step 27). PITCH is still hidden
+on the X8's mode buttons; the CPU test runs it.
+
+**Changes to the pitch shifter.** Frames are still 1,024 samples every 256 samples (75% overlap), so the sound below 20 kHz is
+the same: the figures in `pitch_shift::measurements` for steady tones, chirps and noise match B251's.
+
+- **Resynthesis at a quarter of the sample rate.** The factor is at least 4 (the X8 offers 4 to 32), so the shifted sound is all
+  below 24 kHz. Each frame is now resynthesised from its bins below 24 kHz with a 256-point inverse FFT at 48 kHz instead of a
+  1,024-point one at 192 kHz, then interpolated linearly back to 192 kHz. Each bin is boosted to undo the level the
+  interpolation loses (1.3 dB at 10 kHz). The interpolation leaves images around 48 kHz, which are above hearing. The delay grows
+  by 4 samples (0.02 ms). The library's smallest factor is now 4 instead of 2.
+- **High-pass in the spectrum.** The 15 kHz high-pass leaves out the bins below 15 kHz instead of filtering every sample.
+- **Rotations from a table.** Each moved peak's rotation comes from a 1,024-entry table, interpolated, instead of a series.
+- **Smaller.** A shifter is 17 KB (was 23 KB).
+
+| On a PC, ms per second of 192 kHz audio, no SIMD | B251 | B253 |
+|---|---|---|
+| Pitch shifter, noise | 16.1 | 9.6 |
+| Pitch shifter, benchmark's noise and calls | 14.6 | 10.6 |
+| FD, for comparison | 4.0 | 4.3 |
+
+**Estimate.** On B251, PITCH cost 3.5 times FD's 13 points, as the PC benchmark predicted. At 2.5 times FD, PITCH's own cost would
+be about 32 points: mono PITCH about 59 `dsp` with the recorder stopped (76 on B251) and 67 to 72 while recording. FD with the
+chime decoders kept up at 66 while recording. Stereo PITCH would still be over 90 and will not keep up.
+
+| Item | B252 | B253 | Limit |
+|---|---|---|---|
+| ITCM | 80.6 KB | 80.8 KB | 89.2 KB |
+| DTCM | 141.1 KB | 135.1 KB | 152.8 KB |
+| `.noinit`, the end of the patch's memory | ends at 0x818f92d8 | ends at 0x818f9a58 | 0x81900000 |
+
+**What to check.**
+
+1. **CPU test, recorder stopped and while recording.** For PITCH mono: `dsp`, `lost` and `skip%`. If it keeps up while recording
+   with `skip%` near 0, the next build can show PITCH on the mode buttons in mono.
+2. **COMB drag** (Step 29), since B252 was not installed.
+
+## Step 29 test file: dragging the comb past either end (built 2026-11-08, never installed: superseded by B253)
 
 `work/patch28/#PortaX8_0252.203` (B252, SHA-256 `4621a0ba…eee34b57`). Includes steps 11 to 28. All the checks in
 `tools/x8patch.py` pass on this file. No new stock hook site (header version 18).
@@ -2436,8 +2478,7 @@ the row with the analysis (the waterfall) switched off because input was piling 
   stopped was low: it measured 76.
 - Every other mode keeps up with nothing lost, recording included. The highest is FD with the chime decoders, 66 while recording.
 - `hook` is 8 in every row, stopped and recording, where B239 measured 7 to 9 from SDRAM. Moving the hook to ITCM (Step 23) has
-  not shown a saving. Not yet checked: whether the Debug info line reads `hook N itcm`, which says the ITCM copy is the one
-  running.
+  not shown a saving. The Debug info line reads `hook N itcm`, so the ITCM copy is the one running.
 
 ## Step 28 test file: B250's hang on opening a bat screen fixed (built 2026-11-08, installed 2026-11-08: the bat screens open)
 

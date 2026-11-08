@@ -29,7 +29,7 @@ estimates from the generated code and operation counts, not measurements.
   listening have setters that do not click.
 - Buffers whose size depends on time (the time expander's storage) are passed in
   by the caller, so they can live in a static or in SDRAM.
-- Three structs are large: `PitchShifter` (about 23 KB), `SpectrumAnalyzer<1024>`
+- Three structs are large: `PitchShifter` (about 17 KB), `SpectrumAnalyzer<1024>`
   (about 14 KB) and `CallDetector<1024>` (about 8 KB). `new()` builds them on the
   stack, which is fine on a PC. On the target, put `unconfigured()` (a `const fn`)
   in a `static` and call `init(sample_rate)` on it at start-up. `init` works in

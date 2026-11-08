@@ -592,7 +592,7 @@ impl<'a> BatApp<'a> {
     }
 
     /// Build the app at `this`, field by field, so that no more than its
-    /// largest part (a pitch shifter, about 23 KB) passes through the stack.
+    /// largest part (a pitch shifter, about 17 KB) passes through the stack.
     ///
     /// # Safety
     ///

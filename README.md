@@ -15,7 +15,7 @@ firmware is not included: the patcher changes your own copy of the official upda
 
 Experimental. Earlier builds have run on one X8 (F/W Version 2.03 Build 217, H/W Version 1.00
 Build 010, as GENERAL SETTINGS > SYSTEM > Information shows them). Other hardware versions are
-untested. The current build is B252. The optional AK-BT1 Bluetooth adapter
+untested. The current build is B253. The optional AK-BT1 Bluetooth adapter
 has not been tried with the patch. [docs/HOMEBREW.md](docs/HOMEBREW.md) lists what each build changed
 and what to check.
 
@@ -50,7 +50,7 @@ rustup use Rust 1.99.1 with the `thumbv7em-none-eabihf` target.
 
 ```bash
 tools/build.sh
-python3 tools/x8patch.py "#PortaX8_0217.203" target/thumbv7em-none-eabihf/release/x8-patch "#PortaX8_0252.203" --build 252
+python3 tools/x8patch.py "#PortaX8_0217.203" target/thumbv7em-none-eabihf/release/x8-patch "#PortaX8_0253.203" --build 253
 ```
 
 `tools/build.sh` runs `cargo build` for the X8 and removes Cargo's home folder from the source
