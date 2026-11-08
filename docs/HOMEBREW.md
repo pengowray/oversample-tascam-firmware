@@ -2332,7 +2332,7 @@ How the parts work is in [Setting the clock, locations and pauses](#setting-the-
 
 ## Step 26 test file: version 1 of the phone remote format (built 2026-11-08, not yet installed)
 
-`work/patch25/#PortaX8_0249.203` (B249, SHA-256 `dc006204…1d08ee49`). Includes steps 11 to 25. Install this file in place of
+`work/patch25/#PortaX8_0249.203` (B249, SHA-256 `273f4e17…c4763b00`). Includes steps 11 to 25. Install this file in place of
 B241 or an earlier build. All the checks in `tools/x8patch.py` pass on this file. No new stock hook site (header version 18).
 
 - **New command format.** A remote chime's deployment ID is now `BATX`, a format version (1), a command (1 start, 2 stop) and
@@ -2340,7 +2340,7 @@ B241 or an earlier build. All the checks in `tools/x8patch.py` pass on this file
   read the old `BATXREC` commands, and B239 to B248 ignore the new ones, so update the phone page (`setup.js?v=3`) with this
   build.
 - **Unknown commands.** A chime whose deployment ID starts with `BATX` but has a version, command or argument that B249 does not
-  know plays one low note and shows `Unknown phone command.` and `Update the bat patch.` The Record tab's phone remote panel
+  know plays one low note and shows `Unknown phone command.` and `Update the bat firmware.` The Record tab's phone remote panel
   shows `Last: Unknown command`. The chime's time and location are still used.
 
 | Item | B248 | B249 | Limit |

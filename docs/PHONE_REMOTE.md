@@ -78,7 +78,7 @@ For example, Stop recording is sent as `42 41 54 58 01 02 00 00`.
   different layout.
 - **Unknown messages.** A receiver acts on a message only if it knows the version, the command and
   the argument value. Any other deployment ID that starts with `BATX` is an unknown command: the X8
-  plays one low note, shows `Unknown phone command.` and `Update the bat patch.` on the main screen,
+  plays one low note, shows `Unknown phone command.` and `Update the bat firmware.` on the main screen,
   and does nothing else. So older firmware never acts on a command it does not understand, such as
   a future Start with a duration in its argument.
 - **Time and location.** The time, UTC offset and location in a remote chime are used as in any

@@ -144,7 +144,7 @@ fn remote_panel(app: &BatApp, fb: Fb) {
 }
 
 /// A phone remote message from a newer phone page than this build reads.
-pub(super) const UNKNOWN_LINES: [&str; 2] = ["Unknown phone command.", "Update the bat patch."];
+pub(super) const UNKNOWN_LINES: [&str; 2] = ["Unknown phone command.", "Update the bat firmware."];
 
 /// A command's outcome, in the corner of the waterfall.
 pub(super) fn result_lines(result: RemoteResult) -> &'static [&'static str] {
