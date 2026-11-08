@@ -2167,9 +2167,10 @@ DSP task shows as about 2 `dsp` points.
 
 ## Step 24 test file: GUANO metadata in takes from BAT DETECTOR (built 2026-11-08, not yet installed)
 
-`work/patch24/#PortaX8_0242.203` (B242, SHA-256 `96083599…62b8e349`). Includes steps 11 to 23. Install this file in place of
+`work/patch24/#PortaX8_0243.203` (B243, SHA-256 `5b9cb14b…a978e7ccc9`). Includes steps 11 to 23. Install this file in place of
 B241 or an earlier build. All the checks in `tools/x8patch.py` pass on this file. It has one new stock hook site, so the patch
-header is now version 18.
+header is now version 18. B242, built earlier the same day, had no stack check (see below) and was never installed; its file
+has been deleted.
 
 - **GUANO metadata.** Each WAV file of a take recorded with the bat screen open gets a GUANO chunk (`guan`) after its audio. The
   patch adds it when the stock recorder closes the file, at the end of the take and when a long take splits at about 4 GB, so each
@@ -2186,20 +2187,23 @@ header is now version 18.
   Samplerate: 192000
   Make: TASCAM
   Model: Portacapture X8
-  Firmware Version: V2.03 with bat patch B242
+  Firmware Version: V2.03 with bat patch B243
   Original Filename: 261106_0095_3-4.wav
   ```
 
   `Timestamp` is the X8's clock with no time zone: the `bext` chunk's date and time, which the stock recorder writes when it
-  closes the file, less the length, to the nearest second. `Original Filename` is the name the file was opened with, after the
-  last `/`; the patch leaves the field out if the name is not printable ASCII. The name's form in the take's file table has not been
-  seen on a unit.
+  closes the file, less the length, to the nearest second. `Original Filename` is the name the file was opened with. The record
+  command stores the bare name (such as `261106_0095_3-4.wav`), read from the code; the patch leaves the field out if the name is
+  not printable ASCII.
+- **Stack check.** Before it adds the chunk, the hook finds its task's stack in the RTOS task table and adds nothing with under
+  2 KB free (it uses about 0.7 KB), or on a stack the table does not list. A file left without GUANO this way looks like a
+  stock file.
 
-| Item | B241 | B242 | Limit |
+| Item | B241 | B243 | Limit |
 |---|---|---|---|
 | ITCM | 82.5 KB | 82.5 KB | 89.2 KB |
 | DTCM | 141.5 KB | 141.5 KB | 152.8 KB |
-| `.noinit`, the end of the patch's memory | ends at 0x818ed558 | ends at 0x818ee890 | 0x81900000 |
+| `.noinit`, the end of the patch's memory | ends at 0x818ed558 | ends at 0x818ef5c8 | 0x81900000 |
 
 **What to check.**
 
@@ -2211,7 +2215,8 @@ header is now version 18.
 3. Turn `GUANO metadata` off in TOOLS and record a take. Its files should end with the audio, as stock files do.
 4. Record a take in MANUAL opened from its own tile. It should have no GUANO text.
 5. If there is time: a take longer than about 46 min at 192 kHz with inputs 3 and 4 splits at about 4 GB. Does each file have its
-   own GUANO text, with a `Timestamp` about 46 min apart?
+   own GUANO text, with a `Timestamp` about 46 min apart? A split file without GUANO would mean the stack check stopped it: the
+   split runs on a task that has not been identified.
 
 ## Checking takes for cuts in the WAV (2026-11-07)
 
@@ -2385,29 +2390,34 @@ switch on (decided in `open_take_hook`), and not during overdub or mix down. It:
 
 1. reads the file's size,
 2. reads the header just written from the stock buffer, and checks that the RIFF size and the data chunk both end at that size,
-3. builds the chunk at buffer + 0x8000 (`crates/x8-patch/src/guano.rs`, which has host tests),
+3. builds the chunk at buffer + 0x8000 (`crates/x8-patch/src/take_guano.rs` chooses the fields, and the `guano` crate in
+   `crates/guano` reads the header and writes the chunk; both have host tests),
 4. seeks to the end of the file and writes the chunk, then writes the new RIFF size at offset 4,
 5. calls the stock size function, so the free space count includes the chunk.
 
 It uses the C library calls the recorder uses (`FUN_80de74cc` to seek, `FUN_80de74b6` to write) on the recorder's own file handle,
 from the recorder's own task, and writes from the stock header buffer as the stock code does. The file's name comes from the
-take's file table at 0x81cbacac: 24 slots of 0x204 bytes, each a file handle then the path it was opened with. If any check
-fails, the file stays as the stock code wrote it.
+take's file table at 0x81cbacac: 24 slots of 0x204 bytes, each a file handle then the path it was opened with. The record
+command `FUN_80dc99dc` fills those paths with `sprintf("%s", name)` from the name table that `FUN_80dd14e8` builds, so a path is
+the bare file name, in 8-bit characters. If any check fails, the file stays as the stock code wrote it.
 
 **Stack.** The hook needs about 0.7 KB of stack: a 180-byte frame and saved registers, plus the text formatting it calls. The
 end of a take and the close at power-off run on task 4 (entry `FUN_80dc93a0`, priority 4, a 17 KB stack): its command table at
 0x8196b714 holds the record command `FUN_80dc99dc` (12), the stop command `FUN_80dc9b5c` (13) and power-off `FUN_80dca8b8` (21).
-The task table at 0x8131daf8 has 7 words a task: id, attribute, extended info, entry, priority, stack size, stack. The split
-`FUN_80dbba78` is called through a table at 0x8174c53c that has not been traced. If it runs on task 5 or 6 (entries in the
-recorder's code, 6 KB stacks each), the hook should still fit, but this is not checked.
+The task table at 0x8131dac4 has 18 entries of 7 words: id, attribute, extended info, entry, priority, stack size, lowest stack
+address. The split `FUN_80dbba78` is entry 8 of a table of 11 recorder functions at 0x8174c51c, whose address is stored at
+0x80db6d2c, but the code that reads it was not found. The recorder's other tasks, 5 and 6 (entries 0x80db5f41 and 0x80db60cd),
+have 6 KB stacks. So the hook checks at run time: it reads the stack pointer, finds the task whose stack holds it, and adds
+nothing with under 2 KB free or on a stack the table does not list.
 
 **Not checked.**
 
 - A card that fills up while the chunk is written. Up to 1 KB could be left after the RIFF size, which readers skip, and the stock
   close might then report a write error.
-- Overdub and punch-in in MANUAL on a take that has GUANO. Overdub's branch of `FUN_80db2102` works from file sizes, so it might
-  read the chunk as audio.
-- The form of the paths in the take's file table, which the `Original Filename` field depends on.
+- Overdub and punch-in in MANUAL on a take that has GUANO. Overdub's branch of `FUN_80db2102` takes an existing file's audio
+  length as its size less the header (`local_2ac = size - piVar28[1]`), so it would count the chunk's bytes as audio. Reasoned
+  from the code, not run.
+- Which task runs the split, and so whether split files get GUANO (see Stack).
 
 ## Firmware map (V2.03, in progress)
 
