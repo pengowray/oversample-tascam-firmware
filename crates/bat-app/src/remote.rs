@@ -34,7 +34,7 @@ const LISTEN_S: u64 = 6;
 const RESULT_SHOWN_S: u64 = 5;
 
 /// What the phone asked for: the command in a chime's deployment ID (`chime::format`).
-pub use chime::format::RemoteCommand;
+pub use chime::format::{RemoteCommand, RemoteMessage};
 
 /// What came of a command.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -51,6 +51,9 @@ pub enum RemoteResult {
     PageOpen,
     /// The recorder did not reach the state asked for in time.
     NoResponse,
+    /// The chime has a phone remote message with a version, command or argument this build does
+    /// not know: the phone page is newer than the patch.
+    Unknown,
 }
 
 impl RemoteResult {
@@ -69,10 +72,10 @@ const BEEP_AMPLITUDE: f32 = 0.02;
 /// Each note's rise and fall, so it does not click.
 const BEEP_RAMP_MS: u32 = 5;
 
-/// The latest command read, for the phone remote panel on the Record tab.
+/// The latest phone remote message read, for the phone remote panel on the Record tab.
 #[derive(Clone, Copy)]
 pub(crate) struct LastCommand {
-    pub(crate) command: RemoteCommand,
+    pub(crate) message: RemoteMessage,
     /// Where the decoder finished reading it, in the app's samples.
     pub(crate) read_at: u64,
     pub(crate) level_dbfs: f32,
@@ -223,12 +226,15 @@ impl Remote {
                 if self.last_unix != message.unix_time {
                     self.reading = Some(Reading::new(&message, start_sample, now));
                 }
-                let Some(command) = message.remote_command() else { return };
-                let same_chime = self.last.is_some_and(|last| last.command == command) && self.last_unix == message.unix_time;
-                self.last = Some(LastCommand { command, read_at: now, level_dbfs: chime.level_dbfs });
+                let Some(remote) = message.remote() else { return };
+                let same_chime = self.last.is_some_and(|last| last.message == remote) && self.last_unix == message.unix_time;
+                self.last = Some(LastCommand { message: remote, read_at: now, level_dbfs: chime.level_dbfs });
                 self.last_unix = message.unix_time;
                 if !same_chime {
-                    self.pending = Some(command);
+                    match remote.known() {
+                        Some(command) => self.pending = Some(command),
+                        None => self.report(RemoteResult::Unknown, now),
+                    }
                     // Stop listening once the other input has had time to finish this chime.
                     self.listen_until = self.listen_until.min(now + self.rate_hz as u64 / 4);
                 }

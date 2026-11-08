@@ -11,8 +11,8 @@ use chime::encode as chime_gen;
 const SECOND: usize = FS as usize;
 const UNIX: u32 = 1_793_000_000;
 /// What the phone page puts in the deployment ID, as the decoder gives it.
-const START: [u8; 8] = *b"BATXREC\x01";
-const STOP: [u8; 8] = *b"BATXREC\x02";
+const START: [u8; 8] = *b"BATX\x01\x01\x00\x00";
+const STOP: [u8; 8] = *b"BATX\x01\x02\x00\x00";
 
 /// The chime for `id`, with the page's melody.
 fn command_chime(id: [u8; 8], unix: u32, carrier_gain: f32) -> Vec<f32> {
@@ -134,11 +134,24 @@ fn a_chime_without_a_command_does_nothing() {
     let mut storage = vec![0.0f32; SECOND];
     let mut buffers = Box::new(Buffers::new());
     let mut app = remote_app(&mut storage, &mut buffers);
-    // Another recorder's deployment ID, and an unknown command.
-    assert_eq!(run(&mut app, &press(*b"BATXREC\x03", UNIX, 0.1, 1e-4)), []);
-    assert_eq!(run(&mut app, &press(*b"AUDIOMOT", UNIX + 10, 0.1, 1e-4)), []);
-    assert_eq!(app.remote.chimes_read, 2);
+    // Another recorder's deployment ID.
+    assert_eq!(run(&mut app, &press(*b"AUDIOMOT", UNIX, 0.1, 1e-4)), []);
+    assert_eq!(app.remote.chimes_read, 1);
     assert!(app.remote.last.is_none());
+    assert_eq!(app.remote.result_shown(app.samples), None);
+}
+
+#[test]
+fn an_unknown_command_is_reported_once() {
+    // An unknown command, a version this build does not know, and a known command with an argument.
+    for id in [*b"BATX\x01\x03\x00\x00", *b"BATX\x02\x01\x00\x00", *b"BATX\x01\x01\x05\x00"] {
+        let mut storage = vec![0.0f32; SECOND];
+        let mut buffers = Box::new(Buffers::new());
+        let mut app = remote_app(&mut storage, &mut buffers);
+        assert_eq!(run(&mut app, &press(id, UNIX, 0.1, 1e-4)), [], "{id:?}");
+        assert_eq!(app.remote.last.map(|last| last.message.deployment_id()), Some(id));
+        assert_eq!(app.remote.result_shown(app.samples), Some(RemoteResult::Unknown));
+    }
 }
 
 #[test]

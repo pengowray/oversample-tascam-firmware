@@ -14,11 +14,12 @@ replaced by measurements on a unit. For current results, see
   USER SETTINGS 2 and 3 tiles (installed from B231).
 - **The phone remote is installed, but not yet tested end to end.** The phone
   page, a separate project that is not yet published, plays chimes that start and
-  stop a take (B239). The CPU cost of the X8's chime decoders was measured on the
+  stop a take (B239; the command format was replaced in B249, see
+  [PHONE_REMOTE.md](PHONE_REMOTE.md)). The CPU cost of the X8's chime decoders was measured on the
   unit, but no take has yet been reported as started or stopped by phone. The
   AK-BT1 Bluetooth adapter has not been tested.
 - **GUANO metadata and setting the clock from phone chimes are built, not yet
-  installed.** B248 adds GUANO metadata to the WAV files of bat takes, and sets
+  installed.** B248 and later add GUANO metadata to the WAV files of bat takes, and sets
   the X8's clock from the time in a phone chime.
 
 This project is independent, and it is not affiliated with or endorsed by TASCAM.

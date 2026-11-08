@@ -237,6 +237,11 @@ fn main() {
                 run_cpu_test(&mut app, rows.parse().unwrap());
             }
         }
+        Some("unknown") => {
+            app.set_remote_available(true);
+            app.set_remote_on(true);
+            app.remote_result(bat_app::RemoteResult::Unknown);
+        }
         Some("cpurun") => {
             app.set_remote_available(true);
             app.set_remote_on(true);

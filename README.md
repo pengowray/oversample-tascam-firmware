@@ -15,7 +15,7 @@ firmware is not included: the patcher changes your own copy of the official upda
 
 Experimental. Earlier builds have run on one X8 (F/W Version 2.03 Build 217, H/W Version 1.00
 Build 010, as GENERAL SETTINGS > SYSTEM > Information shows them). Other hardware versions are
-untested. The current build, B248, has not yet run on a unit. The optional AK-BT1 Bluetooth adapter
+untested. The current build, B249, has not yet run on a unit. The optional AK-BT1 Bluetooth adapter
 has not been tried with the patch. [docs/HOMEBREW.md](docs/HOMEBREW.md) lists what each build changed
 and what to check.
 
@@ -36,7 +36,8 @@ update can leave the unit needing repair.
 - **GUANO metadata** in each WAV file: start time, length, recorder, and the phone's location when
   known.
 - **Phone remote** (experimental): chimes played by a phone start and stop recording and set the X8's
-  clock. The phone page that plays them is not published yet.
+  clock. The phone page that plays them is not published yet. The format is in
+  [docs/PHONE_REMOTE.md](docs/PHONE_REMOTE.md).
 - **Settings** in three tabs: Listen, Record and Tests, with a CPU test.
 
 Screens from the emulator are in [docs/screens/](docs/screens/).
@@ -49,7 +50,7 @@ You need Rust with the `thumbv7em-none-eabihf` target, Python 3, and TASCAM's V2
 ```bash
 rustup target add thumbv7em-none-eabihf
 cargo build -p x8-patch --release --target thumbv7em-none-eabihf
-python3 tools/x8patch.py "#PortaX8_0217.203" target/thumbv7em-none-eabihf/release/x8-patch "#PortaX8_0248.203" --build 248
+python3 tools/x8patch.py "#PortaX8_0217.203" target/thumbv7em-none-eabihf/release/x8-patch "#PortaX8_0249.203" --build 249
 ```
 
 `tools/x8patch.py` checks the stock code at every place it changes, then packs and checks the
@@ -83,7 +84,8 @@ The tests run on the computer: `cargo test --workspace`.
   patched update file; `make_patch_data.py` makes the patcher page's data; `fwdis.py` and
   `tools/ghidra/` help read the firmware.
 - [docs/HOMEBREW.md](docs/HOMEBREW.md): the update file format, the flash layout, the firmware map
-  and a log of every build. [docs/FEASIBILITY.md](docs/FEASIBILITY.md): the original feasibility
+  and a log of every build. [docs/PHONE_REMOTE.md](docs/PHONE_REMOTE.md): the phone remote's
+  format. [docs/FEASIBILITY.md](docs/FEASIBILITY.md): the original feasibility
   study.
 
 `Tascam_X8_official/` (TASCAM's files) and `work/` (unpacked images and built update files) are

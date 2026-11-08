@@ -9,7 +9,7 @@ steps changed.
 on the owner's X8. Not every build in that range was installed: a step's heading
 says "installed" if its build ran on the unit, and "never installed" if a later
 build replaced it first. The last build installed is B239 (Step 21). The current
-build is B248 (Step 25 and the sections after it), which has not been installed
+build is B249 (Step 26 and the sections after it), which has not been installed
 yet, so GUANO metadata, setting the clock from phone chimes and the location log
 have not run on a unit.
 
@@ -2007,6 +2007,8 @@ than row 1 get a `*`.
 
 ### Phone remote (experimental, off by default)
 
+B249 replaced the command format described here: see [PHONE_REMOTE.md](PHONE_REMOTE.md).
+
 The phone page plays a 0.5 s tone, waits 0.8 s, and plays a chime whose deployment ID is `BATXREC` and a command byte (1 start, 2
 stop), and then does it all once more. The X8 starts or stops recording and beeps in the headphones: two rising notes for started, two
 falling for stopped, one low note when it could not. A notice shows for 5 s in the corner of the waterfall. While the switch is on,
@@ -2282,7 +2284,7 @@ header is now version 18. B242 to B245 were built earlier the same day and never
    own GUANO text, with a `Timestamp` about 46 min apart? A split file without GUANO would mean the stack check stopped it: the
    split runs on a task that has not been identified.
 
-## Step 25 test file: phone chimes set the clock, location log, no pauses in bat takes (built 2026-11-08, not yet installed)
+## Step 25 test file: phone chimes set the clock, location log, no pauses in bat takes (built 2026-11-08, never installed: superseded by B249)
 
 `work/patch24/#PortaX8_0248.203` (B248, SHA-256 `7841ee60…73927e5e`). Includes steps 11 to 24. Install this file in place of
 B241 or an earlier build: B246 and B247 were never installed, and their files have been deleted. All the checks in `tools/x8patch.py` pass on
@@ -2327,6 +2329,30 @@ How the parts work is in [Setting the clock, locations and pauses](#setting-the-
    `X8Bat|Pauses: 0`.
 5. **Pauses.** Turn `Pause with REC` on, then pause and resume a take twice, once for about 10 s. Is there a mark at each
    resume, and do `X8Bat|Pauses: 2` and `X8Bat|Paused` match? Does MARK still make TE captures when pressed by hand?
+
+## Step 26 test file: version 1 of the phone remote format (built 2026-11-08, not yet installed)
+
+`work/patch25/#PortaX8_0249.203` (B249, SHA-256 `dc006204…1d08ee49`). Includes steps 11 to 25. Install this file in place of
+B241 or an earlier build. All the checks in `tools/x8patch.py` pass on this file. No new stock hook site (header version 18).
+
+- **New command format.** A remote chime's deployment ID is now `BATX`, a format version (1), a command (1 start, 2 stop) and
+  a 16-bit argument (0). [PHONE_REMOTE.md](PHONE_REMOTE.md) is the format, with the rules for adding commands. B249 does not
+  read the old `BATXREC` commands, and B239 to B248 ignore the new ones, so update the phone page (`setup.js?v=3`) with this
+  build.
+- **Unknown commands.** A chime whose deployment ID starts with `BATX` but has a version, command or argument that B249 does not
+  know plays one low note and shows `Unknown phone command.` and `Update the bat patch.` The Record tab's phone remote panel
+  shows `Last: Unknown command`. The chime's time and location are still used.
+
+| Item | B248 | B249 | Limit |
+|---|---|---|---|
+| ITCM | 84.3 KB | 84.2 KB | 89.2 KB |
+| DTCM | 141.7 KB | 141.7 KB | 152.8 KB |
+| `.noinit`, the end of the patch's memory | ends at 0x818f39e0 | ends at 0x818f3c30 | 0x81900000 |
+
+**What to check.** Everything in Step 25's list, then:
+
+1. **Start and stop.** With Phone remote on and the phone page reloaded, do `Start recording` and `Stop recording` work as before?
+2. **Old phone page.** If a phone still has the old page cached, its commands should do nothing at all. Reload the page.
 
 ## Checking takes for cuts in the WAV (2026-11-07)
 

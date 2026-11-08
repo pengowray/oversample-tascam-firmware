@@ -128,9 +128,10 @@ fn remote_panel(app: &BatApp, fb: Fb) {
     );
     match remote.last {
         Some(last) => {
-            let name = match last.command {
-                RemoteCommand::Start => "Start",
-                RemoteCommand::Stop => "Stop",
+            let name = match last.message.known() {
+                Some(RemoteCommand::Start) => "Start",
+                Some(RemoteCommand::Stop) => "Stop",
+                None => "Unknown command",
             };
             let seconds = app.samples.saturating_sub(last.read_at) / app.sample_rate as u64;
             let line = format_args!("Last: {name}, {seconds} s ago, carrier {:.0} dBFS", last.level_dbfs);
@@ -141,6 +142,9 @@ fn remote_panel(app: &BatApp, fb: Fb) {
         }
     }
 }
+
+/// A phone remote message from a newer phone page than this build reads.
+pub(super) const UNKNOWN_LINES: [&str; 2] = ["Unknown phone command.", "Update the bat patch."];
 
 /// A command's outcome, in the corner of the waterfall.
 pub(super) fn result_lines(result: RemoteResult) -> &'static [&'static str] {
@@ -154,6 +158,7 @@ pub(super) fn result_lines(result: RemoteResult) -> &'static [&'static str] {
         RemoteResult::GuideOn => &["Cannot start: recording guide", "is on. Turn it off in MANUAL."],
         RemoteResult::PageOpen => &["Cannot start: MANUAL settings", "page open. Press PLAY, close it."],
         RemoteResult::NoResponse => &["Recorder did not respond to", "the phone's command within 5 s."],
+        RemoteResult::Unknown => &UNKNOWN_LINES,
     }
 }
 
@@ -186,6 +191,7 @@ pub(crate) fn lines_with_widths() -> std::vec::Vec<(std::string::String, i32, i3
     }
     add(&SMALL, "Tones heard 100. Chimes read 100, failed 100.", inside);
     add(&SMALL, "Last: Start, 3600 s ago, carrier -100 dBFS", inside);
+    add(&SMALL, "Last: Unknown command, 3600 s ago, carrier -100 dBFS", inside);
     for result in [
         RemoteResult::Started,
         RemoteResult::AlreadyRecording,
@@ -196,6 +202,7 @@ pub(crate) fn lines_with_widths() -> std::vec::Vec<(std::string::String, i32, i3
         RemoteResult::GuideOn,
         RemoteResult::PageOpen,
         RemoteResult::NoResponse,
+        RemoteResult::Unknown,
     ] {
         for line in result_lines(result) {
             add(&BODY, line, crate::layout::WF_W as i32 - 20);
