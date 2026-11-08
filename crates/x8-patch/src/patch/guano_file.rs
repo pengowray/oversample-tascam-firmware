@@ -76,6 +76,7 @@ unsafe fn add_guano(file: usize) -> Option<()> {
         phone_now,
         utc_offset_minutes,
         location_e6: super::location::for_take(),
+        pauses: super::pauses::for_take(),
     };
     // SAFETY: as above; CHUNK_AT + CHUNK_BYTES is within the buffer and after the header.
     let out = unsafe { slice::from_raw_parts_mut(stock::HEADER_BUFFER.add(CHUNK_AT), CHUNK_BYTES) };

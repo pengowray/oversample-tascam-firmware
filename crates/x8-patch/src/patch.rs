@@ -15,6 +15,8 @@ mod itcm;
 mod clock;
 /// Keeps the phone's location from chimes for GUANO metadata, and logs it to the card.
 mod location;
+/// Keeps REC from pausing bat takes unless allowed, and counts the pauses that happen.
+mod pauses;
 /// Adds GUANO metadata to the WAV files of takes from a bat tile as the stock recorder closes them.
 mod guano_file;
 /// The key and touch hooks, and passing their events on to the app.

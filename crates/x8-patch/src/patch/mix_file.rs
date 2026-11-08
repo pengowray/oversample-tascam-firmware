@@ -44,6 +44,7 @@ pub(super) unsafe extern "C" fn open_take_hook(names: usize, b: usize, c: usize,
     TAKE_GUANO.store(bat_take && GUANO_ON.load(Relaxed), Relaxed);
     super::location::TAKE_STARTED.store(super::state::BLOCKS.load(Relaxed), Relaxed);
     super::location::LOG_DUE.store(bat_take, Relaxed);
+    super::pauses::take_started(bat_take);
     if system_mode() <= 1 && read_byte(stock::FILES_OPEN) == 0 {
         let stale = TAKE_WITHOUT_MIX.swap(false, Relaxed);
         let wanted = MIX_FILE_OFF.load(Relaxed) && SCREEN_APP.load(Relaxed) == app_byte() as u32 && plain_recording();

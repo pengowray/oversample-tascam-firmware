@@ -410,6 +410,7 @@ fn update_status(app: &mut BatApp<'static>) {
         app.set_mix_file_available(false);
         app.set_remote_available(false);
         app.set_guano_available(false);
+        app.set_pause_option_available(false);
         MIX_FILE_OFF.store(false, Relaxed);
         app.set_inputs([Some(PLAYBACK_LEFT), Some(PLAYBACK_RIGHT)]);
     } else {
@@ -418,6 +419,7 @@ fn update_status(app: &mut BatApp<'static>) {
         app.set_mix_file_available(true);
         app.set_remote_available(true);
         app.set_guano_available(true);
+        app.set_pause_option_available(true);
         // SAFETY: MANUAL's track on/off words, which the stock code writes from task 1.
         let words = stock::TRACKS_ON.map(|word| unsafe { ptr::read_volatile(word) });
         app.set_manual_mix_file(master_rec_ready(words));
@@ -428,6 +430,10 @@ fn update_status(app: &mut BatApp<'static>) {
         app.set_inputs([first, second].map(|input| input.map(|input| input.name)));
     }
     GUANO_ON.store(app.guano(), Relaxed);
+    super::pauses::PAUSE_WITH_REC.store(app.pause_with_rec(), Relaxed);
+    if super::pauses::REFUSED.swap(false, Relaxed) {
+        app.pause_refused();
+    }
     // SAFETY: the stock file mask, read only while the take's files are open.
     let take_mask = (read_byte(stock::FILES_OPEN) != 0).then(|| unsafe { ptr::read_volatile(stock::FILE_MASK) });
     app.set_take_mix_file(take_mask.map(has_master));

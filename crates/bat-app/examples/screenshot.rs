@@ -164,6 +164,7 @@ fn main() {
     app.set_mix_file_available(debug && std::env::var("PLAYBACK").is_err());
     app.set_guano_available(debug && std::env::var("PLAYBACK").is_err());
     app.set_guano(std::env::var("GUANO").as_deref() != Ok("off"));
+    app.set_pause_option_available(debug && std::env::var("PLAYBACK").is_err());
     app.set_manual_mix_file(std::env::var("REC_READY").as_deref() != Ok("off"));
     app.set_take_mix_file(match std::env::var("TAKE_MIX").as_deref() {
         Ok("on") => Some(true),
@@ -206,6 +207,10 @@ fn main() {
         if let Some(time) = app.take_phone_time() {
             app.set_host_clock(Some(time.local_ms.div_euclid(1000) - behind.parse::<i64>().unwrap()));
         }
+    }
+    // PAUSE_REFUSED=1: the main screen's notice that REC did not pause the take.
+    if std::env::var("PAUSE_REFUSED").is_ok() {
+        app.pause_refused();
     }
     if std::env::var("CLOCK_STATE").as_deref() == Ok("after") {
         app.set_clock_state(bat_app::ClockState::AfterTake);

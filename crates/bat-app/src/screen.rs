@@ -120,6 +120,8 @@ pub fn draw(app: &BatApp, fb: Fb) {
         rate_warning(fb, rate, app.input_kind());
     } else if app.inputs()[0].is_none() {
         no_input_notice(fb);
+    } else if app.pause_refused_shown() {
+        corner_notice_lines(fb, &pages::PAUSE_OFF_LINES);
     } else if let Some(result) = app.remote.result_shown(app.samples) {
         corner_notice_lines(fb, pages::result_lines(result));
     } else if let Some(silence) = app.mix_silence() {

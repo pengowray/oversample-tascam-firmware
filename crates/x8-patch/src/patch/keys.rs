@@ -141,6 +141,14 @@ unsafe fn handle_message(msg: usize, via: Via) {
     let active = BAT_ACTIVE.load(Relaxed);
     let swallow_button = || unsafe { ptr::write_volatile(value_ptr, stock::NO_KEY) };
     match (kind, value) {
+        // A mark the patch posted where a pause ended: for the recorder only.
+        (stock::KIND_BUTTON, stock::MARK) if super::pauses::OWN_MARKS.load(Relaxed) > 0 => {
+            super::pauses::OWN_MARKS.fetch_sub(1, Relaxed);
+        }
+        (stock::KIND_BUTTON, stock::REC) if via == Via::Rec && super::pauses::keep_rec_from_pausing() => {
+            swallow_button();
+            super::pauses::REFUSED.store(true, Relaxed);
+        }
         (stock::KIND_BUTTON, stock::MARK) if active => {
             // A mark in the bat app (in TE, a capture). During a take MARK also
             // goes on to the recording screen's handler, which marks the file.

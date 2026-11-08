@@ -1561,3 +1561,28 @@ fn mix_file_switch() {
     app.wheel(-1);
     assert!(!app.mix_file());
 }
+
+/// The pause switch: offered by a host that asks for it, off by default, flipped by a tap; a
+/// refused pause shows on the main screen for a few seconds.
+#[test]
+fn pause_switch_and_notice() {
+    let mut storage = vec![0.0f32; 1024];
+    let mut app = BatApp::new(FS, &mut storage, buffers());
+    app.set_pause_option_available(true);
+    app.open_settings_page(SettingsPage::Record);
+    assert!(!app.pause_with_rec());
+    let row = layout::control_row(Setting::PauseWithRec).center();
+    assert!(app.is_tappable(row.x, row.y));
+    app.touch(row.x, row.y);
+    assert!(app.pause_with_rec());
+    app.button(Button::Home);
+    let before = draw(&app);
+    app.pause_refused();
+    assert!(app.pause_refused_shown());
+    assert_ne!(draw(&app), before);
+    let (mut l, mut r) = (vec![0.0; 1024], vec![0.0; 1024]);
+    for _ in 0..(4 * FS as usize / 1024) {
+        app.process(&[0.0; 1024], &[0.0; 1024], &mut l, &mut r);
+    }
+    assert!(!app.pause_refused_shown());
+}

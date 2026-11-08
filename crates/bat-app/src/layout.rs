@@ -149,16 +149,19 @@ pub const fn panel_switch(panel: Rectangle) -> Rectangle {
     Rectangle::new(Point::new(260, panel.top_left.y + 8), Size::new(SWITCH_W, SWITCH_H))
 }
 
-/// Record page: the MIX file, GUANO metadata, then the phone remote with its status lines.
-pub const RECORD_MIX_FILE: Rectangle = panel(PAGE_TOP, 54);
-pub const RECORD_GUANO: Rectangle = panel(PAGE_TOP + 62, 68);
-pub const RECORD_REMOTE: Rectangle = panel(PAGE_TOP + 138, 118);
+/// Record page: the MIX file, GUANO metadata, whether REC pauses takes, then the phone remote with
+/// its status lines and its clock switch. A panel is 48 px with one help line, 14 px more for each
+/// line after; the gaps are 6 px, as small as keeps the panels apart, so all five fit above the note.
+pub const RECORD_MIX_FILE: Rectangle = panel(PAGE_TOP, 48);
+pub const RECORD_GUANO: Rectangle = panel(PAGE_TOP + 54, 62);
+pub const RECORD_PAUSE: Rectangle = panel(PAGE_TOP + 122, 48);
+pub const RECORD_REMOTE: Rectangle = panel(PAGE_TOP + 176, 110);
 /// Under the phone remote, because only its chimes are heard on the main screen.
-pub const RECORD_CLOCK: Rectangle = panel(PAGE_TOP + 264, 54);
+pub const RECORD_CLOCK: Rectangle = panel(PAGE_TOP + 292, 48);
 /// Tests page: the debug figures' switch, then a button for each test, with its help inside.
-pub const TESTS_DEBUG: Rectangle = panel(PAGE_TOP, 54);
-pub const TESTS_CHIME_TEST: Rectangle = panel(PAGE_TOP + 62, 48);
-pub const TESTS_CPU_TEST: Rectangle = panel(PAGE_TOP + 118, 62);
+pub const TESTS_DEBUG: Rectangle = panel(PAGE_TOP, 48);
+pub const TESTS_CHIME_TEST: Rectangle = panel(PAGE_TOP + 56, 48);
+pub const TESTS_CPU_TEST: Rectangle = panel(PAGE_TOP + 112, 62);
 
 /// Panel of stepped setting `i`.
 pub fn setting_row(i: usize) -> Rectangle {
@@ -182,6 +185,7 @@ pub fn control_row(setting: Setting) -> Rectangle {
         Setting::AutoLevel => AUTO_VOLUME_ROW,
         Setting::MixFile => panel_switch_row(RECORD_MIX_FILE),
         Setting::ClockFromRemote => panel_switch_row(RECORD_CLOCK),
+        Setting::PauseWithRec => panel_switch_row(RECORD_PAUSE),
         Setting::DebugInfo => panel_switch_row(TESTS_DEBUG),
         Setting::Mark(kind) => {
             let j = Setting::MARKS.iter().position(|&k| k == kind).unwrap_or(0) as i32;
@@ -225,6 +229,7 @@ pub fn switch(setting: Setting) -> Rectangle {
     match setting {
         Setting::MixFile => panel_switch(RECORD_MIX_FILE),
         Setting::ClockFromRemote => panel_switch(RECORD_CLOCK),
+        Setting::PauseWithRec => panel_switch(RECORD_PAUSE),
         Setting::DebugInfo => panel_switch(TESTS_DEBUG),
         _ => {
             let r = control_row(setting);

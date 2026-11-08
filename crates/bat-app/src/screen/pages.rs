@@ -4,7 +4,7 @@
 use embedded_graphics::primitives::Rectangle;
 
 use super::{BODY, BODY_BOLD, Fb, LEFT, SMALL, outline_selected, rounded, switch_control, switch_control_fixed_off, text};
-use crate::layout::{RECORD_CLOCK, RECORD_GUANO, RECORD_MIX_FILE, RECORD_REMOTE, TESTS_CHIME_TEST, TESTS_CPU_TEST, TESTS_DEBUG, panel_switch};
+use crate::layout::{RECORD_CLOCK, RECORD_GUANO, RECORD_MIX_FILE, RECORD_PAUSE, RECORD_REMOTE, TESTS_CHIME_TEST, TESTS_CPU_TEST, TESTS_DEBUG, panel_switch};
 use crate::palette::*;
 use crate::{BatApp, RemoteCommand, RemoteResult, Setting};
 
@@ -19,6 +19,10 @@ pub(super) const REMOTE_BEEPS: &str = "Two notes up: started. Two down: stopped.
 pub(super) const CHIME_TEST_NAME: &str = "Phone time";
 pub(super) const CHIME_TEST_HELP: &str = "Shows if the X8 reads chimes. Can set the X8 clock.";
 pub(super) const CLOCK_FROM_REMOTE_NAME: &str = "Set X8 clock from chimes";
+pub(super) const PAUSE_NAME: &str = "REC pauses takes";
+pub(super) const PAUSE_HELP: &str = "Each pause is marked, with the time paused in GUANO.";
+/// On the main screen when REC was kept from pausing a take.
+pub(super) const PAUSE_OFF_LINES: [&str; 2] = ["Pausing is off.", "STOP ends the take."];
 pub(super) const CLOCK_FROM_REMOTE_HELP: &str = "During a take, the X8 clock is set when the take ends.";
 pub(super) const CPU_TEST_NAME: &str = "CPU test";
 pub(super) const CPU_TEST_HELP: [&str; 2] =
@@ -48,7 +52,7 @@ fn switch_panel(fb: Fb, panel: Rectangle, name: &str, help: &[&str], on: bool, m
     } else {
         switch_control(fb, panel_switch(panel), on);
     }
-    for (line, y) in help.iter().zip([y + 44, y + 58]) {
+    for (line, y) in help.iter().zip([y + 40, y + 54]) {
         text(fb, &SMALL, *line, x, y, LEFT, TEXT_MUTED);
     }
 }
@@ -78,6 +82,10 @@ pub(super) fn record(app: &BatApp, fb: Fb) {
     if app.guano_available() {
         switch_panel(fb, RECORD_GUANO, GUANO_NAME, &GUANO_HELP, app.guano(), false, false);
     }
+    if app.pause_option_available() {
+        let selected = app.selected_setting() == Setting::PauseWithRec;
+        switch_panel(fb, RECORD_PAUSE, PAUSE_NAME, &[PAUSE_HELP], app.pause_with_rec(), false, selected);
+    }
     if app.remote_available() {
         remote_panel(app, fb);
         let selected = app.selected_setting() == Setting::ClockFromRemote;
@@ -102,17 +110,17 @@ fn remote_panel(app: &BatApp, fb: Fb) {
     let (x, y) = (RECORD_REMOTE.top_left.x + 10, RECORD_REMOTE.top_left.y);
     text(fb, &BODY, REMOTE_NAME, x, y + 20, LEFT, TEXT);
     switch_control(fb, panel_switch(RECORD_REMOTE), app.remote_on());
-    for (line, y) in REMOTE_HELP.iter().zip([y + 44, y + 58]) {
+    for (line, y) in REMOTE_HELP.iter().zip([y + 40, y + 54]) {
         text(fb, &SMALL, *line, x, y, LEFT, TEXT_MUTED);
     }
-    text(fb, &SMALL, REMOTE_BEEPS, x, y + 72, LEFT, TEXT_MUTED);
+    text(fb, &SMALL, REMOTE_BEEPS, x, y + 68, LEFT, TEXT_MUTED);
     let remote = &app.remote;
     text(
         fb,
         &SMALL,
         format_args!("Tones heard {}. Chimes read {}, failed {}.", remote.tones, remote.chimes_read, remote.chimes_failed),
         x,
-        y + 92,
+        y + 86,
         LEFT,
         TEXT,
     );
@@ -124,10 +132,10 @@ fn remote_panel(app: &BatApp, fb: Fb) {
             };
             let seconds = app.samples.saturating_sub(last.read_at) / app.sample_rate as u64;
             let line = format_args!("Last: {name}, {seconds} s ago, carrier {:.0} dBFS", last.level_dbfs);
-            text(fb, &SMALL, line, x, y + 106, LEFT, TEXT);
+            text(fb, &SMALL, line, x, y + 100, LEFT, TEXT);
         }
         None => {
-            text(fb, &SMALL, "No command read yet", x, y + 106, LEFT, TEXT_MUTED);
+            text(fb, &SMALL, "No command read yet", x, y + 100, LEFT, TEXT_MUTED);
         }
     }
 }
@@ -166,11 +174,11 @@ pub(crate) fn lines_with_widths() -> std::vec::Vec<(std::string::String, i32, i3
     for line in REMOTE_HELP.iter().chain(&CPU_TEST_HELP).chain(&GUANO_HELP).chain([&REMOTE_BEEPS, &CHIME_TEST_HELP]) {
         add(&SMALL, line, inside);
     }
-    for line in [MIX_FILE_HELP, MIX_FILE_OFF_IN_MANUAL, DEBUG_HELP, CLOCK_FROM_REMOTE_HELP] {
+    for line in [MIX_FILE_HELP, MIX_FILE_OFF_IN_MANUAL, DEBUG_HELP, CLOCK_FROM_REMOTE_HELP, PAUSE_HELP] {
         add(&SMALL, line, inside);
     }
     // The name's line ends at the switch.
-    for name in [REMOTE_NAME, GUANO_NAME, MIX_FILE_NAME, DEBUG_NAME, CLOCK_FROM_REMOTE_NAME] {
+    for name in [REMOTE_NAME, GUANO_NAME, MIX_FILE_NAME, DEBUG_NAME, CLOCK_FROM_REMOTE_NAME, PAUSE_NAME] {
         add(&BODY, name, 240);
     }
     add(&SMALL, "Tones heard 100. Chimes read 100, failed 100.", inside);
@@ -189,6 +197,9 @@ pub(crate) fn lines_with_widths() -> std::vec::Vec<(std::string::String, i32, i3
         for line in result_lines(result) {
             add(&BODY, line, crate::layout::WF_W as i32 - 20);
         }
+    }
+    for line in PAUSE_OFF_LINES {
+        add(&BODY, line, crate::layout::WF_W as i32 - 20);
     }
     lines
 }

@@ -23,6 +23,8 @@ pub struct Recorder<'a> {
     /// The phone's location from a chime, in millionths of a degree (latitude, longitude), when
     /// recent enough for this take.
     pub location_e6: Option<(i32, i32)>,
+    /// For a take from a bat tile: how many times it was paused, and for how long in all, in ms.
+    pub pauses: Option<(u32, u32)>,
 }
 
 /// Millionths of a degree as decimal degrees, with integer arithmetic: `-36.123456`.
@@ -102,6 +104,11 @@ pub fn write_chunk(header: &Header, recorder: &Recorder, out: &mut [u8]) -> Opti
     if let Some((latitude, longitude)) = recorder.location_e6 {
         chunk.field("Loc Position", format_args!("{} {}", Degrees(latitude), Degrees(longitude)));
     }
+    // The bat patch's own fields, in its namespace after the standard ones. A take with no pauses
+    // says so, since that is what tells a reader the audio has no gaps.
+    if let Some((count, ms)) = recorder.pauses {
+        chunk.field("X8Bat|Pauses", count).field("X8Bat|Paused", format_args!("{}.{:03}", ms / 1000, ms % 1000));
+    }
     chunk.finish()
 }
 
@@ -111,7 +118,7 @@ mod tests {
     use guano::DateTime;
     use std::string::String;
 
-    const RECORDER: Recorder = Recorder { firmware: "V2.03", patch_build: 242, file_name: Some("261106_0090_3-4.wav"), phone_now: None, utc_offset_minutes: None, location_e6: None };
+    const RECORDER: Recorder = Recorder { firmware: "V2.03", patch_build: 242, file_name: Some("261106_0090_3-4.wav"), phone_now: None, utc_offset_minutes: None, location_e6: None, pauses: None };
 
     /// A header as the X8 writes one, 5548 bytes before the audio.
     fn header(data_size: u32, block_align: u16, date: &[u8], time: &[u8]) -> Header {
@@ -173,6 +180,13 @@ mod tests {
     }
 
     #[test]
+    fn pauses_are_counted_and_timed() {
+        let recorder = Recorder { pauses: Some((2, 34_567)), ..RECORDER };
+        let t = text(&header(192_000 * 8, 8, b"2026-11-06", b"19:08:08"), &recorder);
+        assert!(t.ends_with("X8Bat|Pauses: 2\nX8Bat|Paused: 34.567\n"), "{t}");
+    }
+
+    #[test]
     fn the_start_can_fall_on_the_day_before() {
         let t = text(&header(120 * 192_000 * 8, 8, b"2024-03-01", b"00:00:30"), &RECORDER);
         assert!(t.contains("Timestamp: 2024-02-29T23:58:30\n"), "{t}");
@@ -198,7 +212,7 @@ mod tests {
 
     #[test]
     fn without_a_build_or_name() {
-        let recorder = Recorder { firmware: "V2.03", patch_build: 0, file_name: None, phone_now: None, utc_offset_minutes: None, location_e6: None };
+        let recorder = Recorder { firmware: "V2.03", patch_build: 0, file_name: None, phone_now: None, utc_offset_minutes: None, location_e6: None, pauses: None };
         let t = text(&header(192_000 * 8, 8, b"2026-11-06", b"19:08:08"), &recorder);
         assert!(t.contains("Firmware Version: V2.03 with bat patch\n"));
         assert!(!t.contains("Original Filename"));
@@ -226,7 +240,7 @@ mod tests {
         assert_eq!(header.data_end(), Some(size));
         let name = std::path::Path::new(&input).file_name().unwrap().to_str().unwrap();
         let path = std::format!("{name}\0");
-        let recorder = Recorder { firmware: "V2.03", patch_build: 242, file_name: guano::file_name(path.as_bytes()), phone_now: None, utc_offset_minutes: None, location_e6: None };
+        let recorder = Recorder { firmware: "V2.03", patch_build: 242, file_name: guano::file_name(path.as_bytes()), phone_now: None, utc_offset_minutes: None, location_e6: None, pauses: None };
         let mut out = [0u8; 0x400];
         let added = write_chunk(&header, &recorder, &mut out).unwrap();
         file.seek(SeekFrom::Start(u64::from(size))).unwrap();

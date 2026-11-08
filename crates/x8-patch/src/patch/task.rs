@@ -223,6 +223,7 @@ fn sleep_ms(ms: u32) {
 /// The DSP task: runs the app while the bat screen is up, sleeps otherwise.
 extern "C" fn dsp_task(_: isize) {
     loop {
+        super::pauses::track();
         if !BAT_ACTIVE.load(Acquire) {
             sleep_ms(20);
             continue;

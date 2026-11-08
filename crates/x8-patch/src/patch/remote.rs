@@ -39,7 +39,7 @@ const PAUSED_BY_EVENT: u8 = 6;
 /// HOME it polls the audio engine. For REC and HOME it passes the code on unchanged at the press.
 /// The block allocator and the mailbox are safe from any task, as the Bluetooth remote's task
 /// shows.
-fn post_button(code: i32) {
+pub(super) fn post_button(code: i32) {
     // SAFETY: the stock functions named in `stock`, called from a task as the stock code does.
     unsafe {
         let new_block: unsafe extern "C" fn(*mut usize) -> i32 = core::mem::transmute(stock::NEW_MESSAGE);

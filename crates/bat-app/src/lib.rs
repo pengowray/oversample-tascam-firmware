@@ -217,18 +217,21 @@ pub enum Setting {
     MixFile,
     /// Whether a phone remote chime also sets the host's clock: see [`PhoneTime`].
     ClockFromRemote,
+    /// Whether REC pauses a take: see [`BatApp::set_pause_option_available`].
+    PauseWithRec,
     /// Whether detections of this kind are marked: a tick under the
     /// waterfall, the last-call panel, and time expansion. On or off.
     Mark(CallKind),
 }
 
 impl Setting {
-    pub const ALL: [Setting; 10] = [
+    pub const ALL: [Setting; 11] = [
         Setting::LowestBatCall,
         Setting::ListenTo,
         Setting::AutoLevel,
         Setting::DebugInfo,
         Setting::MixFile,
+        Setting::PauseWithRec,
         Setting::ClockFromRemote,
         Setting::Mark(CallKind::Bat),
         Setting::Mark(CallKind::Tone),
@@ -240,12 +243,15 @@ impl Setting {
 
     pub fn page(self) -> SettingsPage {
         match self {
-            Setting::MixFile | Setting::ClockFromRemote => SettingsPage::Record,
+            Setting::MixFile | Setting::ClockFromRemote | Setting::PauseWithRec => SettingsPage::Record,
             Setting::DebugInfo => SettingsPage::Tests,
             _ => SettingsPage::Listen,
         }
     }
 }
+
+/// How long the main screen says that REC did not pause a take, in seconds.
+const PAUSE_REFUSED_S: u64 = 3;
 
 /// Kinds of detection marked when the app starts: bat calls only.
 const MARKED_DEFAULT: u8 = kind_bit(CallKind::Bat);
@@ -542,6 +548,10 @@ pub struct BatApp<'a> {
     phone: Option<phone_time::Reading>,
     phone_out: Option<(phone_time::Reading, bool)>,
     clock_from_remote: bool,
+    pause_option_available: bool,
+    pause_with_rec: bool,
+    /// Until this sample, the main screen says that REC did not pause the take.
+    pause_refused_until: u64,
     /// The host's clock: local seconds since 1970 at an app sample.
     host_clock: Option<(i64, u64)>,
     clock_state: ClockState,
@@ -692,6 +702,9 @@ impl<'a> BatApp<'a> {
             field!((*this).phone).write(None);
             field!((*this).phone_out).write(None);
             field!((*this).clock_from_remote).write(true);
+            field!((*this).pause_option_available).write(false);
+            field!((*this).pause_with_rec).write(false);
+            field!((*this).pause_refused_until).write(0);
             field!((*this).host_clock).write(None);
             field!((*this).clock_state).write(ClockState::Idle);
             field!((*this).guano_available).write(false);
@@ -803,7 +816,11 @@ impl<'a> BatApp<'a> {
     /// file, GUANO metadata and the phone remote.
     pub fn settings_pages(&self) -> impl Iterator<Item = SettingsPage> + '_ {
         SettingsPage::ALL.into_iter().filter(|&page| {
-            page != SettingsPage::Record || self.mix_file_available || self.guano_available || self.remote.available
+            page != SettingsPage::Record
+                || self.mix_file_available
+                || self.guano_available
+                || self.remote.available
+                || self.pause_option_available
         })
     }
 
@@ -999,6 +1016,8 @@ impl<'a> BatApp<'a> {
             Setting::MixFile => {}
             Setting::ClockFromRemote if steps != 0 => self.clock_from_remote = steps > 0,
             Setting::ClockFromRemote => {}
+            Setting::PauseWithRec if steps != 0 => self.pause_with_rec = steps > 0,
+            Setting::PauseWithRec => {}
             // Turning the wheel up switches on, down switches off.
             Setting::Mark(kind) if steps != 0 => self.set_marked(kind, steps > 0),
             Setting::Mark(_) => {}
@@ -1234,6 +1253,29 @@ impl<'a> BatApp<'a> {
         self.clock_state
     }
 
+    /// The host can keep REC from pausing takes: offer the switch.
+    pub fn set_pause_option_available(&mut self, available: bool) {
+        self.pause_option_available = available;
+    }
+
+    pub fn pause_option_available(&self) -> bool {
+        self.pause_option_available
+    }
+
+    /// Whether REC may pause a take. Off by default, so takes have no gaps.
+    pub fn pause_with_rec(&self) -> bool {
+        self.pause_with_rec
+    }
+
+    /// The host kept REC from pausing a take: the main screen says so for a few seconds.
+    pub fn pause_refused(&mut self) {
+        self.pause_refused_until = self.samples + PAUSE_REFUSED_S * self.sample_rate as u64;
+    }
+
+    pub(crate) fn pause_refused_shown(&self) -> bool {
+        self.samples < self.pause_refused_until
+    }
+
     /// Whether a phone remote chime also sets the host's clock. On by default.
     pub fn clock_from_remote(&self) -> bool {
         self.clock_from_remote
@@ -1294,6 +1336,7 @@ impl<'a> BatApp<'a> {
             Setting::DebugInfo => self.debug_available,
             Setting::MixFile => self.mix_file_available,
             Setting::ClockFromRemote => self.remote.available,
+            Setting::PauseWithRec => self.pause_option_available,
             _ => true,
         }
     }
@@ -1490,6 +1533,7 @@ impl<'a> BatApp<'a> {
                     Setting::DebugInfo => self.debug_info = !self.debug_info,
                     Setting::MixFile if self.manual_mix_file => self.mix_file = !self.mix_file,
                     Setting::ClockFromRemote => self.clock_from_remote = !self.clock_from_remote,
+                    Setting::PauseWithRec => self.pause_with_rec = !self.pause_with_rec,
                     _ => {}
                 }
             }
