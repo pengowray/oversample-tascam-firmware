@@ -9,7 +9,7 @@ steps changed.
 on the owner's X8. Not every build in that range was installed: a step's heading
 says "installed" if its build ran on the unit, and "never installed" if a later
 build replaced it first. The last build installed is B239 (Step 21). The current
-build is B249 (Step 26 and the sections after it), which has not been installed
+build is B250 (Step 27 and the sections after it), which has not been installed
 yet, so GUANO metadata, setting the clock from phone chimes and the location log
 have not run on a unit.
 
@@ -2330,7 +2330,7 @@ How the parts work is in [Setting the clock, locations and pauses](#setting-the-
 5. **Pauses.** Turn `Pause with REC` on, then pause and resume a take twice, once for about 10 s. Is there a mark at each
    resume, and do `X8Bat|Pauses: 2` and `X8Bat|Paused` match? Does MARK still make TE captures when pressed by hand?
 
-## Step 26 test file: version 1 of the phone remote format (built 2026-11-08, not yet installed)
+## Step 26 test file: version 1 of the phone remote format (built 2026-11-08, never installed: superseded by B250)
 
 `work/patch25/#PortaX8_0249.203` (B249, SHA-256 `8ba7b5a3…dcae50a1`). Includes steps 11 to 25. Install this file in place of
 B241 or an earlier build. All the checks in `tools/x8patch.py` pass on this file. No new stock hook site (header version 18).
@@ -2355,6 +2355,45 @@ B241 or an earlier build. All the checks in `tools/x8patch.py` pass on this file
 
 1. **Start and stop.** With Phone remote on and the phone page reloaded, do `Start recording` and `Stop recording` work as before?
 2. **Old phone page.** If a phone still has the old page cached, its commands should do nothing at all. Reload the page.
+
+## Step 27 test file: PITCH in the CPU test, in stereo too (built 2026-11-08, not yet installed)
+
+`work/patch26/#PortaX8_0250.203` (B250, SHA-256 `4b73f77e…a35eca57`). Includes steps 11 to 26. Install this file in place of
+any earlier build. All the checks in `tools/x8patch.py` pass on this file. No new stock hook site (header version 18).
+
+The aim is to measure PITCH on the unit instead of estimating it. PITCH was set aside at Step 8 ("dsp 78%", input lost); since
+then the audio hook moved to ITCM and Auto volume got cheaper, but the pitch shifter itself has not changed. From B239's
+figures, PITCH in mono was estimated at 52 to 69 `dsp` with the recorder stopped and Auto volume off, and 69 to 92 while
+recording. The low end comes from FEASIBILITY.md's 11 to 16% of real CPU; the high end scales the PC benchmark, where PITCH's
+processing takes 3.5 times as long as FD's, by FD's 12 points on the unit.
+
+- **Stereo PITCH.** With two inputs on and Listen to set to Both, PITCH now gives each ear its own input, as HET, COMB and 1:1
+  do. The second shifter (about 23 KB) is in SDRAM with the app's other buffers, because DTCM has no room for it; the first stays
+  in DTCM. The change between one chain and two fades as in the other modes. PITCH is still hidden on the X8's mode buttons.
+- **CPU test.** The test runs PITCH even though the X8 hides it: a stereo and a mono row with two inputs on, one row with one.
+  The Auto volume Bats only rows are gone, because on B239 they measured within a point of On in every row, both stopped and
+  recording. With two inputs on the test has 22 rows (it had 26) and takes about 3 minutes. The Tests tab's help for the CPU
+  test now reads `Runs every listening mode with Auto volume off and on,` and `8 s each, up to 3 min. Lists CPU load and lost
+  input.`
+- **The DSP task guards against a mode that cannot keep up** (since Step 8): each pass stops after 30 ms, and a backlog over
+  6,144 frames is dropped. So a PITCH row that does not keep up shows lost and dropped frames and stuttering sound, and the unit
+  stays responsive.
+- **Code size.** The shifter is now one function in ITCM that both ears call. It used to be copied into `BatApp::process`.
+
+| Item | B249 | B250 | Limit |
+|---|---|---|---|
+| ITCM | 84.2 KB | 82.3 KB | 89.2 KB |
+| DTCM | 141.7 KB | 141.1 KB | 152.8 KB |
+| `.noinit`, the end of the patch's memory | ends at 0x818f3cb0 | ends at 0x818f8f28 | 0x81900000 |
+
+**What to check.**
+
+1. **CPU test, recorder stopped**, two inputs on, synthetic calls on. Photograph the table. For the PITCH rows: `dsp`, `dsp max`,
+   and whether `lost` and `drop` stay 0. Compare PITCH mono with 1:1 mono to get PITCH's own cost.
+2. **CPU test while recording**, the same way.
+3. **Listening.** Not possible from the mode buttons yet. If the PITCH rows keep up, the next build can show PITCH again. If
+   stereo PITCH fits only with the recorder stopped, options are to switch to mono PITCH or turn PITCH off while recording, or a
+   setting that turns off headphone listening when recording starts.
 
 ## Checking takes for cuts in the WAV (2026-11-07)
 

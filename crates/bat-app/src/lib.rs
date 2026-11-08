@@ -389,12 +389,15 @@ pub struct Buffers {
     snapshot: [u8; SNAP_W * SNAP_H],
     /// The chime test's decoders, one per block of input, built when the screen opens.
     chime: [core::mem::MaybeUninit<chime::Decoder>; 2],
+    /// PITCH's shifter for the right ear, used only in stereo. The left ear's is in the app's
+    /// own state, which on the X8 is in DTCM and has no room for a second.
+    pitch_right: PitchShifter,
 }
 
 impl Buffers {
     /// All zero, with the chime test's decoders not built yet, for a `static`.
     pub const fn new() -> Self {
-        Self { wf: [0; WF_W * WF_H], history: [0; HISTORY * BINS], history_centre: [0; HISTORY], snapshot: [0; SNAP_W * SNAP_H], chime: [const { core::mem::MaybeUninit::uninit() }; 2] }
+        Self { wf: [0; WF_W * WF_H], history: [0; HISTORY * BINS], history_centre: [0; HISTORY], snapshot: [0; SNAP_W * SNAP_H], chime: [const { core::mem::MaybeUninit::uninit() }; 2], pitch_right: PitchShifter::unconfigured() }
     }
 }
 
@@ -587,7 +590,7 @@ impl<'a> BatApp<'a> {
     }
 
     /// Build the app at `this`, field by field, so that no more than its
-    /// largest part (the pitch shifter, about 23 KB) passes through the stack.
+    /// largest part (a pitch shifter, about 23 KB) passes through the stack.
     ///
     /// # Safety
     ///
@@ -641,6 +644,8 @@ impl<'a> BatApp<'a> {
             buffers.history.fill(0);
             buffers.history_centre.fill(0);
             buffers.snapshot.fill(0);
+            // Ready from `Buffers::new`, or all zero: either way `init` sets every setting.
+            buffers.pitch_right.init(sample_rate);
             field!((*this).bufs).write(buffers);
             field!((*this).wf_next).write(0);
             field!((*this).wf_column).write(0);
@@ -769,7 +774,10 @@ impl<'a> BatApp<'a> {
             Mode::Comb => self.comb.reset(),
             Mode::Fd => self.fd.reset(),
             Mode::Te => {}
-            Mode::Pitch => self.pitch.reset(),
+            Mode::Pitch => {
+                self.pitch.reset();
+                self.bufs.pitch_right.reset();
+            }
             Mode::Thru => {}
         }
     }
@@ -1595,6 +1603,7 @@ impl<'a> BatApp<'a> {
         self.fd.set_division(FD_DIVISIONS[self.fd_index]);
         self.te.set_factor(TE_FACTORS[self.te_index]);
         self.pitch.set_factor(PITCH_FACTORS[self.pitch_index]);
+        self.bufs.pitch_right.set_factor(PITCH_FACTORS[self.pitch_index]);
     }
 
     fn trigger_te(&mut self) {
@@ -1610,14 +1619,14 @@ impl<'a> BatApp<'a> {
         }
     }
 
-    /// Whether each ear gets its own block: HET, COMB or 1:1, with Both chosen and two
+    /// Whether each ear gets its own block: HET, COMB, PITCH or 1:1, with Both chosen and two
     /// inputs on. With one input on, one chain runs, whatever is stored for Listen to.
     /// On the inputs both blocks carry that input. On the mix with Both chosen, the chain
     /// plays the average of the mix's two sides, so one mic panned to one side is heard in
     /// both ears. The app does not read the pans, so two inputs panned to one side stay in
     /// that ear.
     fn wants_stereo(&self) -> bool {
-        matches!(self.mode, Mode::Het | Mode::Comb | Mode::Thru)
+        matches!(self.mode, Mode::Het | Mode::Comb | Mode::Pitch | Mode::Thru)
             && self.source() == MonitorSource::Both
             && self.inputs[1].is_some()
     }
@@ -1745,6 +1754,9 @@ impl<'a> BatApp<'a> {
             match self.mode {
                 Mode::Het => self.het.copy_filter_to_second_channel(),
                 Mode::Comb => self.comb.copy_filter_to_second_channel(),
+                // The left shifter carries on. The right one holds sound from when stereo
+                // last stopped, so it starts from silence, under the switch fade.
+                Mode::Pitch => self.bufs.pitch_right.reset(),
                 _ => {}
             }
         }
@@ -1786,6 +1798,10 @@ impl<'a> BatApp<'a> {
             match self.mode {
                 Mode::Het => self.het.process_stereo(left, right, out_l, out_r),
                 Mode::Comb => self.comb.process_stereo(left, right, out_l, out_r),
+                Mode::Pitch => {
+                    self.pitch.process(left, out_l);
+                    self.bufs.pitch_right.process(right, out_r);
+                }
                 _ => {
                     out_l.copy_from_slice(left);
                     out_r.copy_from_slice(right);

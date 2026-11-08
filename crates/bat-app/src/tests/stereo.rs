@@ -1,8 +1,8 @@
-//! Each ear hearing its own input in HET, COMB and 1:1.
+//! Each ear hearing its own input in HET, COMB, PITCH and 1:1.
 
 use super::*;
 
-const MODES: [Mode; 3] = [Mode::Het, Mode::Comb, Mode::Thru];
+const MODES: [Mode; 4] = [Mode::Het, Mode::Comb, Mode::Pitch, Mode::Thru];
 
 /// Run two inputs through the app in blocks of `block` samples, as (left, right).
 fn run_both(app: &mut BatApp, first: &[f32], second: &[f32], block: usize) -> (Vec<f32>, Vec<f32>) {
@@ -218,10 +218,10 @@ fn with_one_ear_silent_the_other_is_treated_as_one_chain_would_be() {
 }
 
 #[test]
-fn fd_te_and_pitch_hear_the_average_in_both_ears() {
+fn fd_and_te_hear_the_average_in_both_ears() {
     let (first, second) = two_signals();
     let mean = average(&first, &second);
-    for mode in [Mode::Fd, Mode::Te, Mode::Pitch] {
+    for mode in [Mode::Fd, Mode::Te] {
         for volume in AutoVolume::ALL {
             let mut storage = vec![0.0f32; FS as usize];
             let mut app = BatApp::new(FS, &mut storage, buffers());

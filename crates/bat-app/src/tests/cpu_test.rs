@@ -66,11 +66,12 @@ fn the_plan_has_a_row_for_each_combination() {
     let mut app = app_with_storage(&mut storage, &mut buffers);
     two_inputs(&mut app);
     app.open_cpu_test();
-    // HET, COMB and 1:1 twice and FD and TE once, for each Auto volume choice, and FD and COMB
-    // stereo with Auto volume on and the decoders.
-    assert_eq!(app.cpu_test_rows().len(), (3 * 2 + 2) * 3 + 2);
-    // About 3.5 min, as the CPU test button on the Tests tab says.
-    assert_eq!(app.cpu_test_rows().len() * ROW_SECONDS, 208);
+    // HET, COMB, PITCH and 1:1 twice and FD and TE once, with Auto volume off and on, and FD
+    // and COMB stereo with Auto volume on and the decoders. PITCH is there although this
+    // app hides it, as the X8 does.
+    assert_eq!(app.cpu_test_rows().len(), (4 * 2 + 2) * 2 + 2);
+    // Under 3 min, as the CPU test's help on the Tests tab says.
+    assert_eq!(app.cpu_test_rows().len() * ROW_SECONDS, 176);
     let start = layout::CPU_TEST_START.center();
     app.touch(start.x, start.y);
 
@@ -79,7 +80,7 @@ fn the_plan_has_a_row_for_each_combination() {
     let mut one = app_with_storage(&mut one_input_storage, &mut one_input_buffers);
     one.set_inputs([Some(InputName { short: "3", long: "Input 3" }), None]);
     one.open_cpu_test();
-    assert_eq!(one.cpu_test_rows().len(), 5 * 3 + 2);
+    assert_eq!(one.cpu_test_rows().len(), 6 * 2 + 2);
     assert!(one.cpu_test_rows().iter().all(|row| !row.has_stereo));
 }
 
@@ -111,7 +112,7 @@ fn a_whole_run_fills_every_row_and_puts_the_settings_back() {
     assert_eq!(app.mode(), Mode::Fd);
     assert_eq!(app.auto_volume(), AutoVolume::On);
     assert_eq!(app.source(), MonitorSource::Second);
-    assert!(modes_seen.contains(&(Mode::Te, AutoVolume::BatsOnly, false)));
+    assert!(modes_seen.iter().any(|&(mode, volume, _)| (mode, volume) == (Mode::Pitch, AutoVolume::On)));
     let last_two: std::vec::Vec<_> = modes_seen[rows - 2..].iter().map(|&(mode, volume, _)| (mode, volume)).collect();
     assert_eq!(last_two, [(Mode::Fd, AutoVolume::On), (Mode::Comb, AutoVolume::On)]);
 
@@ -242,7 +243,7 @@ fn the_table_columns_keep_apart() {
 
 #[test]
 fn the_longest_table_stays_above_the_switch() {
-    let last_baseline = layout::CPU_TEST_FIRST_ROW + (26 + 4 - 1) * layout::CPU_TEST_ROW_H;
+    let last_baseline = layout::CPU_TEST_FIRST_ROW + (22 + 3 - 1) * layout::CPU_TEST_ROW_H;
     assert!(last_baseline < layout::CPU_TEST_CALLS.top_left.y);
 }
 

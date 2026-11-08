@@ -16,9 +16,12 @@ use crate::{AutoVolume, Mode, MonitorSource, Recorder};
 /// filters and the host's one-second CPU figures have all moved to the new row.
 pub(crate) const SETTLE_S: u64 = 2;
 pub(crate) const MEASURE_S: u64 = 6;
-/// HET, COMB and 1:1 have two rows each, and FD, TE and PITCH have one, for each of the three
-/// Auto volume choices. Two more rows run the chime decoders.
-pub(crate) const MAX_ROWS: usize = 9 * 3 + 2;
+/// The Auto volume choices the test runs. Bats only is left out: on B239 it measured within a
+/// point of On in every row, both stopped and recording.
+pub(crate) const VOLUMES: [AutoVolume; 2] = [AutoVolume::Off, AutoVolume::On];
+/// HET, COMB, PITCH and 1:1 have two rows each, and FD and TE have one, for each of `VOLUMES`.
+/// Two more rows run the chime decoders.
+pub(crate) const MAX_ROWS: usize = 10 * VOLUMES.len() + 2;
 
 /// Frames in the chunks the app's analysis counts as skipped.
 const SKIP_CHUNK_FRAMES: u64 = 256;
@@ -180,17 +183,19 @@ impl CpuTest {
         }
     }
 
-    /// Lay out the rows for these modes: the Auto volume choices in order, then the chime
-    /// decoders on the two modes where the CPU is shortest.
+    /// Lay out the rows for these modes, and PITCH even where it is not offered (the X8 hides
+    /// it, and the test measures how far it is from keeping up): the Auto volume choices in
+    /// order, then the chime decoders on the two modes where the CPU is shortest.
     pub(crate) fn plan(&mut self, modes: &[Mode], two_inputs: bool) {
         let mut count = 0;
         let mut push = |row: Row| {
             self.rows[count] = row;
             count += 1;
         };
-        let has_stereo = |mode: Mode| two_inputs && matches!(mode, Mode::Het | Mode::Comb | Mode::Thru);
-        for volume in AutoVolume::ALL {
-            for &mode in modes {
+        let has_stereo = |mode: Mode| two_inputs && matches!(mode, Mode::Het | Mode::Comb | Mode::Pitch | Mode::Thru);
+        let tested = |mode: &&Mode| modes.contains(mode) || **mode == Mode::Pitch;
+        for volume in VOLUMES {
+            for &mode in Mode::ALL.iter().filter(tested) {
                 let row = Row { mode, volume, has_stereo: has_stereo(mode), ..EMPTY_ROW };
                 push(row);
                 if row.has_stereo {

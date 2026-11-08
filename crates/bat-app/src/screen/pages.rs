@@ -29,7 +29,7 @@ pub(super) const CLOCK_FROM_REMOTE_STATE: [&str; 2] =
     ["X8 clock is set only from the PHONE TIME screen", "Chimes set the X8 clock to the phone's time"];
 pub(super) const CPU_TEST_NAME: &str = "CPU test";
 pub(super) const CPU_TEST_HELP: [&str; 2] =
-    ["Runs every listening mode with each Auto volume choice,", "8 s each, up to 3.5 min. Lists CPU load and lost input."];
+    ["Runs every listening mode with Auto volume off and on,", "8 s each, up to 3 min. Lists CPU load and lost input."];
 pub(super) const MIX_FILE_NAME: &str = "MIX file";
 /// The MIX file switch on follows MANUAL's REC READY for MASTER; off, it overrides it.
 pub(super) const MIX_FILE_FOLLOWS: [&str; 2] =
