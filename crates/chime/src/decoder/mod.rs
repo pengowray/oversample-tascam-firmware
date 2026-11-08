@@ -250,15 +250,14 @@ impl Decoder {
         if sample_rate_hz < MIN_SAMPLE_RATE_HZ {
             return None;
         }
-        let front_end = FrontEnd::new(sample_rate_hz);
-        let baseband_rate = front_end.baseband_rate();
-        let bucket_len = BUCKET_S * baseband_rate;
         let this = slot.as_mut_ptr();
         // SAFETY: `this` comes from a reference, so it is valid for writes and aligned. The
         // writes below cover every field, and the reference to the whole decoder is made
-        // after them.
+        // after them. The front end is complete before its baseband rate is read.
         unsafe {
-            addr_of_mut!((*this).front_end).write(front_end);
+            FrontEnd::init_in_place(addr_of_mut!((*this).front_end), sample_rate_hz);
+            let baseband_rate = (*this).front_end.baseband_rate();
+            let bucket_len = BUCKET_S * baseband_rate;
             Ring::init_in_place(addr_of_mut!((*this).ring));
             addr_of_mut!((*this).detector).write(Detector::new(baseband_rate));
             fill(addr_of_mut!((*this).fold_slots), Cplx::ZERO);

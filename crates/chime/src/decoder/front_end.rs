@@ -154,39 +154,41 @@ fn stage1_decimation(rate: f64, decimation: u32) -> u32 {
     if best >= MIN_STAGE1_DECIMATION { best } else { 1 }
 }
 
-/// The first stage's taps with the mixer folded in, for each position in its block of
-/// `d1` input samples: the taps for the output that ends with this block, the next one and
-/// the one after.
-fn stage1_taps(d1: usize, step: f64) -> [[Cplx; STAGE1_ORDER]; MAX_STAGE1_DECIMATION] {
-    // The kernel is `STAGE1_ORDER` moving averages of `d1` samples, convolved: `kernel[k]`
-    // is the weight of the input `k` samples before an output's last sample.
-    let mut kernel = [0.0f64; STAGE1_ORDER * MAX_STAGE1_DECIMATION];
-    kernel[0] = 1.0;
-    let mut len = 1;
-    for _ in 0..STAGE1_ORDER {
-        let mut next = [0.0f64; STAGE1_ORDER * MAX_STAGE1_DECIMATION];
-        for (k, &weight) in kernel[..len].iter().enumerate() {
-            for out in &mut next[k..k + d1] {
-                *out += weight / d1 as f64;
-            }
+/// The weight of the input `k` samples before an output's last sample, in a first stage of
+/// three moving averages of `d1` samples each: the number of ways to write `k` as a sum of one
+/// step from each average, over `d1` cubed. Counted rather than convolved, so that building
+/// a decoder needs no scratch arrays on the stack.
+fn stage1_weight(k: usize, d1: usize) -> f64 {
+    const { assert!(STAGE1_ORDER == 3, "stage1_weight counts three moving averages") };
+    let mut ways = 0;
+    for a in 0..d1 {
+        for b in 0..d1 {
+            ways += (k >= a + b && k - a - b < d1) as u32;
         }
-        kernel = next;
-        len += d1 - 1;
     }
-    let mut taps = [[Cplx::ZERO; STAGE1_ORDER]; MAX_STAGE1_DECIMATION];
-    for (position, row) in taps.iter_mut().enumerate().take(d1) {
-        for (output, tap) in row.iter_mut().enumerate() {
-            let k = output * d1 + d1 - 1 - position;
-            let angle = step * k as f64;
-            *tap = Cplx { re: (kernel[k] * libm::cos(angle)) as f32, im: (kernel[k] * libm::sin(angle)) as f32 };
-        }
+    ways as f64 / (d1 * d1 * d1) as f64
+}
+
+/// The first stage's taps with the mixer folded in, for input sample `position` of its
+/// block of `d1`: the taps for the output that ends with this block, the next one and the one
+/// after. Zero for a position past the block.
+fn stage1_taps(position: usize, d1: usize, step: f64) -> [Cplx; STAGE1_ORDER] {
+    let mut taps = [Cplx::ZERO; STAGE1_ORDER];
+    if position >= d1 {
+        return taps;
+    }
+    for (output, tap) in taps.iter_mut().enumerate() {
+        let k = output * d1 + d1 - 1 - position;
+        let weight = stage1_weight(k, d1);
+        let angle = step * k as f64;
+        *tap = Cplx { re: (weight * libm::cos(angle)) as f32, im: (weight * libm::sin(angle)) as f32 };
     }
     taps
 }
 
 /// The two stages of filters and decimation, and the running power for the limit.
 pub(super) struct FrontEnd {
-    /// See [`stage1_taps`].
+    /// The first stage's taps for each position in its block. See [`stage1_taps`].
     taps: [[Cplx; STAGE1_ORDER]; MAX_STAGE1_DECIMATION],
     /// The first stage's outputs that are under way: the one that ends with this block,
     /// the next and the one after.
@@ -214,31 +216,40 @@ pub(super) struct FrontEnd {
 }
 
 impl FrontEnd {
-    pub(super) fn new(sample_rate_hz: u32) -> FrontEnd {
+    /// Builds a front end at `this`, field by field, so that its table of taps never passes
+    /// through the stack.
+    ///
+    /// # Safety
+    ///
+    /// `this` must be valid for writes and aligned.
+    pub(super) unsafe fn init_in_place(this: *mut FrontEnd, sample_rate_hz: u32) {
         let rate = sample_rate_hz as f64;
         let decimation = libm::round(rate / TARGET_BASEBAND_HZ) as u32;
         let d1 = stage1_decimation(rate, decimation);
         let step = 2.0 * core::f64::consts::PI * CARRIER_HZ as f64 / rate;
         let filter = Butterworth4::lowpass((rate / d1 as f64) as f32, FILTER_CUTOFF_HZ);
-        let turn_angle = -step * (d1 - 1) as f64;
-        let turn_step_angle = -step * d1 as f64;
-        FrontEnd {
-            taps: stage1_taps(d1 as usize, step),
-            sums: [Cplx::ZERO; STAGE1_ORDER],
-            d1,
-            position: 0,
-            turn: Cplx { re: libm::cos(turn_angle) as f32, im: libm::sin(turn_angle) as f32 },
-            turn_step: Cplx { re: libm::cos(turn_step_angle) as f32, im: libm::sin(turn_step_angle) as f32 },
-            filter_i: filter,
-            filter_q: filter,
-            d2: decimation / d1,
-            d2_count: 0,
-            sample_rate: rate,
-            baseband_rate: rate / decimation as f64,
-            delay: FILTER_DELAY_S * rate + (STAGE1_ORDER * (d1 as usize - 1)) as f64 / 2.0,
-            running_power: POWER_FLOOR,
-            loud_run: 0,
-            input_samples: 0,
+        let turn = |angle: f64| Cplx { re: libm::cos(angle) as f32, im: libm::sin(angle) as f32 };
+        // SAFETY: the caller makes `this` valid for writes, and these are all of its fields.
+        unsafe {
+            let rows = addr_of_mut!((*this).taps).cast::<[Cplx; STAGE1_ORDER]>();
+            for position in 0..MAX_STAGE1_DECIMATION {
+                rows.add(position).write(stage1_taps(position, d1 as usize, step));
+            }
+            addr_of_mut!((*this).sums).write([Cplx::ZERO; STAGE1_ORDER]);
+            addr_of_mut!((*this).d1).write(d1);
+            addr_of_mut!((*this).position).write(0);
+            addr_of_mut!((*this).turn).write(turn(-step * (d1 - 1) as f64));
+            addr_of_mut!((*this).turn_step).write(turn(-step * d1 as f64));
+            addr_of_mut!((*this).filter_i).write(filter);
+            addr_of_mut!((*this).filter_q).write(filter);
+            addr_of_mut!((*this).d2).write(decimation / d1);
+            addr_of_mut!((*this).d2_count).write(0);
+            addr_of_mut!((*this).sample_rate).write(rate);
+            addr_of_mut!((*this).baseband_rate).write(rate / decimation as f64);
+            addr_of_mut!((*this).delay).write(FILTER_DELAY_S * rate + (STAGE1_ORDER * (d1 as usize - 1)) as f64 / 2.0);
+            addr_of_mut!((*this).running_power).write(POWER_FLOOR);
+            addr_of_mut!((*this).loud_run).write(0);
+            addr_of_mut!((*this).input_samples).write(0);
         }
     }
 
@@ -378,11 +389,36 @@ mod tests {
         assert_eq!(stage1_decimation(44_100.0, 6), 1);
     }
 
+    #[test]
+    fn the_first_stage_weights_are_three_moving_averages() {
+        for d1 in [1, 4, 8, 16] {
+            let mut convolved = std::vec![1.0f64];
+            for _ in 0..STAGE1_ORDER {
+                let mut next = std::vec![0.0; convolved.len() + d1 - 1];
+                for (k, &weight) in convolved.iter().enumerate() {
+                    for out in &mut next[k..k + d1] {
+                        *out += weight / d1 as f64;
+                    }
+                }
+                convolved = next;
+            }
+            for k in 0..STAGE1_ORDER * d1 {
+                let expected = convolved.get(k).copied().unwrap_or(0.0);
+                assert!((stage1_weight(k, d1) - expected).abs() < 1e-12, "d1 {d1}, k {k}");
+            }
+        }
+    }
+
     /// A tone at the carrier plus `offset_hz`, through the front end, as baseband power over
     /// that of the carrier itself.
     fn relative_power_db(rate: u32, offset_hz: f64) -> f64 {
         let power = |hz: f64| {
-            let mut front_end = FrontEnd::new(rate);
+            let mut slot = core::mem::MaybeUninit::uninit();
+            // SAFETY: the slot is valid for writes, and `init_in_place` writes every field.
+            let front_end = unsafe {
+                FrontEnd::init_in_place(slot.as_mut_ptr(), rate);
+                slot.assume_init_mut()
+            };
             let mut ring = Ring { samples: [Cplx::ZERO; RING_LEN], count: 0 };
             let input: std::vec::Vec<f32> = (0..rate as usize / 4)
                 .map(|n| libm::sin(2.0 * core::f64::consts::PI * hz * n as f64 / rate as f64) as f32)
