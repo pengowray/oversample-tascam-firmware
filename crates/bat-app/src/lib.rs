@@ -1012,7 +1012,7 @@ impl<'a> BatApp<'a> {
             // Turning the wheel up switches on, down switches off.
             Setting::DebugInfo if steps != 0 => self.debug_info = steps > 0,
             Setting::DebugInfo => {}
-            Setting::MixFile if steps != 0 && self.manual_mix_file => self.mix_file = steps > 0,
+            Setting::MixFile if steps != 0 => self.mix_file = steps > 0,
             Setting::MixFile => {}
             Setting::ClockFromRemote if steps != 0 => self.clock_from_remote = steps > 0,
             Setting::ClockFromRemote => {}
@@ -1198,15 +1198,14 @@ impl<'a> BatApp<'a> {
         self.mix_file_available
     }
 
-    /// Whether takes should write the MIX file, which is the stock behaviour. This is the switch's
-    /// own setting: with REC READY off in MANUAL ([`set_manual_mix_file`](Self::set_manual_mix_file)),
-    /// no take has a MIX file whatever it says.
+    /// The MIX file switch: on (the default), a take has a MIX file when MANUAL's MASTER has REC
+    /// READY on ([`set_manual_mix_file`](Self::set_manual_mix_file)); off, it has none.
     pub fn mix_file(&self) -> bool {
         self.mix_file
     }
 
-    /// Whether MANUAL's MASTER has REC READY on, so a take can have a MIX file. With it off, the
-    /// MIX file switch shows off and can't be changed here: only MANUAL can turn it back on.
+    /// Whether MANUAL's MASTER has REC READY on, so a take can have a MIX file. The MIX file
+    /// panel's line says which of the two decides.
     pub fn set_manual_mix_file(&mut self, on: bool) {
         self.manual_mix_file = on;
     }
@@ -1531,7 +1530,7 @@ impl<'a> BatApp<'a> {
                     Setting::Mark(kind) => self.set_marked(kind, !self.is_marked(kind)),
                     Setting::AutoLevel => self.level.set_volume(layout::auto_volume_at(x)),
                     Setting::DebugInfo => self.debug_info = !self.debug_info,
-                    Setting::MixFile if self.manual_mix_file => self.mix_file = !self.mix_file,
+                    Setting::MixFile => self.mix_file = !self.mix_file,
                     Setting::ClockFromRemote => self.clock_from_remote = !self.clock_from_remote,
                     Setting::PauseWithRec => self.pause_with_rec = !self.pause_with_rec,
                     _ => {}
@@ -2074,7 +2073,6 @@ impl<'a> BatApp<'a> {
             };
             return page_button
                 || match layout::settings_hit(x, y, self.page_settings()) {
-                    Some(layout::SettingsHit::Control(Setting::MixFile)) => self.manual_mix_file,
                     Some(layout::SettingsHit::Minus(setting) | layout::SettingsHit::Plus(setting)) => {
                         setting != Setting::ListenTo || self.listen_has_choices()
                     }

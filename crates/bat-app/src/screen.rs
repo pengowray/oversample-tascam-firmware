@@ -665,16 +665,6 @@ fn auto_volume_row(app: &BatApp, fb: Fb) {
     }
 }
 
-/// A switch that can't be changed here: an outline of its off state, so it reads differently
-/// from a switch that is just off.
-fn switch_control_fixed_off(fb: Fb, sw: Rectangle) {
-    let h = sw.size.height;
-    let outline = PrimitiveStyleBuilder::new().stroke_color(LINE).stroke_width(2).build();
-    let _ = RoundedRectangle::new(sw, CornerRadii::new(Size::new(h / 2, h / 2))).into_styled(outline).draw(fb);
-    let knob = Point::new(sw.top_left.x + h as i32 / 2, sw.center().y);
-    let _ = Circle::with_center(knob, h - 6).into_styled(PrimitiveStyle::with_fill(LINE)).draw(fb);
-}
-
 /// A switch. On: blue track, knob at the right. Off: grey track, knob at the left.
 fn switch_control(fb: Fb, sw: Rectangle, on: bool) {
     let h = sw.size.height;

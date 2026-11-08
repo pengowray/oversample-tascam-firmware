@@ -3,7 +3,7 @@
 
 use embedded_graphics::primitives::Rectangle;
 
-use super::{BODY, BODY_BOLD, Fb, LEFT, SMALL, outline_selected, rounded, switch_control, switch_control_fixed_off, text};
+use super::{BODY, BODY_BOLD, Fb, LEFT, SMALL, outline_selected, rounded, switch_control, text};
 use crate::layout::{RECORD_CLOCK, RECORD_GUANO, RECORD_MIX_FILE, RECORD_PAUSE, RECORD_REMOTE, TESTS_CHIME_TEST, TESTS_CPU_TEST, TESTS_DEBUG, panel_switch};
 use crate::palette::*;
 use crate::{BatApp, RemoteCommand, RemoteResult, Setting};
@@ -19,40 +19,45 @@ pub(super) const REMOTE_BEEPS: &str = "Two notes up: started. Two down: stopped.
 pub(super) const CHIME_TEST_NAME: &str = "Phone time";
 pub(super) const CHIME_TEST_HELP: &str = "Shows if the X8 reads chimes. Can set the X8 clock.";
 pub(super) const CLOCK_FROM_REMOTE_NAME: &str = "Set X8 clock from chimes";
-pub(super) const PAUSE_NAME: &str = "REC pauses takes";
-pub(super) const PAUSE_HELP: &str = "Each pause is marked, with the time paused in GUANO.";
+pub(super) const PAUSE_NAME: &str = "Pause with REC";
+/// Each switch's line says what its current setting does: [off, on].
+pub(super) const PAUSE_STATE: [&str; 2] =
+    ["REC is ignored during a take, so takes have no gaps", "REC pauses and resumes a take, with a MARK per pause"];
 /// On the main screen when REC was kept from pausing a take.
 pub(super) const PAUSE_OFF_LINES: [&str; 2] = ["Pausing is off.", "STOP ends the take."];
-pub(super) const CLOCK_FROM_REMOTE_HELP: &str = "During a take, the X8 clock is set when the take ends.";
+pub(super) const CLOCK_FROM_REMOTE_STATE: [&str; 2] =
+    ["X8 clock is set only from the PHONE TIME screen", "Chimes set the X8 clock to the phone's time"];
 pub(super) const CPU_TEST_NAME: &str = "CPU test";
 pub(super) const CPU_TEST_HELP: [&str; 2] =
     ["Runs every listening mode with each Auto volume choice,", "8 s each, up to 3.5 min. Lists CPU load and lost input."];
 pub(super) const MIX_FILE_NAME: &str = "MIX file";
-pub(super) const MIX_FILE_HELP: &str = "Needed to play a take from BROWSE.";
-/// The MIX file's help when MANUAL's MASTER has REC READY off.
-pub(super) const MIX_FILE_OFF_IN_MANUAL: &str = "REC READY is off for MASTER in MANUAL.";
+/// The MIX file switch on follows MANUAL's REC READY for MASTER; off, it overrides it.
+pub(super) const MIX_FILE_FOLLOWS: [&str; 2] =
+    ["No MIX file: MASTER REC READY is off in MANUAL", "MIX file is saved, as MASTER REC READY is on in MANUAL"];
+pub(super) const MIX_FILE_OVERRIDES: &str = "Overrides REC READY: no MIX file for BAT DETECTOR";
 pub(super) const DEBUG_NAME: &str = "Debug info";
-pub(super) const DEBUG_HELP: &str = "Shows CPU and input figures over the last call panel.";
+pub(super) const DEBUG_STATE: [&str; 2] = ["CPU and input figures are hidden", "CPU and input figures are shown on the main screen"];
 pub(super) const GUANO_NAME: &str = "GUANO metadata";
-pub(super) const GUANO_HELP: [&str; 2] =
-    ["Adds a timestamp and recorder model to each WAV file.", "Bat analysis apps read GUANO. Most audio apps ignore it."];
+pub(super) const GUANO_STATE: [&str; 2] =
+    ["No GUANO metadata. WAV files are stock X8 files", "Each WAV file gets start time, recorder model, location"];
+pub(super) const GUANO_HELP: &str = "Bat analysis apps read GUANO. Most audio apps ignore it.";
 
-/// A panel with a name, a switch at the right of the name, and help lines under it. Muted when
-/// the switch can't be changed here: then the switch is drawn as an outline and the panel gets no
-/// wheel outline, since the wheel can't change it either.
-fn switch_panel(fb: Fb, panel: Rectangle, name: &str, help: &[&str], on: bool, muted: bool, selected: bool) {
+/// The line for a switch's current setting.
+fn state(lines: &[&'static str; 2], on: bool) -> &'static str {
+    lines[on as usize]
+}
+
+/// A panel with a name, a switch at the right of the name, and under it a line saying what the
+/// current setting does, then any fixed help.
+fn switch_panel(fb: Fb, panel: Rectangle, name: &str, lines: &[&str], on: bool, selected: bool) {
     rounded(fb, panel, 6, PANEL);
-    if selected && !muted {
+    if selected {
         outline_selected(fb, panel);
     }
     let (x, y) = (panel.top_left.x + 10, panel.top_left.y);
-    text(fb, &BODY, name, x, y + 20, LEFT, if muted { TEXT_MUTED } else { TEXT });
-    if muted {
-        switch_control_fixed_off(fb, panel_switch(panel));
-    } else {
-        switch_control(fb, panel_switch(panel), on);
-    }
-    for (line, y) in help.iter().zip([y + 40, y + 54]) {
+    text(fb, &BODY, name, x, y + 20, LEFT, TEXT);
+    switch_control(fb, panel_switch(panel), on);
+    for (line, y) in lines.iter().zip([y + 40, y + 54]) {
         text(fb, &SMALL, *line, x, y, LEFT, TEXT_MUTED);
     }
 }
@@ -72,24 +77,21 @@ fn test_button(fb: Fb, button: Rectangle, name: &str, help: &[&str]) {
 pub(super) fn record(app: &BatApp, fb: Fb) {
     if app.mix_file_available() {
         let selected = app.selected_setting() == Setting::MixFile;
-        if app.manual_mix_file() {
-            switch_panel(fb, RECORD_MIX_FILE, MIX_FILE_NAME, &[MIX_FILE_HELP], app.mix_file(), false, selected);
-        } else {
-            // MANUAL decides: the switch shows what a take will get, and taps do nothing.
-            switch_panel(fb, RECORD_MIX_FILE, MIX_FILE_NAME, &[MIX_FILE_OFF_IN_MANUAL], false, true, selected);
-        }
+        let line = if app.mix_file() { state(&MIX_FILE_FOLLOWS, app.manual_mix_file()) } else { MIX_FILE_OVERRIDES };
+        switch_panel(fb, RECORD_MIX_FILE, MIX_FILE_NAME, &[line], app.mix_file(), selected);
     }
     if app.guano_available() {
-        switch_panel(fb, RECORD_GUANO, GUANO_NAME, &GUANO_HELP, app.guano(), false, false);
+        switch_panel(fb, RECORD_GUANO, GUANO_NAME, &[state(&GUANO_STATE, app.guano()), GUANO_HELP], app.guano(), false);
     }
     if app.pause_option_available() {
         let selected = app.selected_setting() == Setting::PauseWithRec;
-        switch_panel(fb, RECORD_PAUSE, PAUSE_NAME, &[PAUSE_HELP], app.pause_with_rec(), false, selected);
+        switch_panel(fb, RECORD_PAUSE, PAUSE_NAME, &[state(&PAUSE_STATE, app.pause_with_rec())], app.pause_with_rec(), selected);
     }
     if app.remote_available() {
         remote_panel(app, fb);
         let selected = app.selected_setting() == Setting::ClockFromRemote;
-        switch_panel(fb, RECORD_CLOCK, CLOCK_FROM_REMOTE_NAME, &[CLOCK_FROM_REMOTE_HELP], app.clock_from_remote(), false, selected);
+        let line = state(&CLOCK_FROM_REMOTE_STATE, app.clock_from_remote());
+        switch_panel(fb, RECORD_CLOCK, CLOCK_FROM_REMOTE_NAME, &[line], app.clock_from_remote(), selected);
     }
 }
 
@@ -97,7 +99,7 @@ pub(super) fn record(app: &BatApp, fb: Fb) {
 pub(super) fn tests(app: &BatApp, fb: Fb) {
     if app.debug_available() {
         let selected = app.selected_setting() == Setting::DebugInfo;
-        switch_panel(fb, TESTS_DEBUG, DEBUG_NAME, &[DEBUG_HELP], app.debug_info(), false, selected);
+        switch_panel(fb, TESTS_DEBUG, DEBUG_NAME, &[state(&DEBUG_STATE, app.debug_info())], app.debug_info(), selected);
     }
     test_button(fb, TESTS_CHIME_TEST, CHIME_TEST_NAME, &[CHIME_TEST_HELP]);
     if app.debug_available() {
@@ -171,10 +173,11 @@ pub(crate) fn lines_with_widths() -> std::vec::Vec<(std::string::String, i32, i3
     let mut lines = Vec::new();
     let mut add = |font: &FontRenderer, line: &str, room: i32| lines.push((line.to_string(), width(font, line), room));
     let inside = RECORD_REMOTE.size.width as i32 - 20;
-    for line in REMOTE_HELP.iter().chain(&CPU_TEST_HELP).chain(&GUANO_HELP).chain([&REMOTE_BEEPS, &CHIME_TEST_HELP]) {
+    for line in REMOTE_HELP.iter().chain(&CPU_TEST_HELP).chain([&REMOTE_BEEPS, &CHIME_TEST_HELP]) {
         add(&SMALL, line, inside);
     }
-    for line in [MIX_FILE_HELP, MIX_FILE_OFF_IN_MANUAL, DEBUG_HELP, CLOCK_FROM_REMOTE_HELP, PAUSE_HELP] {
+    let states = [MIX_FILE_FOLLOWS, DEBUG_STATE, GUANO_STATE, PAUSE_STATE, CLOCK_FROM_REMOTE_STATE];
+    for line in states.iter().flatten().chain([&MIX_FILE_OVERRIDES, &GUANO_HELP]) {
         add(&SMALL, line, inside);
     }
     // The name's line ends at the switch.

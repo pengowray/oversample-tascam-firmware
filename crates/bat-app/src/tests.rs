@@ -1454,24 +1454,26 @@ fn history_covers_the_longest_call_and_its_snapshot_margins() {
     assert!(HISTORY as f32 >= columns_needed, "{HISTORY} columns, {columns_needed} needed");
 }
 
-/// With REC READY off for MASTER in MANUAL, no take has a MIX file: the switch shows off, and
-/// taps and the wheel leave the app's own setting alone for when REC READY is back on.
+/// The MIX file switch flips whatever MANUAL's REC READY for MASTER says, and its line changes
+/// with both: saved, not saved because of REC READY, or not saved because of the switch.
 #[test]
-fn mix_file_switch_follows_rec_ready() {
+fn mix_file_line_follows_switch_and_rec_ready() {
     let mut storage = vec![0.0f32; 1024];
     let mut app = BatApp::new(FS, &mut storage, buffers());
     let row = layout::control_row(Setting::MixFile).center();
     app.set_mix_file_available(true);
     app.open_settings_page(SettingsPage::Record);
+    let saved = draw(&app);
     app.set_manual_mix_file(false);
-    assert!(!app.is_tappable(row.x, row.y));
-    app.touch(row.x, row.y);
-    app.wheel(-1);
-    assert!(app.mix_file());
-    app.set_manual_mix_file(true);
+    let not_ready = draw(&app);
+    assert_ne!(saved, not_ready);
     assert!(app.is_tappable(row.x, row.y));
     app.touch(row.x, row.y);
     assert!(!app.mix_file());
+    let overridden = draw(&app);
+    assert_ne!(overridden, not_ready);
+    app.wheel(1);
+    assert!(app.mix_file());
 }
 
 /// The settings screen's tabs: each opens its page, the wheel changes only a setting on the page
