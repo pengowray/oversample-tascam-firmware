@@ -2394,6 +2394,13 @@ from the recorder's own task, and writes from the stock header buffer as the sto
 take's file table at 0x81cbacac: 24 slots of 0x204 bytes, each a file handle then the path it was opened with. If any check
 fails, the file stays as the stock code wrote it.
 
+**Stack.** The hook needs about 0.7 KB of stack: a 180-byte frame and saved registers, plus the text formatting it calls. The
+end of a take and the close at power-off run on task 4 (entry `FUN_80dc93a0`, priority 4, a 17 KB stack): its command table at
+0x8196b714 holds the record command `FUN_80dc99dc` (12), the stop command `FUN_80dc9b5c` (13) and power-off `FUN_80dca8b8` (21).
+The task table at 0x8131daf8 has 7 words a task: id, attribute, extended info, entry, priority, stack size, stack. The split
+`FUN_80dbba78` is called through a table at 0x8174c53c that has not been traced. If it runs on task 5 or 6 (entries in the
+recorder's code, 6 KB stacks each), the hook should still fit, but this is not checked.
+
 **Not checked.**
 
 - A card that fills up while the chunk is written. Up to 1 KB could be left after the RIFF size, which readers skip, and the stock
