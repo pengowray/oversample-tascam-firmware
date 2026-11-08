@@ -32,10 +32,15 @@ const SECONDS_IN_DAY: f64 = 86_400.0;
 /// go past one day, because TimeReference adds up over the parts of a take.
 const MAX_TIME_REFERENCE_DAYS: f64 = 7.0;
 
-/// OriginationTime further than this from the recording's time span casts doubt on the
-/// X8 clock reading. In 73 X8 takes, 4 were further than this from the end of the take.
-/// Gaps of 2 to 4.5 s occur in ordinary takes.
-const ORIGINATION_GAP_LIMIT_S: f64 = 5.0;
+/// The X8 sets TimeReference before the first sample, so it is never much later than the
+/// start that OriginationTime gives. In 95 X8 takes it was at most 0.58 s later, from the
+/// rounding of both fields to whole seconds. Later than this casts doubt on OriginationTime.
+const TIME_REFERENCE_LATE_LIMIT_S: f64 = 1.5;
+
+/// TimeReference this far before the first sample is worth a note, because a pause during
+/// the take would also put it there, and a pause makes the clock readings before it too
+/// late. In 95 X8 takes it was within 5 s in 91, and 9, 12, 24 and 1076 s in the others.
+const TIME_REFERENCE_EARLY_NOTE_S: f64 = 30.0;
 
 fn main() -> ExitCode {
     let paths: Vec<String> = env::args().skip(1).collect();
@@ -159,14 +164,7 @@ impl EventReport {
         let (clock_start, clock_note) = match bext.map(|fields| clock_at_sample_zero(fields, sample_rate, frames)) {
             None => (None, Some("The file has no bext chunk, so the X8 clock reading is unknown.".to_string())),
             Some(Err(problem)) => (None, Some(format!("{problem}, so the X8 clock reading is unknown."))),
-            Some(Ok(clock)) if clock.origination_gap > ORIGINATION_GAP_LIMIT_S => (
-                Some(clock.start),
-                Some(format!(
-                    "OriginationTime in the bext chunk is {:.0} s outside the time span of this recording, so the X8 clock reading may be wrong.",
-                    clock.origination_gap
-                )),
-            ),
-            Some(Ok(clock)) => (Some(clock.start), None),
+            Some(Ok(clock)) => (Some(clock.start), clock.time_reference_lead.and_then(describe_time_reference_lead)),
         };
         Self {
             sample_rate,
@@ -329,11 +327,9 @@ fn describe_chime(channel: usize, sample_rate: u32, chime: &Chime) -> String {
 /// delay in the phone's audio output appears here as the X8 clock being ahead.
 ///
 /// Everything here is in whole seconds, from one rounded value, because a bext chunk gives
-/// the X8 clock only to about 1 s. In 73 X8 takes, TimeReference was a whole second minus
-/// a fixed 12 or 76 ms, wherever in a second Record was pressed. So the clock could be up
-/// to about 1 s ahead of what TimeReference says. This is inferred from those takes, and
-/// no test has shown it. To settle it, record several takes of chimes from one phone. If
-/// this is right, the difference moves by up to 1 s between takes.
+/// the X8 clock only to about 1 s: OriginationTime is in whole seconds, and the X8 writes it
+/// up to about 0.4 s after the last sample. Several takes of chimes from one phone would
+/// show how far the difference moves between takes.
 fn describe_clock(message: &TimeMessage, start_sample: i64, sample_rate: u32, clock_start: f64) -> String {
     let clock = (clock_start + start_sample as f64 / sample_rate as f64).round() as i64;
     let phone = message.unix_time as i64 + message.timezone_minutes as i64 * 60;
@@ -350,6 +346,25 @@ fn describe_clock(message: &TimeMessage, start_sample: i64, sample_rate: u32, cl
         )
     };
     format!("X8 clock at that moment: {}. {comparison}", LocalTime::from_epoch_seconds(clock))
+}
+
+/// A note on TimeReference when it is far enough from the start that OriginationTime gives
+/// to matter, or None. `lead` is how many seconds TimeReference is before that start.
+fn describe_time_reference_lead(lead: f64) -> Option<String> {
+    if lead < -TIME_REFERENCE_LATE_LIMIT_S {
+        Some(format!(
+            "TimeReference in the bext chunk is {:.0} s after the first sample that OriginationTime gives, \
+             so the X8 clock reading may be wrong.",
+            -lead
+        ))
+    } else if lead > TIME_REFERENCE_EARLY_NOTE_S {
+        Some(format!(
+            "TimeReference in the bext chunk is {lead:.0} s before the first sample. If the take was paused, \
+             the X8 clock readings for chimes before the pause are up to {lead:.0} s too late."
+        ))
+    } else {
+        None
+    }
 }
 
 /// For a difference of an hour or more, the same value in days, hours and minutes, to the
@@ -418,7 +433,8 @@ struct Bext {
     origination_date: [u8; 10],
     /// OriginationTime as text, for example "09:00:40".
     origination_time: [u8; 8],
-    /// TimeReference: samples since midnight at the first sample of the file.
+    /// TimeReference: samples since midnight. The X8 sets it before the first sample, so the
+    /// clock reading does not come from it.
     time_reference: u64,
 }
 
@@ -560,49 +576,39 @@ fn parse_origination(bext: &Bext) -> Option<LocalTime> {
 struct ClockStart {
     /// Seconds since 1970-01-01 00:00:00 with no time zone applied.
     start: f64,
-    /// How far OriginationDate and OriginationTime are from the recording's time span, in
-    /// seconds.
-    origination_gap: f64,
+    /// How many seconds TimeReference is before `start`, if TimeReference is set. The X8
+    /// sets it before the first sample, so this is probably the time spent in record
+    /// standby, plus any pauses.
+    time_reference_lead: Option<f64>,
 }
 
-/// Works out the X8 clock reading at the first sample of the file. If the bext chunk
-/// cannot give one, the error says why.
+/// Works out the X8 clock reading at the first sample of the file: OriginationDate and
+/// OriginationTime, less the file's length. If the bext chunk cannot give one, the error
+/// says why.
 ///
-/// TimeReference gives the time of day of the first sample, and OriginationDate gives the
-/// date. In 73 X8 takes, OriginationDate and OriginationTime appear to be written at the
-/// end of the recording: 56 are within 1 s of it. But 13 are more than 1.5 s after it and
-/// one is 1076 s after it, for a reason that is not known. A recording that crosses
-/// midnight would have an OriginationDate one day later than its first sample. No such
-/// recording has been checked, so this function does not assume which end of the recording
-/// they describe. It tries the day before, the same day and the day after OriginationDate,
-/// and picks the one that puts the origination date and time closest to the span of the
-/// recording.
+/// The X8 writes the bext chunk again as it closes a file, at the end of a take or when a
+/// take splits at 4 GB, so OriginationDate and OriginationTime are the end of the file, to
+/// the second. TimeReference is set earlier: once a take, from the clock's whole seconds, at
+/// a point before the first sample (`FUN_80df59c8`, docs/HOMEBREW.md "GUANO metadata"), and
+/// at a split the next file gets the old one's plus its length. In the split take
+/// 260306_0061 to 0063, TimeReference was about 4 s early in all three files, while the end
+/// times less the lengths ran on from one file to the next to within 0.4 s.
 fn clock_at_sample_zero(bext: &Bext, sample_rate: u32, frames: u64) -> Result<ClockStart, &'static str> {
-    // A TimeReference of 0 counts as not set, because a recording is very unlikely
-    // to start on the exact sample of midnight.
-    if bext.time_reference == 0 {
-        return Err("The bext chunk's TimeReference is 0");
-    }
-    let time_reference = bext.time_reference as f64 / sample_rate as f64;
-    if time_reference > MAX_TIME_REFERENCE_DAYS * SECONDS_IN_DAY {
-        return Err("The bext chunk's TimeReference is more than 7 days");
-    }
-    let origination =
-        parse_origination(bext).ok_or("The bext chunk has no usable date and time")?.to_epoch_seconds() as f64;
-    let origination_midnight = (origination / SECONDS_IN_DAY).floor() * SECONDS_IN_DAY;
-    let time_of_day = time_reference.rem_euclid(SECONDS_IN_DAY);
-    let duration = frames as f64 / sample_rate as f64;
+    let end = parse_origination(bext).ok_or("The bext chunk has no usable date and time")?.to_epoch_seconds() as f64;
+    let start = end - frames as f64 / sample_rate as f64;
+    Ok(ClockStart { start, time_reference_lead: time_reference_lead(bext, sample_rate, start) })
+}
 
-    let mut best = ClockStart { start: 0.0, origination_gap: f64::INFINITY };
-    for day_offset in [0.0, -1.0, 1.0] {
-        let start = origination_midnight + day_offset * SECONDS_IN_DAY + time_of_day;
-        let end = start + duration;
-        let origination_gap = (start - origination).max(origination - end).max(0.0);
-        if origination_gap < best.origination_gap {
-            best = ClockStart { start, origination_gap };
-        }
+/// How many seconds TimeReference is before `start`, taking it on whichever day is nearest.
+/// None when TimeReference is 0 (not set: a recording is very unlikely to start on the exact
+/// sample of midnight) or more than 7 days of samples.
+fn time_reference_lead(bext: &Bext, sample_rate: u32, start: f64) -> Option<f64> {
+    let seconds = bext.time_reference as f64 / sample_rate as f64;
+    if bext.time_reference == 0 || seconds > MAX_TIME_REFERENCE_DAYS * SECONDS_IN_DAY {
+        return None;
     }
-    Ok(best)
+    let lead = (start - seconds).rem_euclid(SECONDS_IN_DAY);
+    Some(if lead > SECONDS_IN_DAY / 2.0 { lead - SECONDS_IN_DAY } else { lead })
 }
 
 #[cfg(test)]
@@ -809,44 +815,44 @@ mod tests {
     fn clock_matches_the_x8_recording() {
         // The values in web/samples/0066.wav: 5326848 frames, or 27.74 s.
         let fields = bext(b"2026-03-15", b"09:00:40", 6_223_101_696);
-        let start = clock_at_sample_zero(&fields, RATE, 5_326_848).unwrap().start;
+        let clock = clock_at_sample_zero(&fields, RATE, 5_326_848).unwrap();
+        // OriginationTime 09:00:40 less 27.744 s is 09:00:12.256. TimeReference, 09:00:11.988,
+        // is 0.27 s before it.
         assert_eq!(
-            local_from_clock(start),
-            LocalTime { year: 2026, month: 3, day: 15, hour: 9, minute: 0, second: 11 }
+            local_from_clock(clock.start),
+            LocalTime { year: 2026, month: 3, day: 15, hour: 9, minute: 0, second: 12 }
         );
+        assert!((clock.time_reference_lead.unwrap() - 0.268).abs() < 0.001, "{clock:?}");
     }
 
     #[test]
     fn clock_handles_a_recording_that_crosses_midnight() {
-        // The first sample is at 23:59:50 and OriginationDate is the day after,
-        // and the recording lasts 20 s.
+        // The recording lasts 20 s and ends 10 s after midnight, so its first sample is on
+        // the day before OriginationDate.
         let time_reference = (23 * 3600 + 59 * 60 + 50) as u64 * RATE as u64;
         let fields = bext(b"2027-01-01", b"00:00:10", time_reference);
-        let start = clock_at_sample_zero(&fields, RATE, 20 * RATE as u64).unwrap().start;
+        let clock = clock_at_sample_zero(&fields, RATE, 20 * RATE as u64).unwrap();
         assert_eq!(
-            local_from_clock(start),
+            local_from_clock(clock.start),
             LocalTime { year: 2026, month: 12, day: 31, hour: 23, minute: 59, second: 50 }
         );
+        assert_eq!(clock.time_reference_lead, Some(0.0));
     }
 
     #[test]
-    fn clock_handles_origination_written_at_the_start() {
-        // OriginationTime is the truncated start time here: 09:00:11 for a start at
-        // 09:00:11.99. That must not count as crossing midnight.
-        let fields = bext(b"2026-03-15", b"09:00:11", 6_223_101_696);
-        let start = clock_at_sample_zero(&fields, RATE, 5_326_848).unwrap().start;
-        assert_eq!(local_from_clock(start).day, 15);
-    }
-
-    #[test]
-    fn clock_is_an_error_without_usable_fields() {
+    fn clock_is_an_error_without_a_usable_date_and_time() {
         let error = |fields: Bext| clock_at_sample_zero(&fields, RATE, 100).unwrap_err();
-        assert!(error(bext(b"2026-03-15", b"09:00:40", 0)).contains("TimeReference is 0"));
         assert!(error(bext(&[0; 10], &[0; 8], 42)).contains("no usable date and time"));
         assert!(error(bext(b"2026-13-15", b"09:00:40", 42)).contains("no usable date and time"));
         assert!(error(bext(b"2026-03-15", b"25:00:40", 42)).contains("no usable date and time"));
         assert!(error(bext(b"2026-02-31", b"09:00:40", 42)).contains("no usable date and time"));
-        assert!(error(bext(b"2026-03-15", b"09:00:40", (1 << 63) + 12_345)).contains("more than 7 days"));
+    }
+
+    #[test]
+    fn time_reference_is_left_out_when_it_is_not_set() {
+        let clock = |time_reference| clock_at_sample_zero(&bext(b"2026-03-15", b"09:00:40", time_reference), RATE, 100);
+        assert_eq!(clock(0).unwrap().time_reference_lead, None);
+        assert_eq!(clock((1 << 63) + 12_345).unwrap().time_reference_lead, None);
     }
 
     #[test]
@@ -854,38 +860,40 @@ mod tests {
         // TimeReference adds up over split files, so it can pass midnight.
         let time_reference = (86_400 + 60) * RATE as u64;
         let clock = clock_at_sample_zero(&bext(b"2026-03-16", b"00:01:30", time_reference), RATE, 30 * RATE as u64);
-        let start = clock.unwrap().start;
-        assert_eq!(local_from_clock(start), LocalTime { year: 2026, month: 3, day: 16, hour: 0, minute: 1, second: 0 });
+        let clock = clock.unwrap();
+        assert_eq!(local_from_clock(clock.start), LocalTime { year: 2026, month: 3, day: 16, hour: 0, minute: 1, second: 0 });
+        assert_eq!(clock.time_reference_lead, Some(0.0));
     }
 
     #[test]
-    fn origination_time_far_from_the_recording_gives_one_note() {
+    fn time_reference_far_from_the_first_sample_gives_one_note() {
         let chime = chime_with_payload(&[0x40, 0x02, 0xDF, 0x6A, 0x94, 0x02]);
-        // The recording is from 18:33:10 to 18:33:40, and OriginationTime is 300 s later.
-        let time_reference = (18 * 3600 + 33 * 60 + 10) as u64 * RATE as u64;
-        let fields = bext(b"2026-10-26", b"18:38:40", time_reference);
-        let mut report = EventReport::new(RATE, 1, Some(&fields), 30 * RATE as u64);
-        let mut output = Vec::new();
-        report.write_event(&mut output, 0, Event::Chime(chime)).unwrap();
-        report.write_event(&mut output, 0, Event::Chime(chime)).unwrap();
-        let text = String::from_utf8(output).unwrap();
-        assert_eq!(text.matches("X8 clock at that moment").count(), 2, "{text}");
-        assert_eq!(
-            text.matches(
-                "OriginationTime in the bext chunk is 300 s outside the time span of this recording, \
-                 so the X8 clock reading may be wrong."
-            )
-            .count(),
-            1,
-            "{text}"
-        );
+        let report_text = |time: &[u8; 8]| {
+            // TimeReference is 18:33:10 and the recording lasts 30 s.
+            let time_reference = (18 * 3600 + 33 * 60 + 10) as u64 * RATE as u64;
+            let fields = bext(b"2026-10-26", time, time_reference);
+            let mut report = EventReport::new(RATE, 1, Some(&fields), 30 * RATE as u64);
+            let mut output = Vec::new();
+            report.write_event(&mut output, 0, Event::Chime(chime)).unwrap();
+            report.write_event(&mut output, 0, Event::Chime(chime)).unwrap();
+            String::from_utf8(output).unwrap()
+        };
 
-        // A gap of 4 s is ordinary.
-        let fields = bext(b"2026-10-26", b"18:33:44", time_reference);
-        let mut report = EventReport::new(RATE, 1, Some(&fields), 30 * RATE as u64);
-        let mut output = Vec::new();
-        report.write_event(&mut output, 0, Event::Chime(chime)).unwrap();
-        assert!(!String::from_utf8(output).unwrap().contains("OriginationTime"));
+        // Ends at 18:38:40, so the first sample is at 18:38:10, 300 s after TimeReference.
+        let text = report_text(b"18:38:40");
+        assert_eq!(text.matches("X8 clock at that moment").count(), 2, "{text}");
+        let note = "TimeReference in the bext chunk is 300 s before the first sample. If the take was paused, \
+                    the X8 clock readings for chimes before the pause are up to 300 s too late.";
+        assert_eq!(text.matches(note).count(), 1, "{text}");
+
+        // Ends at 18:33:35, so the first sample is at 18:33:05, before TimeReference.
+        let text = report_text(b"18:33:35");
+        let note = "TimeReference in the bext chunk is 5 s after the first sample that OriginationTime gives, \
+                    so the X8 clock reading may be wrong.";
+        assert_eq!(text.matches(note).count(), 1, "{text}");
+
+        // Ends at 18:33:44: TimeReference is 4 s before the first sample, which is ordinary.
+        assert!(!report_text(b"18:33:44").contains("TimeReference"));
     }
 
     #[test]
@@ -1068,7 +1076,7 @@ mod tests {
 
     #[test]
     fn event_report_writes_the_clock_line_after_each_chime() {
-        let fields = bext(b"2026-10-26", b"09:00:40", 6_223_101_696);
+        let fields = bext(b"2026-10-26", b"09:00:43", 6_223_101_696);
         let mut report = EventReport::new(RATE, 2, Some(&fields), 192_000 * 30);
         let chime = chime_with_payload(&[0x40, 0x02, 0xDF, 0x6A, 0x94, 0x02]);
 
@@ -1080,22 +1088,25 @@ mod tests {
         let lines: Vec<&str> = text.lines().collect();
         assert_eq!(lines.len(), 4, "{text}");
         assert!(lines[0].starts_with("Channel 2 at 3.512 s: phone time "), "{text}");
-        // TimeReference 09:00:11.99 is hours behind the phone's 18:33:20 local time.
-        assert!(lines[1].starts_with("X8 clock at that moment: 2026-10-26 09:00:16. The X8 clock is "), "{text}");
+        // The first sample is at 09:00:13 (09:00:43 less 30 s), so the chime at 3.512 s is at
+        // 09:00:16.512: hours behind the phone's 18:33:20 local time.
+        assert!(lines[1].starts_with("X8 clock at that moment: 2026-10-26 09:00:17. The X8 clock is "), "{text}");
         assert!(lines[1].ends_with(" behind the phone, accurate to about 1 s."), "{text}");
         assert_eq!(report.chimes_read, 2);
         assert_eq!(report.event_seen, [false, true]);
     }
 
     #[test]
-    fn event_report_says_when_time_reference_is_0() {
+    fn event_report_needs_no_time_reference() {
         let chime = chime_with_payload(&[0x40, 0x02, 0xDF, 0x6A, 0x94, 0x02]);
         let fields = bext(b"2026-10-26", b"00:00:30", 0);
         let mut report = EventReport::new(RATE, 1, Some(&fields), 192_000);
         let mut output = Vec::new();
         report.write_event(&mut output, 0, Event::Chime(chime)).unwrap();
         let text = String::from_utf8(output).unwrap();
-        assert!(text.contains("The bext chunk's TimeReference is 0, so the X8 clock reading is unknown."), "{text}");
+        // 00:00:30 less 1 s, plus 3.512 s.
+        assert!(text.contains("X8 clock at that moment: 2026-10-26 00:00:33."), "{text}");
+        assert_eq!(text.lines().count(), 2, "{text}");
     }
 
     #[test]
@@ -1157,9 +1168,9 @@ mod tests {
         let clock = clock_at_sample_zero(&fields, RATE, frames).unwrap();
         assert_eq!(
             local_from_clock(clock.start),
-            LocalTime { year: 2026, month: 3, day: 15, hour: 9, minute: 0, second: 11 }
+            LocalTime { year: 2026, month: 3, day: 15, hour: 9, minute: 0, second: 12 }
         );
-        assert!(clock.origination_gap < ORIGINATION_GAP_LIMIT_S, "{clock:?}");
+        assert!(describe_time_reference_lead(clock.time_reference_lead.unwrap()).is_none(), "{clock:?}");
     }
 
     #[test]

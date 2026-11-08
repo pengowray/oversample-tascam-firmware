@@ -98,6 +98,7 @@ cargo run --release -p chime --example decode_wav -- FILE.wav
 ```
 
 It reports the time in the chime, the signal level and SNR, and how far the X8's clock
-differs from the phone's, using the WAV's `bext` chunk. That chunk gives the X8's clock only
-to about 1 s, so the difference is in whole seconds. It uses the same decoder as the firmware,
+differs from the phone's. The X8's clock at the start of the file is the time in the WAV's
+`bext` chunk, which the X8 writes as it closes the file, less the file's length. That is
+accurate to about 1 s, so the difference is in whole seconds. It uses the same decoder as the firmware,
 the `chime` crate.

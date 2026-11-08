@@ -2367,9 +2367,26 @@ size - 5,548), seeks to 0 and writes it. Then it calls the file size function `F
 count (`FUN_80dd0478`) and the table of file dates (`FUN_80dbd002`). After that come the `.bin` project file and the closing of
 each file. MP3 files go through `FUN_80db2106`, and overdub closes its files by another path.
 
-**The times in `bext`.** OriginationDate and OriginationTime are read from the clock when the header is built, so they hold the
-end of the take, to the second. TimeReference holds an earlier time: in takes 0090 to 0092 of 2026-11-06 it is 3 to 10 s before
-the end time less the length. That fits the first REC press (record standby), which was not checked.
+**The times in `bext`.** OriginationDate and OriginationTime are read from the clock when `FUN_80db216c` rebuilds the header,
+at the end of a take or at a split, so they hold the end of the file, to the second. TimeReference is set once a take by
+`FUN_80df59c8(rate, recorder + 0x62c)`, which the writer's state machine `FUN_80db81c0` calls in its state 7: the clock's whole
+seconds times the rate, less 2,304 samples, less the pre-record frames at recorder + 0x62c. At a split, `FUN_80df5b2a` adds the
+old file's frames, so each continuation file inherits the first file's TimeReference error.
+
+TimeReference is set before the first sample, so the end time less the length is the better start time. The evidence is the
+split take 260306_0061 to 0063 (`to-2026-03-10`, about 1.6 hours). The end time less TimeReference plus the length is 4.04 s,
+4.06 s and 4.46 s in the three files. A clock drift would grow over each 2,792 s file; this stays the same, so it is a fixed
+offset that began when the take started. The end time less the length runs on from one file to the next to within 0.03 s and
+0.4 s. Over 95 X8 takes on the archive drive, that gap is -0.58 s to 1,076 s, with a median of 0.6 s: 71 within 1 s, 91 within
+5 s, and 9, 12, 24 and 1,076 s in the others. It varies from take to take, as time spent in record standby would; that cause
+was not checked on a unit, and a pause during a take would add to it as well. None is below -0.6 s, which is as far as the
+rounding of both fields to whole seconds can take it. The end time less the length is accurate to about 1 s: OriginationTime is
+whole seconds, and the closing delay is 0 to about 0.4 s.
+
+GUANO's `Timestamp` (`crates/x8-patch/src/take_guano.rs`) and the chime tool `decode_wav` both use the end time less the length,
+so they agree. `decode_wav` used TimeReference until 2026-11-08; it now uses TimeReference only to add a note when TimeReference
+is more than 1.5 s after the start (OriginationTime may then be wrong) or more than 30 s before it (a pause would make clock
+readings before the pause too late).
 
 **Why not in the header.** The mark writer `FUN_80df19c8` rewrites `cue ` and `LIST` in place. It runs at the end of a take and
 when marks change during playback (`FUN_80df1d0c`, `FUN_80df187a`). It finds the chunks with `FUN_80df18de` and returns -1
