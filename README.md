@@ -58,7 +58,7 @@ update file. To publish a build on the patcher page, make its data with
 `tools/make_patch_data.py` (see the file's header) and point `site/patches/latest.json` at it.
 
 The AudioMoth chime decoder is the `chime` crate in the Oversample repository, which Cargo fetches
-from GitHub. To build against a local checkout of Oversample instead, add a `.cargo/config.toml`
+from GitHub at the commit named in `Cargo.toml`. To build against a local checkout of Oversample instead, add a `.cargo/config.toml`
 outside this repository, for example in its parent folder:
 
 ```toml
