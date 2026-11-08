@@ -238,3 +238,8 @@ pub const COMMAND_READ_CLOCK: i32 = 75;
 pub const COMMAND_SET_CLOCK: i32 = 76;
 /// Where command 75 leaves the clock record it read (see `clock_record`).
 pub const CLOCK_RECORD: *const [u8; 10] = 0x81e9_adc8 as *const [u8; 10];
+/// `FUN_80de7366(name, mode)` opens a file in the folder the recorder uses and returns its handle,
+/// or 0; `FUN_80de744c(file)` closes one (Thumb addresses). The stock code opens files with the
+/// modes "w+", "r+" and "r".
+pub const FILE_OPEN: usize = 0x80de_7367;
+pub const FILE_CLOSE: usize = 0x80de_744d;

@@ -21,6 +21,9 @@ const _: () = assert!(HEADER_READ <= CHUNK_AT && CHUNK_AT + CHUNK_BYTES <= stock
 /// Free stack the hook requires before it adds a chunk. It uses about 0.7 KB (its frame and the
 /// text formatting); the rest is a margin.
 const STACK_NEEDED: usize = 2048;
+/// Free stack the location log needs: opening a file goes through the C library and the file
+/// system, whose use of the stack has not been measured. The end of a take, on task 4, has 17 KB.
+const LOG_STACK_NEEDED: usize = 8192;
 
 /// Replaces `FUN_80db216c`'s call to the file size function, straight after it has rewritten a WAV
 /// file's header from the file's size, at the end of a take and when a take splits. The file is
@@ -36,6 +39,10 @@ pub(super) unsafe extern "C" fn guano_hook(file: usize, size_out: usize, c: usiz
     {
         // SAFETY: the open file the stock code has just written the header of, from its own task.
         unsafe { add_guano(file) };
+    }
+    if system_mode() <= 1 && stack_left().is_some_and(|left| left >= LOG_STACK_NEEDED) {
+        // SAFETY: the recorder's task, closing a take's files.
+        unsafe { super::location::write_log() };
     }
     // SAFETY: the stock function this call replaced, with its arguments.
     let size: Handler = unsafe { core::mem::transmute(stock::FILE_SIZE) };
@@ -68,6 +75,7 @@ unsafe fn add_guano(file: usize) -> Option<()> {
         file_name: path(file).and_then(guano::file_name),
         phone_now,
         utc_offset_minutes,
+        location_e6: super::location::for_take(),
     };
     // SAFETY: as above; CHUNK_AT + CHUNK_BYTES is within the buffer and after the header.
     let out = unsafe { slice::from_raw_parts_mut(stock::HEADER_BUFFER.add(CHUNK_AT), CHUNK_BYTES) };

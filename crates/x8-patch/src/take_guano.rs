@@ -20,6 +20,39 @@ pub struct Recorder<'a> {
     /// The UTC offset of the time the start is in, in minutes, when known: the phone's zone, once
     /// the clock keeps the phone's time.
     pub utc_offset_minutes: Option<i16>,
+    /// The phone's location from a chime, in millionths of a degree (latitude, longitude), when
+    /// recent enough for this take.
+    pub location_e6: Option<(i32, i32)>,
+}
+
+/// Millionths of a degree as decimal degrees, with integer arithmetic: `-36.123456`.
+pub struct Degrees(pub i32);
+
+impl fmt::Display for Degrees {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let sign = if self.0 < 0 { "-" } else { "" };
+        let size = self.0.unsigned_abs();
+        write!(f, "{sign}{}.{:06}", size / 1_000_000, size % 1_000_000)
+    }
+}
+
+/// One line of the location log: the phone's local time with its UTC offset, latitude and
+/// longitude, comma-separated, as a spreadsheet reads it.
+pub struct LogLine {
+    pub local_seconds: i64,
+    pub utc_offset_minutes: i16,
+    pub location_e6: (i32, i32),
+}
+
+/// The location log's first line, written when the file is new.
+pub const LOG_HEADER: &str = "time,latitude,longitude\n";
+
+impl fmt::Display for LogLine {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let Some(time) = DateTime::from_seconds(self.local_seconds) else { return Err(fmt::Error) };
+        let (latitude, longitude) = self.location_e6;
+        writeln!(f, "{},{},{}", Timestamp(time, Some(self.utc_offset_minutes)), Degrees(latitude), Degrees(longitude))
+    }
 }
 
 /// A start time with its UTC offset, as ISO 8601 takes it: `2026-11-08T21:30:49+11:00`.
@@ -66,6 +99,9 @@ pub fn write_chunk(header: &Header, recorder: &Recorder, out: &mut [u8]) -> Opti
     if let Some(name) = recorder.file_name {
         chunk.field("Original Filename", name);
     }
+    if let Some((latitude, longitude)) = recorder.location_e6 {
+        chunk.field("Loc Position", format_args!("{} {}", Degrees(latitude), Degrees(longitude)));
+    }
     chunk.finish()
 }
 
@@ -75,7 +111,7 @@ mod tests {
     use guano::DateTime;
     use std::string::String;
 
-    const RECORDER: Recorder = Recorder { firmware: "V2.03", patch_build: 242, file_name: Some("261106_0090_3-4.wav"), phone_now: None, utc_offset_minutes: None };
+    const RECORDER: Recorder = Recorder { firmware: "V2.03", patch_build: 242, file_name: Some("261106_0090_3-4.wav"), phone_now: None, utc_offset_minutes: None, location_e6: None };
 
     /// A header as the X8 writes one, 5548 bytes before the audio.
     fn header(data_size: u32, block_align: u16, date: &[u8], time: &[u8]) -> Header {
@@ -128,6 +164,15 @@ mod tests {
     }
 
     #[test]
+    fn a_recent_location_goes_in_and_log_lines_read_as_csv() {
+        let recorder = Recorder { location_e6: Some((-36_123_456, 146_000_007)), ..RECORDER };
+        let t = text(&header(192_000 * 8, 8, b"2026-11-06", b"19:08:08"), &recorder);
+        assert!(t.contains("Loc Position: -36.123456 146.000007\n"), "{t}");
+        let line = LogLine { local_seconds: 1_794_173_449, utc_offset_minutes: 660, location_e6: (-500_000, 0) };
+        assert_eq!(std::format!("{line}"), "2026-11-08T21:30:49+11:00,-0.500000,0.000000\n");
+    }
+
+    #[test]
     fn the_start_can_fall_on_the_day_before() {
         let t = text(&header(120 * 192_000 * 8, 8, b"2024-03-01", b"00:00:30"), &RECORDER);
         assert!(t.contains("Timestamp: 2024-02-29T23:58:30\n"), "{t}");
@@ -153,7 +198,7 @@ mod tests {
 
     #[test]
     fn without_a_build_or_name() {
-        let recorder = Recorder { firmware: "V2.03", patch_build: 0, file_name: None, phone_now: None, utc_offset_minutes: None };
+        let recorder = Recorder { firmware: "V2.03", patch_build: 0, file_name: None, phone_now: None, utc_offset_minutes: None, location_e6: None };
         let t = text(&header(192_000 * 8, 8, b"2026-11-06", b"19:08:08"), &recorder);
         assert!(t.contains("Firmware Version: V2.03 with bat patch\n"));
         assert!(!t.contains("Original Filename"));
@@ -181,7 +226,7 @@ mod tests {
         assert_eq!(header.data_end(), Some(size));
         let name = std::path::Path::new(&input).file_name().unwrap().to_str().unwrap();
         let path = std::format!("{name}\0");
-        let recorder = Recorder { firmware: "V2.03", patch_build: 242, file_name: guano::file_name(path.as_bytes()), phone_now: None, utc_offset_minutes: None };
+        let recorder = Recorder { firmware: "V2.03", patch_build: 242, file_name: guano::file_name(path.as_bytes()), phone_now: None, utc_offset_minutes: None, location_e6: None };
         let mut out = [0u8; 0x400];
         let added = write_chunk(&header, &recorder, &mut out).unwrap();
         file.seek(SeekFrom::Start(u64::from(size))).unwrap();

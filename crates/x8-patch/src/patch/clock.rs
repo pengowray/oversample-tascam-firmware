@@ -155,6 +155,7 @@ pub(super) fn run_clock(app: &mut BatApp<'static>) {
     WAS_STOPPED.store(stopped, Relaxed);
     if let Some(time) = app.take_phone_time() {
         keep_phone_time(&time, now);
+        super::location::keep(&time);
         if time.set_clock {
             SET_WANTED.store(true, Relaxed);
             app.set_clock_state(if stopped { ClockState::Setting } else { ClockState::AfterTake });

@@ -13,6 +13,8 @@ mod inputs;
 mod itcm;
 /// Sets the X8's clock from the phone's chimes, and keeps the phone's time for GUANO metadata.
 mod clock;
+/// Keeps the phone's location from chimes for GUANO metadata, and logs it to the card.
+mod location;
 /// Adds GUANO metadata to the WAV files of takes from a bat tile as the stock recorder closes them.
 mod guano_file;
 /// The key and touch hooks, and passing their events on to the app.
