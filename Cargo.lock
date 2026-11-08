@@ -111,6 +111,7 @@ checksum = "4e7648175b45a9a48536d676f68d918270699102aa8dab5496df06904c914600"
 [[package]]
 name = "chime"
 version = "0.1.0"
+source = "git+https://github.com/pengowray/oversample?rev=b9517f47f18987982c302da478f6eaf54a555470#b9517f47f18987982c302da478f6eaf54a555470"
 dependencies = [
  "libm",
 ]

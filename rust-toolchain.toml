@@ -1,0 +1,5 @@
+# The published patch files were built with this version. Another version gives a working patch
+# with a different SHA-256.
+[toolchain]
+channel = "1.99.1"
+targets = ["thumbv7em-none-eabihf", "wasm32-unknown-unknown"]

@@ -2332,7 +2332,7 @@ How the parts work is in [Setting the clock, locations and pauses](#setting-the-
 
 ## Step 26 test file: version 1 of the phone remote format (built 2026-11-08, not yet installed)
 
-`work/patch25/#PortaX8_0249.203` (B249, SHA-256 `273f4e17…c4763b00`). Includes steps 11 to 25. Install this file in place of
+`work/patch25/#PortaX8_0249.203` (B249, SHA-256 `8ba7b5a3…dcae50a1`). Includes steps 11 to 25. Install this file in place of
 B241 or an earlier build. All the checks in `tools/x8patch.py` pass on this file. No new stock hook site (header version 18).
 
 - **New command format.** A remote chime's deployment ID is now `BATX`, a format version (1), a command (1 start, 2 stop) and
@@ -2342,12 +2342,14 @@ B241 or an earlier build. All the checks in `tools/x8patch.py` pass on this file
 - **Unknown commands.** A chime whose deployment ID starts with `BATX` but has a version, command or argument that B249 does not
   know plays one low note and shows `Unknown phone command.` and `Update the bat firmware.` The Record tab's phone remote panel
   shows `Last: Unknown command`. The chime's time and location are still used.
+- **Repeatable builds.** Built with `tools/build.sh`, Rust 1.99.1 (now set in `rust-toolchain.toml`) and chime from the
+  pinned Oversample commit, not the local checkout. A clean clone in another folder makes the same file, byte for byte.
 
 | Item | B248 | B249 | Limit |
 |---|---|---|---|
 | ITCM | 84.3 KB | 84.2 KB | 89.2 KB |
 | DTCM | 141.7 KB | 141.7 KB | 152.8 KB |
-| `.noinit`, the end of the patch's memory | ends at 0x818f39e0 | ends at 0x818f3c30 | 0x81900000 |
+| `.noinit`, the end of the patch's memory | ends at 0x818f39e0 | ends at 0x818f3cb0 | 0x81900000 |
 
 **What to check.** Everything in Step 25's list, then:
 

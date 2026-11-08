@@ -44,27 +44,34 @@ Screens from the emulator are in [docs/screens/](docs/screens/).
 
 ## Building from source
 
-You need Rust with the `thumbv7em-none-eabihf` target, Python 3, and TASCAM's V2.03 update file
-(`#PortaX8_0217.203`, from `portacapture_x8_fw_v203.zip` on TASCAM's download page).
+You need Python 3, TASCAM's V2.03 update file (`#PortaX8_0217.203`, from
+`portacapture_x8_fw_v203.zip` on TASCAM's download page), and rustup. `rust-toolchain.toml` makes
+rustup use Rust 1.99.1 with the `thumbv7em-none-eabihf` target.
 
 ```bash
-rustup target add thumbv7em-none-eabihf
-cargo build -p x8-patch --release --target thumbv7em-none-eabihf
+tools/build.sh
 python3 tools/x8patch.py "#PortaX8_0217.203" target/thumbv7em-none-eabihf/release/x8-patch "#PortaX8_0249.203" --build 249
 ```
+
+`tools/build.sh` runs `cargo build` for the X8 and removes Cargo's home folder from the source
+paths stored in the firmware. With the same source and Rust version, the update file should have
+the same SHA-256 as the one the patcher page makes.
 
 `tools/x8patch.py` checks the stock code at every place it changes, then packs and checks the
 update file. To publish a build on the patcher page, make its data with
 `tools/make_patch_data.py` (see the file's header) and point `site/patches/latest.json` at it.
 
 The AudioMoth chime decoder is the `chime` crate in the Oversample repository, which Cargo fetches
-from GitHub at the commit named in `Cargo.toml`. To build against a local checkout of Oversample instead, add a `.cargo/config.toml`
-outside this repository, for example in its parent folder:
+from GitHub at the commit named in `Cargo.toml`. To try changes to it before committing them in
+Oversample, add a `.cargo/config.toml` outside this repository, for example in its parent folder:
 
 ```toml
 [patch."https://github.com/pengowray/oversample"]
 chime = { path = "/path/to/oversample/chime" }
 ```
+
+Remove it before building a file to publish. Cargo treats a local dependency differently from one
+fetched from GitHub, so the update file comes out different even when the code is the same.
 
 The tests run on the computer: `cargo test --workspace`.
 
