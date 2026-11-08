@@ -41,23 +41,22 @@ fn app_with_storage<'a>(storage: &'a mut [f32], buffers: &'a mut Buffers) -> Bat
 }
 
 #[test]
-fn it_opens_from_tools_and_goes_back() {
+fn it_opens_from_the_tests_page_and_goes_back() {
     let mut storage = vec![0.0f32; SECOND];
     let mut buffers = Box::new(Buffers::new());
     let mut app = app_with_storage(&mut storage, &mut buffers);
     app.open_settings();
-    let tools = layout::TOOLS.center();
-    app.touch(tools.x, tools.y);
-    assert_eq!(app.screen(), Screen::Tools);
-    let cpu = layout::TOOLS_CPU_TEST.center();
+    let pages = app.settings_pages().count();
+    let tests = layout::tab(pages - 1, pages).center();
+    app.touch(tests.x, tests.y);
+    assert_eq!(app.settings_page(), crate::SettingsPage::Tests);
+    let cpu = layout::TESTS_CPU_TEST.center();
     app.touch(cpu.x, cpu.y);
     assert_eq!(app.screen(), Screen::CpuTest);
     let back = layout::CPU_TEST_BACK.center();
     app.touch(back.x, back.y);
-    assert_eq!(app.screen(), Screen::Tools);
-    let back = layout::BACK.center();
-    app.touch(back.x, back.y);
     assert_eq!(app.screen(), Screen::Settings);
+    assert_eq!(app.settings_page(), crate::SettingsPage::Tests);
 }
 
 #[test]

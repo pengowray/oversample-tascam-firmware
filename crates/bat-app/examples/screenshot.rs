@@ -4,7 +4,7 @@
 //!
 //! SECONDS: how much of the file to play first (default: all of it).
 //! MODE: het, comb, fd, te, pitch, settings for the settings screen, chime for the chime
-//! test, which listens to the file, tools for the tools screen, cputest for the CPU test's
+//! test, which listens to the file, tools for the settings screen's Tests page (PAGE=record for Record), cputest for the CPU test's
 //! screen (CPU_ROWS=N runs N rows first, with made-up figures, and CPU_STOP=1 stops it early)
 //! or cpurun for the main screen during a CPU test (default het). SCALE: 1 to 4 (default 2).
 //! OFFSET, RANGE (dB) and PER_ROW (0 or 1): waterfall contrast, as
@@ -26,7 +26,7 @@
 //! on; REC PAUSE off; a settings page open). `DEBUG=1` offers the debug switch and draws the X8 patch's
 //! longest debug lines over the last-call panel, to check that they fit.
 //! `AUTO=on` or `AUTO=bats` sets Auto volume, for the settings screen.
-//! `GUANO=off` turns the GUANO metadata switch off, for the tools screen.
+//! `GUANO=off` turns the GUANO metadata switch off, for the Record page.
 //! `REC_READY=off` shows MANUAL's MASTER with REC READY off, for the settings screen's MIX file row.
 //! `TAKE_MIX=on` or `TAKE_MIX=off` says whether the take being recorded has a MIX file, for the CPU
 //! test.
@@ -201,13 +201,20 @@ fn main() {
     }
 
     if args.get(4).map(String::as_str) == Some("settings") {
-        app.open_settings();
+        app.open_settings_page(match std::env::var("PAGE").as_deref() {
+            Ok("record") => bat_app::SettingsPage::Record,
+            Ok("tests") => bat_app::SettingsPage::Tests,
+            _ => bat_app::SettingsPage::Listen,
+        });
     }
     match args.get(4).map(String::as_str) {
         Some("tools") => {
             app.set_remote_available(true);
             app.set_remote_on(true);
-            app.open_tools();
+            app.open_settings_page(match std::env::var("PAGE").as_deref() {
+                Ok("record") => bat_app::SettingsPage::Record,
+                _ => bat_app::SettingsPage::Tests,
+            });
         }
         Some("cputest") => {
             app.open_cpu_test();

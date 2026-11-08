@@ -3,7 +3,7 @@
 use std::boxed::Box;
 
 use super::*;
-use crate::screen::tools_lines;
+use crate::screen::pages_lines;
 use crate::{RemoteCommand, RemoteResult, Screen};
 
 #[path = "../../../chime/tests/support/gen.rs"]
@@ -186,8 +186,8 @@ fn the_chime_test_takes_the_decoders_and_the_remote_rebuilds_them() {
     assert_eq!(run(&mut app, &press(START, UNIX, 0.1, 1e-4)), [RemoteCommand::Start]);
     app.open_chime_test();
     run(&mut app, &press(START, UNIX + 10, 0.1, 1e-4));
-    app.open_tools();
-    assert_eq!(app.screen(), Screen::Tools);
+    app.open_settings_page(crate::SettingsPage::Record);
+    assert_eq!(app.screen(), Screen::Settings);
     assert_eq!(run(&mut app, &press(STOP, UNIX + 20, 0.1, 1e-4)), [RemoteCommand::Stop]);
 }
 
@@ -286,7 +286,7 @@ fn if_the_first_chime_fails_the_second_tone_keeps_the_decoders_running() {
 
 #[test]
 fn the_screen_text_fits() {
-    for (line, width, room) in tools_lines() {
+    for (line, width, room) in pages_lines() {
         assert!(width <= room, "{line}: {width} px in {room} px");
     }
 }

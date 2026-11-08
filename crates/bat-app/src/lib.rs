@@ -171,13 +171,34 @@ pub enum Screen {
     Settings,
     /// Shows what the chime decoders read, while they listen: see [`chime_test`].
     ChimeTest,
-    /// The phone remote's switch, and the way to the two test screens.
-    Tools,
     /// The CPU test's results: see [`cpu_test`]. The test itself runs on the main screen.
     CpuTest,
 }
 
-/// Rows of the settings screen, top to bottom.
+/// The pages of the settings screen, in the order of their tabs.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum SettingsPage {
+    /// What changes the sound in the headphones, and the sounds to mark.
+    Listen,
+    /// What a take's files get, and the phone remote.
+    Record,
+    /// The debug figures, the chime test and the CPU test.
+    Tests,
+}
+
+impl SettingsPage {
+    pub const ALL: [SettingsPage; 3] = [SettingsPage::Listen, SettingsPage::Record, SettingsPage::Tests];
+
+    pub fn label(self) -> &'static str {
+        match self {
+            SettingsPage::Listen => "Listen",
+            SettingsPage::Record => "Record",
+            SettingsPage::Tests => "Tests",
+        }
+    }
+}
+
+/// Settings that the wheel can change, page by page, top to bottom.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum Setting {
     /// Sounds peaking below this are not counted as bat calls.
@@ -209,8 +230,16 @@ impl Setting {
         Setting::Mark(CallKind::Audible),
         Setting::Mark(CallKind::Broadband),
     ];
-    /// Settings changed with - and +; the rest are rows with a control at the right.
-    pub const STEPPED: usize = 2;
+    /// The sounds to mark, top to bottom.
+    pub const MARKS: [CallKind; 4] = [CallKind::Bat, CallKind::Tone, CallKind::Audible, CallKind::Broadband];
+
+    pub fn page(self) -> SettingsPage {
+        match self {
+            Setting::MixFile => SettingsPage::Record,
+            Setting::DebugInfo => SettingsPage::Tests,
+            _ => SettingsPage::Listen,
+        }
+    }
 }
 
 /// Kinds of detection marked when the app starts: bat calls only.
@@ -369,6 +398,7 @@ pub struct BatApp<'a> {
     mode: Mode,
     source: MonitorSource,
     screen: Screen,
+    settings_page: SettingsPage,
     /// Selected row on the settings screen; the wheel changes it.
     setting: usize,
     min_bat_index: usize,
@@ -557,6 +587,7 @@ impl<'a> BatApp<'a> {
             field!((*this).mode).write(Mode::Het);
             field!((*this).source).write(MonitorSource::Both);
             field!((*this).screen).write(Screen::Main);
+            field!((*this).settings_page).write(SettingsPage::Listen);
             field!((*this).setting).write(0);
             field!((*this).min_bat_index).write(MIN_BAT_DEFAULT);
             field!((*this).samples).write(0);
@@ -728,9 +759,41 @@ impl<'a> BatApp<'a> {
         self.screen
     }
 
-    /// Show the settings screen, as the menu button does.
+    /// Show the settings screen, as the menu button does, on the page it last showed.
     pub fn open_settings(&mut self) {
         self.screen = Screen::Settings;
+    }
+
+    /// Show a page of the settings screen, as its tab does. The wheel then changes the page's first
+    /// setting that this host shows, if it has one.
+    pub fn open_settings_page(&mut self, page: SettingsPage) {
+        self.screen = Screen::Settings;
+        if self.settings_page() != page {
+            self.settings_page = page;
+            if let Some(i) = (0..Setting::ALL.len()).find(|&i| Setting::ALL[i].page() == page && self.setting_shown(i)) {
+                self.setting = i;
+            }
+        }
+    }
+
+    /// The page shown: the one last picked, or Listen if this host no longer offers it.
+    pub fn settings_page(&self) -> SettingsPage {
+        if self.settings_pages().any(|page| page == self.settings_page) { self.settings_page } else { SettingsPage::Listen }
+    }
+
+    /// The pages this host has anything for: Record is left out when it offers none of the MIX
+    /// file, GUANO metadata and the phone remote.
+    pub fn settings_pages(&self) -> impl Iterator<Item = SettingsPage> + '_ {
+        SettingsPage::ALL.into_iter().filter(|&page| {
+            page != SettingsPage::Record || self.mix_file_available || self.guano_available || self.remote.available
+        })
+    }
+
+    /// The settings on the page shown that this host shows, top to bottom.
+    fn page_settings(&self) -> impl Iterator<Item = Setting> + '_ {
+        (0..Setting::ALL.len())
+            .filter(|&i| Setting::ALL[i].page() == self.settings_page() && self.setting_shown(i))
+            .map(|i| Setting::ALL[i])
     }
 
     /// Show the chime test, which starts listening with nothing read.
@@ -738,11 +801,6 @@ impl<'a> BatApp<'a> {
         self.screen = Screen::ChimeTest;
         self.remote.decoders_taken();
         self.chime.restart(&mut self.bufs.chime, self.sample_rate as u32);
-    }
-
-    /// Show the tools screen.
-    pub fn open_tools(&mut self) {
-        self.screen = Screen::Tools;
     }
 
     /// Show the CPU test's screen, which offers the test and shows the latest results.
@@ -1238,10 +1296,13 @@ impl<'a> BatApp<'a> {
     /// current mode's setting.
     pub fn wheel(&mut self, steps: i32) {
         if self.screen == Screen::Settings {
-            self.change_setting(self.selected_setting(), steps);
+            // The wheel changes the selected setting only while its page is shown.
+            if self.selected_setting().page() == self.settings_page() && self.setting_shown(self.setting) {
+                self.change_setting(self.selected_setting(), steps);
+            }
             return;
         }
-        if matches!(self.screen, Screen::ChimeTest | Screen::Tools | Screen::CpuTest) || self.cpu_test.running {
+        if matches!(self.screen, Screen::ChimeTest | Screen::CpuTest) || self.cpu_test.running {
             return;
         }
         let step = |i: usize, len: usize| (i as i32 + steps).clamp(0, len as i32 - 1) as usize;
@@ -1267,27 +1328,13 @@ impl<'a> BatApp<'a> {
         match self.screen {
             Screen::ChimeTest => {
                 if layout::BACK.contains(p) {
-                    self.screen = Screen::Tools;
-                }
-                return;
-            }
-            Screen::Tools => {
-                if layout::BACK.contains(p) {
                     self.screen = Screen::Settings;
-                } else if layout::TOOLS_CHIME_TEST.contains(p) {
-                    self.open_chime_test();
-                } else if layout::TOOLS_CPU_TEST.contains(p) && self.debug_available {
-                    self.open_cpu_test();
-                } else if layout::TOOLS_REMOTE_ROW.contains(p) && self.remote.available {
-                    self.remote.on = !self.remote.on;
-                } else if layout::TOOLS_GUANO_ROW.contains(p) && self.guano_available {
-                    self.guano = !self.guano;
                 }
                 return;
             }
             Screen::CpuTest => {
                 if layout::CPU_TEST_BACK.contains(p) {
-                    self.screen = Screen::Tools;
+                    self.screen = Screen::Settings;
                 } else if layout::CPU_TEST_START.contains(p) && self.inputs[0].is_some() && self.rate_warning.is_none() {
                     self.start_cpu_test();
                 } else if layout::CPU_TEST_CALLS.contains(p) {
@@ -1303,31 +1350,7 @@ impl<'a> BatApp<'a> {
             _ => {}
         }
         if self.screen == Screen::Settings {
-            match layout::settings_hit(x, y, Setting::STEPPED, Setting::ALL.len()) {
-                Some(layout::SettingsHit::Row(i)) => self.setting = i,
-                Some(layout::SettingsHit::Switch(i)) if !self.setting_shown(i) => {}
-                Some(layout::SettingsHit::Switch(i)) => {
-                    self.setting = i;
-                    match Setting::ALL[i] {
-                        Setting::Mark(kind) => self.set_marked(kind, !self.is_marked(kind)),
-                        Setting::AutoLevel => self.level.set_volume(layout::auto_volume_at(x, i - Setting::STEPPED)),
-                        Setting::DebugInfo => self.debug_info = !self.debug_info,
-                        Setting::MixFile if self.manual_mix_file => self.mix_file = !self.mix_file,
-                        _ => {}
-                    }
-                }
-                Some(layout::SettingsHit::Minus(i)) => {
-                    self.setting = i;
-                    self.change_setting(Setting::ALL[i], -1);
-                }
-                Some(layout::SettingsHit::Plus(i)) => {
-                    self.setting = i;
-                    self.change_setting(Setting::ALL[i], 1);
-                }
-                Some(layout::SettingsHit::Done) => self.screen = Screen::Main,
-                Some(layout::SettingsHit::Tools) => self.open_tools(),
-                None => {}
-            }
+            self.settings_touch(x, y);
             return;
         }
         if layout::MENU.contains(embedded_graphics::prelude::Point::new(x, y)) {
@@ -1336,6 +1359,64 @@ impl<'a> BatApp<'a> {
             self.set_mode(mode);
         } else if let Some(hz) = layout::waterfall_freq_at(x, y) {
             self.tune_to(hz);
+        }
+    }
+
+    fn settings_touch(&mut self, x: i32, y: i32) {
+        let p = embedded_graphics::prelude::Point::new(x, y);
+        let pages = self.settings_pages().count();
+        let tapped = self.settings_pages().enumerate().find_map(|(i, page)| layout::tab(i, pages).contains(p).then_some(page));
+        if let Some(page) = tapped {
+            self.open_settings_page(page);
+            return;
+        }
+        match self.settings_page() {
+            SettingsPage::Record if self.guano_available && layout::panel_switch_row(layout::RECORD_GUANO).contains(p) => {
+                self.guano = !self.guano;
+                return;
+            }
+            SettingsPage::Record if self.remote.available && layout::panel_switch_row(layout::RECORD_REMOTE).contains(p) => {
+                self.remote.on = !self.remote.on;
+                return;
+            }
+            SettingsPage::Tests if layout::TESTS_CHIME_TEST.contains(p) => {
+                self.open_chime_test();
+                return;
+            }
+            SettingsPage::Tests if self.debug_available && layout::TESTS_CPU_TEST.contains(p) => {
+                self.open_cpu_test();
+                return;
+            }
+            _ => {}
+        }
+        let select = |app: &mut Self, setting: Setting| {
+            if let Some(i) = Setting::ALL.iter().position(|&s| s == setting) {
+                app.setting = i;
+            }
+        };
+        let hit = layout::settings_hit(x, y, self.page_settings());
+        match hit {
+            Some(layout::SettingsHit::Row(setting)) => select(self, setting),
+            Some(layout::SettingsHit::Control(setting)) => {
+                select(self, setting);
+                match setting {
+                    Setting::Mark(kind) => self.set_marked(kind, !self.is_marked(kind)),
+                    Setting::AutoLevel => self.level.set_volume(layout::auto_volume_at(x)),
+                    Setting::DebugInfo => self.debug_info = !self.debug_info,
+                    Setting::MixFile if self.manual_mix_file => self.mix_file = !self.mix_file,
+                    _ => {}
+                }
+            }
+            Some(layout::SettingsHit::Minus(setting)) => {
+                select(self, setting);
+                self.change_setting(setting, -1);
+            }
+            Some(layout::SettingsHit::Plus(setting)) => {
+                select(self, setting);
+                self.change_setting(setting, 1);
+            }
+            Some(layout::SettingsHit::Done) => self.screen = Screen::Main,
+            None => {}
         }
     }
 
@@ -1837,13 +1918,6 @@ impl<'a> BatApp<'a> {
         let p = embedded_graphics::prelude::Point::new(x, y);
         match self.screen {
             Screen::ChimeTest => return layout::BACK.contains(p),
-            Screen::Tools => {
-                return layout::BACK.contains(p)
-                    || layout::TOOLS_CHIME_TEST.contains(p)
-                    || (self.debug_available && layout::TOOLS_CPU_TEST.contains(p))
-                    || (self.remote.available && layout::TOOLS_REMOTE_ROW.contains(p))
-                    || (self.guano_available && layout::TOOLS_GUANO_ROW.contains(p));
-            }
             Screen::CpuTest => {
                 return layout::CPU_TEST_BACK.contains(p)
                     || layout::CPU_TEST_START.contains(p)
@@ -1853,15 +1927,28 @@ impl<'a> BatApp<'a> {
             _ => {}
         }
         if self.screen == Screen::Settings {
-            return match layout::settings_hit(x, y, Setting::STEPPED, Setting::ALL.len()) {
-                Some(layout::SettingsHit::Switch(i)) => {
-                    self.setting_shown(i) && (Setting::ALL[i] != Setting::MixFile || self.manual_mix_file)
+            let pages = self.settings_pages().count();
+            if (0..pages).any(|i| layout::tab(i, pages).contains(p)) {
+                return true;
+            }
+            let page_button = match self.settings_page() {
+                SettingsPage::Listen => false,
+                SettingsPage::Record => {
+                    (self.guano_available && layout::panel_switch_row(layout::RECORD_GUANO).contains(p))
+                        || (self.remote.available && layout::panel_switch_row(layout::RECORD_REMOTE).contains(p))
                 }
-                Some(layout::SettingsHit::Minus(i) | layout::SettingsHit::Plus(i)) => {
-                    Setting::ALL[i] != Setting::ListenTo || self.listen_has_choices()
+                SettingsPage::Tests => {
+                    layout::TESTS_CHIME_TEST.contains(p) || (self.debug_available && layout::TESTS_CPU_TEST.contains(p))
                 }
-                hit => hit.is_some(),
             };
+            return page_button
+                || match layout::settings_hit(x, y, self.page_settings()) {
+                    Some(layout::SettingsHit::Control(Setting::MixFile)) => self.manual_mix_file,
+                    Some(layout::SettingsHit::Minus(setting) | layout::SettingsHit::Plus(setting)) => {
+                        setting != Setting::ListenTo || self.listen_has_choices()
+                    }
+                    hit => hit.is_some(),
+                };
         }
         layout::MENU.contains(embedded_graphics::prelude::Point::new(x, y))
             || layout::mode_button_at(x, y, self.modes).is_some()

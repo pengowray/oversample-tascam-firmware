@@ -12,7 +12,7 @@ use u8g2_fonts::{FontRenderer, fonts};
 use crate::fb::Rgb565Buffer;
 use crate::layout::*;
 use crate::palette::*;
-use crate::{
+use crate::{SettingsPage, 
     AutoVolume, BatApp, CallKind, DEFAULT_CUTOFF_HZ, Feed, InputKind, Meter, MixSilence, Mode, MonitorSource, Recorder, Screen, Setting, TeStatus,
     VIEW_HI_HZ, VIEW_LO_HZ, WF_COLUMN_MS,
 };
@@ -21,13 +21,13 @@ use bat_dsp::time_expansion::{DEFAULT_POST_MS, DEFAULT_PRE_MS};
 
 mod chime_screen;
 mod cpu_test_screen;
-mod tools_screen;
+mod pages;
 #[cfg(test)]
 pub(crate) use chime_screen::{CLOCK_Y, COLUMN_X, FAILURE_Y, ROW_H, ROW_Y, chime_text, columns as chime_columns, lines_with_widths as chime_test_lines};
 #[cfg(test)]
 pub(crate) use cpu_test_screen::{COLUMN_GAP as CPU_TEST_COLUMN_GAP, column_contents as cpu_test_columns, lines_with_widths as cpu_test_lines};
 #[cfg(test)]
-pub(crate) use tools_screen::lines_with_widths as tools_lines;
+pub(crate) use pages::lines_with_widths as pages_lines;
 
 /// The width of the chime test's clock, for tests.
 #[cfg(test)]
@@ -94,11 +94,6 @@ pub fn draw(app: &BatApp, fb: Fb) {
         chime_screen::draw(app, fb);
         return;
     }
-    if app.screen == Screen::Tools {
-        title_bar(fb, "TOOLS", false);
-        tools_screen::draw(app, fb);
-        return;
-    }
     if app.screen == Screen::CpuTest {
         title_bar(fb, cpu_test_screen::TITLE, false);
         cpu_test_screen::draw(app, fb);
@@ -116,7 +111,7 @@ pub fn draw(app: &BatApp, fb: Fb) {
     }
     if app.remote_on() {
         let colour = if app.remote.listening(app.samples) { ACCENT } else { TEXT_MUTED };
-        text(fb, &SMALL, tools_screen::TITLE_LABEL, 284, 16, RIGHT, colour);
+        text(fb, &SMALL, pages::TITLE_LABEL, 284, 16, RIGHT, colour);
     }
     status_bar(app, fb);
     meters(app, fb);
@@ -126,7 +121,7 @@ pub fn draw(app: &BatApp, fb: Fb) {
     } else if app.inputs()[0].is_none() {
         no_input_notice(fb);
     } else if let Some(result) = app.remote.result_shown(app.samples) {
-        corner_notice_lines(fb, tools_screen::result_lines(result));
+        corner_notice_lines(fb, pages::result_lines(result));
     } else if let Some(silence) = app.mix_silence() {
         mix_silence_notice(fb, silence);
     }
@@ -653,15 +648,15 @@ fn outline_selected(fb: Fb, r: Rectangle) {
     let _ = RoundedRectangle::new(r, CornerRadii::new(Size::new(6, 6))).into_styled(outline).draw(fb);
 }
 
-/// The Auto volume row, which is switch row `j`: three choices, all in view, with the
-/// current one filled. A switch could not show three states.
-fn auto_volume_row(app: &BatApp, fb: Fb, j: usize) {
-    let r = switch_row(j);
+/// The Auto volume row: three choices, all in view, with the current one filled. A switch could
+/// not show three states.
+fn auto_volume_row(app: &BatApp, fb: Fb) {
+    let r = control_row(Setting::AutoLevel);
     let (x, y) = (r.top_left.x, r.top_left.y);
     let after = text(fb, &BODY, "Auto volume", x + 10, y + 14, LEFT, TEXT);
     text(fb, &SMALL, "headphones", after + 5, y + 14, LEFT, TEXT_MUTED);
     for (i, &volume) in AutoVolume::ALL.iter().enumerate() {
-        let c = auto_volume_choice(i, j);
+        let c = auto_volume_choice(i);
         let selected = volume == app.auto_volume();
         rounded(fb, c, 3, if selected { ACCENT } else { BUTTON });
         text(fb, &BODY, volume.label(), c.center().x, c.top_left.y + 13, CENTER, TEXT);
@@ -678,20 +673,34 @@ fn switch_control(fb: Fb, sw: Rectangle, on: bool) {
     let _ = Circle::with_center(Point::new(knob_x, sw.center().y), h - 6).into_styled(PrimitiveStyle::with_fill(TEXT)).draw(fb);
 }
 
-/// The MIX file row's help when MANUAL's MASTER has REC READY off.
-pub(crate) const MIX_FILE_OFF_IN_MANUAL: &str = "REC READY is off for MASTER in MANUAL.";
-
+/// The tabs, the page shown, the note and Done.
 fn settings(app: &BatApp, fb: Fb) {
+    let count = app.settings_pages().count();
+    for (i, page) in app.settings_pages().enumerate() {
+        let r = tab(i, count);
+        // The page shown has the accent fill, as the chosen Auto volume choice does.
+        rounded(fb, r, 4, if page == app.settings_page() { ACCENT } else { BUTTON });
+        text(fb, &BODY, page.label(), r.center().x, r.top_left.y + 21, CENTER, TEXT);
+    }
+    match app.settings_page() {
+        SettingsPage::Listen => listen_page(app, fb),
+        SettingsPage::Record => pages::record(app, fb),
+        SettingsPage::Tests => pages::tests(app, fb),
+    }
+    text(fb, &SMALL, "These settings reset when the recorder is turned off.", 16, SETTINGS_NOTE, LEFT, TEXT_MUTED);
+    rounded(fb, DONE, 4, ACCENT);
+    text(fb, &BODY_BOLD, "Done", DONE.center().x, DONE.top_left.y + 28, CENTER, TEXT);
+}
+
+/// The two stepped settings, Auto volume, and the sounds to mark.
+fn listen_page(app: &BatApp, fb: Fb) {
     for (i, setting) in Setting::ALL.iter().enumerate() {
+        if setting.page() != SettingsPage::Listen {
+            continue;
+        }
         let selected = app.selected_setting() == *setting;
-        if i >= Setting::STEPPED {
-            // The hosts without figures to show get no switch for them.
-            if (*setting == Setting::DebugInfo && !app.debug_available())
-                || (*setting == Setting::MixFile && !app.mix_file_available())
-            {
-                continue;
-            }
-            let r = switch_row(i - Setting::STEPPED);
+        if !matches!(setting, Setting::LowestBatCall | Setting::ListenTo) {
+            let r = control_row(*setting);
             rounded(fb, r, 6, PANEL);
             if selected {
                 outline_selected(fb, r);
@@ -718,28 +727,12 @@ fn settings(app: &BatApp, fb: Fb) {
                     };
                     app.is_marked(kind)
                 }
-                Setting::AutoLevel => {
-                    auto_volume_row(app, fb, i - Setting::STEPPED);
+                _ => {
+                    auto_volume_row(app, fb);
                     continue;
                 }
-                Setting::MixFile if !app.manual_mix_file() => {
-                    // MANUAL decides: the switch shows what a take will get, and taps do nothing.
-                    text(fb, &BODY, "MIX file", x + 10, y + 14, LEFT, TEXT_MUTED);
-                    text(fb, &SMALL, MIX_FILE_OFF_IN_MANUAL, x + 10, y + 28, LEFT, TEXT_MUTED);
-                    false
-                }
-                Setting::MixFile => {
-                    text(fb, &BODY, "MIX file", x + 10, y + 14, LEFT, TEXT);
-                    text(fb, &SMALL, "Needed to play a take from BROWSE.", x + 10, y + 28, LEFT, TEXT_MUTED);
-                    app.mix_file()
-                }
-                _ => {
-                    text(fb, &BODY, "Debug info", x + 10, y + 16, LEFT, TEXT);
-                    text(fb, &SMALL, "Hides last call", x + 10, y + 31, LEFT, TEXT_MUTED);
-                    app.debug_info()
-                }
             };
-            switch_control(fb, switch(i - Setting::STEPPED), on);
+            switch_control(fb, switch(*setting), on);
             continue;
         }
         let r = setting_row(i);
@@ -799,9 +792,4 @@ fn settings(app: &BatApp, fb: Fb) {
     // Lined up with the text in the panels above.
     text(fb, &BODY_BOLD, "Sounds to mark", 16, SWITCHES_HEADING, LEFT, TEXT);
     text(fb, &SMALL, "Marked on waterfall, played in TE and Auto volume Bats only.", 16, SWITCHES_HELP, LEFT, TEXT_MUTED);
-    text(fb, &SMALL, "These settings reset when the recorder is turned off.", 16, SETTINGS_NOTE, LEFT, TEXT_MUTED);
-    rounded(fb, TOOLS, 4, BUTTON);
-    text(fb, &BODY_BOLD, "Tools", TOOLS.center().x, TOOLS.top_left.y + 28, CENTER, TEXT);
-    rounded(fb, DONE, 4, ACCENT);
-    text(fb, &BODY_BOLD, "Done", DONE.center().x, DONE.top_left.y + 28, CENTER, TEXT);
 }

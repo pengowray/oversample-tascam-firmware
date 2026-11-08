@@ -280,12 +280,12 @@ fn listen_to_steps_from_what_is_shown_when_inputs_change() {
 fn hidden_controls_are_not_tappable() {
     let mut storage = vec![0.0f32; 1024];
     let mut app = BatApp::new(FS, &mut storage, buffers());
-    app.open_settings();
-    let index = Setting::ALL.iter().position(|&s| s == Setting::DebugInfo).unwrap();
-    let debug = layout::switch_row(index - Setting::STEPPED).center();
+    app.open_settings_page(SettingsPage::Tests);
+    let debug = layout::control_row(Setting::DebugInfo).center();
     assert!(!app.is_tappable(debug.x, debug.y));
     app.set_debug_available(true);
     assert!(app.is_tappable(debug.x, debug.y));
+    app.open_settings_page(SettingsPage::Listen);
     let minus = layout::setting_minus(1).center();
     assert!(app.is_tappable(minus.x, minus.y));
     app.set_inputs([Some(InputName { short: "5", long: "Input 5" }), None]);
@@ -741,11 +741,11 @@ fn the_auto_volume_row_shows_three_choices_a_tap_picks_one_and_the_wheel_steps()
     let mut app = BatApp::new(FS, &mut storage, buffers());
     assert_eq!(app.auto_volume(), AutoVolume::Off);
     app.open_settings();
-    let row = Setting::ALL.iter().position(|&s| s == Setting::AutoLevel).unwrap() - Setting::STEPPED;
-    let (top, bottom) = (layout::switch_row(row).top_left.y, layout::switch_row(row).center().y + 18);
+    let row = layout::control_row(Setting::AutoLevel);
+    let (top, bottom) = (row.top_left.y, row.center().y + 18);
     // Every choice can be reached in one tap from any other, at any height of the row.
     for (i, &volume) in AutoVolume::ALL.iter().enumerate() {
-        let c = layout::auto_volume_choice(i, row);
+        let c = layout::auto_volume_choice(i);
         assert!(c.size.width >= 24);
         for y in [top + 1, bottom] {
             assert!(app.is_tappable(c.center().x, y));
@@ -772,7 +772,7 @@ fn the_auto_volume_row_shows_three_choices_a_tap_picks_one_and_the_wheel_steps()
             .unwrap()
             .advance
             .x;
-        assert!(width + 4 <= layout::auto_volume_choice(i, row).size.width as i32, "{volume:?}: {width}");
+        assert!(width + 4 <= layout::auto_volume_choice(i).size.width as i32, "{volume:?}: {width}");
     }
 }
 
@@ -834,9 +834,8 @@ fn each_silent_mix_notice_is_small_legible_and_inside_the_waterfall() {
 fn the_debug_switch_only_works_when_the_host_has_figures() {
     let mut storage = vec![0.0f32; 1024];
     let mut app = BatApp::new(FS, &mut storage, buffers());
-    app.open_settings();
-    let index = Setting::ALL.iter().position(|&s| s == Setting::DebugInfo).unwrap();
-    let row = layout::switch_row(index - Setting::STEPPED).center();
+    app.open_settings_page(SettingsPage::Tests);
+    let row = layout::control_row(Setting::DebugInfo).center();
     app.touch(row.x, row.y);
     assert!(!app.debug_info());
     app.set_debug_available(true);
@@ -997,13 +996,12 @@ fn switches_flip_on_a_tap_and_follow_the_wheel() {
     assert!(app.is_marked(CallKind::Bat));
     assert!(!app.is_marked(CallKind::Tone) && !app.is_marked(CallKind::Audible) && !app.is_marked(CallKind::Broadband));
     app.open_settings();
-    // Steady tones are the second marking switch, after the three other
-    // switches: tapping its row anywhere flips it.
-    let row = layout::switch_row(4);
+    // Steady tones are the second sound to mark: tapping its row anywhere flips it.
+    let row = layout::control_row(Setting::Mark(CallKind::Tone));
     app.touch(row.top_left.x + 20, row.center().y);
     assert!(app.is_marked(CallKind::Tone));
     assert_eq!(app.selected_setting(), Setting::Mark(CallKind::Tone));
-    let sw = layout::switch(4).center();
+    let sw = layout::switch(Setting::Mark(CallKind::Tone)).center();
     assert!(app.is_tappable(sw.x, sw.y));
     app.touch(sw.x, sw.y);
     assert!(!app.is_marked(CallKind::Tone));
@@ -1015,7 +1013,7 @@ fn switches_flip_on_a_tap_and_follow_the_wheel() {
     app.wheel(-2);
     assert!(!app.is_marked(CallKind::Tone));
     // Bat calls can be switched off too.
-    let bats = layout::switch(3).center();
+    let bats = layout::switch(Setting::Mark(CallKind::Bat)).center();
     app.touch(bats.x, bats.y);
     assert!(!app.is_marked(CallKind::Bat));
     run(&mut app, &signal(), 4096);
@@ -1462,10 +1460,9 @@ fn history_covers_the_longest_call_and_its_snapshot_margins() {
 fn mix_file_switch_follows_rec_ready() {
     let mut storage = vec![0.0f32; 1024];
     let mut app = BatApp::new(FS, &mut storage, buffers());
-    let index = Setting::ALL.iter().position(|&s| s == Setting::MixFile).unwrap();
-    let row = layout::switch_row(index - Setting::STEPPED).center();
+    let row = layout::control_row(Setting::MixFile).center();
     app.set_mix_file_available(true);
-    app.open_settings();
+    app.open_settings_page(SettingsPage::Record);
     app.set_manual_mix_file(false);
     assert!(!app.is_tappable(row.x, row.y));
     app.touch(row.x, row.y);
@@ -1477,14 +1474,57 @@ fn mix_file_switch_follows_rec_ready() {
     assert!(!app.mix_file());
 }
 
-/// The GUANO switch on the tools screen: on by default, offered only by a host that asks for it,
+/// The settings screen's tabs: each opens its page, the wheel changes only a setting on the page
+/// shown, and a host with nothing for Record gets no Record tab.
+#[test]
+fn settings_tabs() {
+    let mut storage = vec![0.0f32; 1024];
+    let mut app = BatApp::new(FS, &mut storage, buffers());
+    app.open_settings();
+    assert_eq!(app.settings_page(), SettingsPage::Listen);
+    assert_eq!(app.settings_pages().collect::<Vec<_>>(), [SettingsPage::Listen, SettingsPage::Tests]);
+    app.set_mix_file_available(true);
+    app.set_debug_available(true);
+    assert_eq!(app.settings_pages().count(), 3);
+    for (i, page) in SettingsPage::ALL.into_iter().enumerate() {
+        let tab = layout::tab(i, 3).center();
+        assert!(app.is_tappable(tab.x, tab.y));
+        app.touch(tab.x, tab.y);
+        assert_eq!(app.settings_page(), page);
+        assert_eq!(app.screen(), Screen::Settings);
+    }
+    // On Tests the wheel changes Debug info, the page's setting.
+    assert_eq!(app.selected_setting(), Setting::DebugInfo);
+    app.wheel(1);
+    assert!(app.debug_info());
+    // Record's MIX file, then back to Listen, where the first setting is selected again.
+    app.open_settings_page(SettingsPage::Record);
+    assert_eq!(app.selected_setting(), Setting::MixFile);
+    app.wheel(-1);
+    assert!(!app.mix_file());
+    app.open_settings_page(SettingsPage::Listen);
+    assert_eq!(app.selected_setting(), Setting::LowestBatCall);
+    // The page stays when the settings screen is closed and opened again.
+    app.open_settings_page(SettingsPage::Record);
+    app.button(Button::Home);
+    app.open_settings();
+    assert_eq!(app.settings_page(), SettingsPage::Record);
+    // A host that stops offering Record's items shows Listen in its place.
+    app.set_mix_file_available(false);
+    assert_eq!(app.settings_page(), SettingsPage::Listen);
+    assert!(draw(&app).iter().any(|&p| p != 0));
+}
+
+/// The GUANO switch on the Record page: on by default, offered only by a host that asks for it,
 /// and flipped by a tap on its row.
 #[test]
 fn guano_switch() {
     let mut storage = vec![0.0f32; 1024];
     let mut app = BatApp::new(FS, &mut storage, buffers());
-    let row = layout::TOOLS_GUANO_ROW.center();
-    app.open_tools();
+    let row = layout::panel_switch_row(layout::RECORD_GUANO).center();
+    // The MIX file switch gives the host a Record page.
+    app.set_mix_file_available(true);
+    app.open_settings_page(SettingsPage::Record);
     assert!(app.guano());
     assert!(!app.is_tappable(row.x, row.y));
     app.touch(row.x, row.y);
@@ -1503,9 +1543,10 @@ fn guano_switch() {
 fn mix_file_switch() {
     let mut storage = vec![0.0f32; 1024];
     let mut app = BatApp::new(FS, &mut storage, buffers());
-    let index = Setting::ALL.iter().position(|&s| s == Setting::MixFile).unwrap();
-    let row = layout::switch_row(index - Setting::STEPPED).center();
-    app.open_settings();
+    let row = layout::control_row(Setting::MixFile).center();
+    // GUANO metadata gives the host a Record page.
+    app.set_guano_available(true);
+    app.open_settings_page(SettingsPage::Record);
     assert!(app.mix_file());
     assert!(!app.is_tappable(row.x, row.y));
     app.touch(row.x, row.y);

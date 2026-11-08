@@ -7,7 +7,7 @@
 use embedded_graphics::prelude::*;
 use embedded_graphics::primitives::Rectangle;
 
-use crate::{AutoVolume, Mode, VIEW_HI_HZ, VIEW_LO_HZ};
+use crate::{AutoVolume, Mode, Setting, VIEW_HI_HZ, VIEW_LO_HZ};
 
 pub const TITLE_H: i32 = 24;
 
@@ -88,50 +88,78 @@ pub fn mode_button_at(x: i32, y: i32, modes: &[Mode]) -> Option<Mode> {
 /// settings screen.
 pub const MENU: Rectangle = Rectangle::new(Point::new(0, 0), Size::new(40, TITLE_H as u32));
 
-/// Settings screen. Stepped settings come first, one panel each, with the
-/// name and value on the left, - and + buttons on the right, and a line
-/// saying what the setting does. Below them, under a heading, come the
-/// switches: one compact row each, with a colour swatch, a name and a line of
-/// help on the left and the switch on the right. Between them come the settings
-/// that are not about marking: Auto volume, with its three choices, and the Debug
-/// info switch share one row, half the width each, and the MIX file switch has a
-/// full row, above the heading because it is not a sound to mark. The screen has
-/// no spare height, so the gaps and rows are as small as the text allows.
-pub const SETTINGS_TOP: i32 = 34;
+/// Settings screen: three pages, picked with tabs under the title bar. Listen has what changes
+/// the sound and the marks; Record has what a take's files get and the phone remote; Tests has the
+/// debug figures and the two tests. Below the tabs, Listen has its two stepped settings, one panel
+/// each, with the name and value on the left, - and + buttons on the right, and a line saying what
+/// the setting does; then the Auto volume row, with its three choices; then, under a heading, the
+/// sounds to mark, one compact row each, with a colour swatch, a name and a line of help on the left
+/// and the switch on the right. Record and Tests have panels with a name, a switch or a button, and
+/// up to three lines of help. Every page ends with the note that the settings reset at power-off
+/// and the Done button.
+pub const TABS_TOP: i32 = 29;
+pub const TAB_H: i32 = 32;
+const TAB_GAP: i32 = 4;
+/// Where the pages start, under the tabs.
+pub const PAGE_TOP: i32 = 67;
 pub const SETTING_H: i32 = 66;
 const SETTING_GAP: i32 = 4;
 const STEP_W: u32 = 48;
 const STEP_H: u32 = 40;
-/// The row of two half-width switches, below the two stepped settings.
-const HALF_ROW_TOP: i32 = 173;
-const HALF_ROW_W: i32 = 150;
-const HALF_ROW_GAP: i32 = 8;
-const HALF_ROWS: usize = 2;
-/// The MIX file row, under the half-width row: switch row `HALF_ROWS`.
-const MIX_FILE_ROW_TOP: i32 = 214;
-/// Baselines of the switches' heading and its help line.
+/// The Auto volume row, under the two stepped settings. Its choices need more height than a name
+/// and a help line.
+const AUTO_VOLUME_ROW: Rectangle = Rectangle::new(Point::new(6, 208), Size::new(308, 38));
+/// Baselines of the marks' heading and its help line.
 pub const SWITCHES_HEADING: i32 = 260;
 pub const SWITCHES_HELP: i32 = 272;
 const SWITCHES_TOP: i32 = 276;
-/// The half-width rows, whose choices need more height than a name and a help line.
-const HALF_ROW_H: i32 = 38;
 pub const SWITCH_ROW_H: i32 = 33;
 const SWITCH_ROW_GAP: i32 = 2;
 const SWITCH_W: u32 = 44;
 const SWITCH_H: u32 = 24;
-/// Baseline of the note under the last switch.
+/// Baseline of the note above Done.
 pub const SETTINGS_NOTE: i32 = 426;
-/// Opens the tools screen, on the settings screen. It is beside Done because it is rarely
-/// used, and the settings screen has no other room for a control.
-pub const TOOLS: Rectangle = Rectangle::new(Point::new(6, BUTTONS_Y), Size::new(112, BUTTON_H as u32));
 /// Closes the settings screen, where the mode buttons are on the main screen.
-pub const DONE: Rectangle = Rectangle::new(Point::new(126, BUTTONS_Y), Size::new(188, BUTTON_H as u32));
-/// Goes back from the chime test and the tools screen.
+pub const DONE: Rectangle = Rectangle::new(Point::new(6, BUTTONS_Y), Size::new(308, BUTTON_H as u32));
+/// Goes back from the chime test to the settings screen.
 pub const BACK: Rectangle = Rectangle::new(Point::new(6, BUTTONS_Y), Size::new(308, BUTTON_H as u32));
+
+/// Tab `i` of `count`, left to right.
+pub fn tab(i: usize, count: usize) -> Rectangle {
+    let n = count.max(1) as i32;
+    let w = (308 - TAB_GAP * (n - 1)) / n;
+    Rectangle::new(Point::new(6 + i as i32 * (w + TAB_GAP), TABS_TOP), Size::new(w as u32, TAB_H as u32))
+}
+
+/// A panel on the Record or Tests page: the name on its first line with a switch at the right,
+/// then help lines. The top 40 px are what a tap on a switch's panel hits, so the switch flips
+/// from anywhere on its name's line.
+const fn panel(top: i32, height: u32) -> Rectangle {
+    Rectangle::new(Point::new(6, top), Size::new(308, height))
+}
+
+/// The top of a panel, where a tap flips its switch.
+pub const fn panel_switch_row(panel: Rectangle) -> Rectangle {
+    Rectangle::new(panel.top_left, Size::new(panel.size.width, 40))
+}
+
+/// The switch at the right of a panel's first line.
+pub const fn panel_switch(panel: Rectangle) -> Rectangle {
+    Rectangle::new(Point::new(260, panel.top_left.y + 8), Size::new(SWITCH_W, SWITCH_H))
+}
+
+/// Record page: the MIX file, GUANO metadata, then the phone remote with its status lines.
+pub const RECORD_MIX_FILE: Rectangle = panel(PAGE_TOP, 54);
+pub const RECORD_GUANO: Rectangle = panel(PAGE_TOP + 62, 68);
+pub const RECORD_REMOTE: Rectangle = panel(PAGE_TOP + 138, 118);
+/// Tests page: the debug figures' switch, then a button for each test, with its help inside.
+pub const TESTS_DEBUG: Rectangle = panel(PAGE_TOP, 54);
+pub const TESTS_CHIME_TEST: Rectangle = panel(PAGE_TOP + 62, 48);
+pub const TESTS_CPU_TEST: Rectangle = panel(PAGE_TOP + 118, 62);
 
 /// Panel of stepped setting `i`.
 pub fn setting_row(i: usize) -> Rectangle {
-    Rectangle::new(Point::new(6, SETTINGS_TOP + i as i32 * (SETTING_H + SETTING_GAP)), Size::new(308, SETTING_H as u32))
+    Rectangle::new(Point::new(6, PAGE_TOP + i as i32 * (SETTING_H + SETTING_GAP)), Size::new(308, SETTING_H as u32))
 }
 
 pub fn setting_minus(i: usize) -> Rectangle {
@@ -144,92 +172,100 @@ pub fn setting_plus(i: usize) -> Rectangle {
     Rectangle::new(Point::new(258, r.top_left.y + 7), Size::new(STEP_W, STEP_H))
 }
 
-/// Row of the `j`th switch (counting from 0 after the stepped settings).
-pub fn switch_row(j: usize) -> Rectangle {
-    if j < HALF_ROWS {
-        let x = 6 + j as i32 * (HALF_ROW_W + HALF_ROW_GAP);
-        return Rectangle::new(Point::new(x, HALF_ROW_TOP), Size::new(HALF_ROW_W as u32, HALF_ROW_H as u32));
+/// Row of a setting with a control at the right: Auto volume, a sound to mark (`mark` counts
+/// them from 0, top to bottom), the MIX file or the debug figures. A tap anywhere in it acts.
+pub fn control_row(setting: Setting) -> Rectangle {
+    match setting {
+        Setting::AutoLevel => AUTO_VOLUME_ROW,
+        Setting::MixFile => panel_switch_row(RECORD_MIX_FILE),
+        Setting::DebugInfo => panel_switch_row(TESTS_DEBUG),
+        Setting::Mark(kind) => {
+            let j = Setting::MARKS.iter().position(|&k| k == kind).unwrap_or(0) as i32;
+            Rectangle::new(Point::new(6, SWITCHES_TOP + j * (SWITCH_ROW_H + SWITCH_ROW_GAP)), Size::new(308, SWITCH_ROW_H as u32))
+        }
+        Setting::LowestBatCall => setting_row(0),
+        Setting::ListenTo => setting_row(1),
     }
-    if j == HALF_ROWS {
-        return Rectangle::new(Point::new(6, MIX_FILE_ROW_TOP), Size::new(308, SWITCH_ROW_H as u32));
-    }
-    Rectangle::new(
-        Point::new(6, SWITCHES_TOP + (j - HALF_ROWS - 1) as i32 * (SWITCH_ROW_H + SWITCH_ROW_GAP)),
-        Size::new(308, SWITCH_ROW_H as u32),
-    )
 }
 
-/// The three choices of the Auto volume row, side by side under its name, in the
-/// order of `AutoVolume::ALL`. Bats only is wider to fit its text. A tap anywhere in
-/// the row's height picks the choice at that x, so each target is 38 px high, and any
-/// choice is one tap away.
+/// The three choices of the Auto volume row, side by side under its name, in the order of
+/// `AutoVolume::ALL`, across the row's width. A tap anywhere in the row's height picks the choice
+/// at that x, so each target is 38 px high, and any choice is one tap away.
 const AUTO_VOLUME_Y: i32 = 18;
 const AUTO_VOLUME_H: u32 = 16;
 const AUTO_VOLUME_GAP: i32 = 2;
-const AUTO_VOLUME_W: [i32; 3] = [34, 34, 66];
+const AUTO_VOLUME_W: [i32; 3] = [88, 88, 116];
 
-/// Choice `i` of the Auto volume row, which is switch row `j`.
-pub fn auto_volume_choice(i: usize, j: usize) -> Rectangle {
-    let r = switch_row(j);
+/// Choice `i` of the Auto volume row.
+pub fn auto_volume_choice(i: usize) -> Rectangle {
+    let r = AUTO_VOLUME_ROW;
     let x = r.top_left.x + 6 + AUTO_VOLUME_W[..i].iter().map(|w| w + AUTO_VOLUME_GAP).sum::<i32>();
     Rectangle::new(Point::new(x, r.top_left.y + AUTO_VOLUME_Y), Size::new(AUTO_VOLUME_W[i] as u32, AUTO_VOLUME_H))
 }
 
-/// The choice a tap at `x` picks in the Auto volume row, which is switch row `j`. The
-/// row's margins belong to the nearest choice.
-pub fn auto_volume_at(x: i32, j: usize) -> AutoVolume {
+/// The choice a tap at `x` picks in the Auto volume row. The row's margins belong to the nearest
+/// choice.
+pub fn auto_volume_at(x: i32) -> AutoVolume {
     AutoVolume::ALL
         .iter()
         .enumerate()
         .find_map(|(i, &volume)| {
-            let c = auto_volume_choice(i, j);
+            let c = auto_volume_choice(i);
             (x < c.top_left.x + c.size.width as i32).then_some(volume)
         })
         .unwrap_or(AutoVolume::BatsOnly)
 }
 
-/// The switch itself, at the right of its row.
-pub fn switch(j: usize) -> Rectangle {
-    let r = switch_row(j);
-    let y = r.top_left.y + (r.size.height as i32 - SWITCH_H as i32) / 2;
-    Rectangle::new(Point::new(r.top_left.x + r.size.width as i32 - 10 - SWITCH_W as i32, y), Size::new(SWITCH_W, SWITCH_H))
+/// The switch of a setting's row, at its right.
+pub fn switch(setting: Setting) -> Rectangle {
+    match setting {
+        Setting::MixFile => panel_switch(RECORD_MIX_FILE),
+        Setting::DebugInfo => panel_switch(TESTS_DEBUG),
+        _ => {
+            let r = control_row(setting);
+            let y = r.top_left.y + (r.size.height as i32 - SWITCH_H as i32) / 2;
+            Rectangle::new(Point::new(r.top_left.x + r.size.width as i32 - 10 - SWITCH_W as i32, y), Size::new(SWITCH_W, SWITCH_H))
+        }
+    }
 }
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum SettingsHit {
     /// A stepped setting's panel, away from its buttons.
-    Row(usize),
-    Minus(usize),
-    Plus(usize),
-    /// Anywhere on a switch's row; flips it. Numbered among all settings.
-    Switch(usize),
+    Row(Setting),
+    Minus(Setting),
+    Plus(Setting),
+    /// Anywhere on a control's row: flips a switch, or picks an Auto volume choice.
+    Control(Setting),
     Done,
-    Tools,
 }
 
-/// What a tap at (x, y) hits, with `stepped` stepped settings followed by
-/// switches up to `rows` settings in all.
-pub fn settings_hit(x: i32, y: i32, stepped: usize, rows: usize) -> Option<SettingsHit> {
+/// What a tap at (x, y) hits among `settings`, the settings on the page shown, and Done. Tabs and
+/// the page's own buttons are not settings and are checked by the caller.
+pub fn settings_hit(x: i32, y: i32, settings: impl Iterator<Item = Setting>) -> Option<SettingsHit> {
     let p = Point::new(x, y);
     if DONE.contains(p) {
         return Some(SettingsHit::Done);
     }
-    if TOOLS.contains(p) {
-        return Some(SettingsHit::Tools);
-    }
-    (0..rows).find_map(|i| {
-        if i >= stepped {
-            switch_row(i - stepped).contains(p).then_some(SettingsHit::Switch(i))
-        } else if setting_minus(i).contains(p) {
-            Some(SettingsHit::Minus(i))
-        } else if setting_plus(i).contains(p) {
-            Some(SettingsHit::Plus(i))
-        } else if setting_row(i).contains(p) {
-            Some(SettingsHit::Row(i))
-        } else {
-            None
+    for setting in settings {
+        let hit = match setting {
+            Setting::LowestBatCall | Setting::ListenTo => {
+                let i = if setting == Setting::LowestBatCall { 0 } else { 1 };
+                if setting_minus(i).contains(p) {
+                    Some(SettingsHit::Minus(setting))
+                } else if setting_plus(i).contains(p) {
+                    Some(SettingsHit::Plus(setting))
+                } else {
+                    setting_row(i).contains(p).then_some(SettingsHit::Row(setting))
+                }
+            }
+            _ => control_row(setting).contains(p).then_some(SettingsHit::Control(setting)),
+        };
+        if hit.is_some() {
+            return hit;
         }
-    })
+    }
+    None
 }
 
 pub fn waterfall() -> Rectangle {
@@ -250,21 +286,6 @@ pub fn waterfall_freq_at(x: i32, y: i32) -> Option<f32> {
     let t = (y - WF_Y) as f32 / WF_H as f32;
     Some(VIEW_HI_HZ - t * (VIEW_HI_HZ - VIEW_LO_HZ))
 }
-
-/// Tools screen: the phone remote's panel, with its switch at the right, then a full-width
-/// button for each test, with its help inside the button, then the GUANO panel, which is laid out
-/// like the remote's. GUANO comes last because it is rarely changed, and so the buttons above stay
-/// where they were. Its place is fixed, so on a host with no CPU test it sits below a gap.
-pub const TOOLS_REMOTE: Rectangle = Rectangle::new(Point::new(6, 32), Size::new(308, 118));
-/// The top of that panel, where a tap flips the switch.
-pub const TOOLS_REMOTE_ROW: Rectangle = Rectangle::new(Point::new(6, 32), Size::new(308, 40));
-pub const TOOLS_REMOTE_SWITCH: Rectangle = Rectangle::new(Point::new(260, 40), Size::new(SWITCH_W, SWITCH_H));
-pub const TOOLS_CHIME_TEST: Rectangle = Rectangle::new(Point::new(6, 158), Size::new(308, 48));
-pub const TOOLS_CPU_TEST: Rectangle = Rectangle::new(Point::new(6, 214), Size::new(308, 62));
-pub const TOOLS_GUANO: Rectangle = Rectangle::new(Point::new(6, 284), Size::new(308, 68));
-/// The top of that panel, where a tap flips the switch.
-pub const TOOLS_GUANO_ROW: Rectangle = Rectangle::new(Point::new(6, 284), Size::new(308, 40));
-pub const TOOLS_GUANO_SWITCH: Rectangle = Rectangle::new(Point::new(260, 292), Size::new(SWITCH_W, SWITCH_H));
 
 /// CPU test screen. Row pitch and baselines are as small as the text allows, because with two
 /// inputs on the table has 26 rows and 4 headings.

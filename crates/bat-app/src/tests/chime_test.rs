@@ -75,10 +75,10 @@ fn the_screen_opens_from_settings_and_goes_back() {
     let mut storage = vec![0.0f32; 1024];
     let mut app = BatApp::new(FS, &mut storage, buffers());
     app.open_settings();
-    let tools = layout::TOOLS.center();
-    app.touch(tools.x, tools.y);
-    assert_eq!(app.screen(), Screen::Tools);
-    let chime_test = layout::TOOLS_CHIME_TEST.center();
+    let tests = layout::tab(2, 3).center();
+    app.touch(tests.x, tests.y);
+    assert_eq!(app.settings_page(), SettingsPage::Tests);
+    let chime_test = layout::TESTS_CHIME_TEST.center();
     assert!(app.is_tappable(chime_test.x, chime_test.y));
     app.touch(chime_test.x, chime_test.y);
     assert_eq!(app.screen(), Screen::ChimeTest);
@@ -93,9 +93,8 @@ fn the_screen_opens_from_settings_and_goes_back() {
     let back = layout::BACK.center();
     assert!(app.is_tappable(back.x, back.y));
     app.touch(back.x, back.y);
-    assert_eq!(app.screen(), Screen::Tools);
-    app.touch(back.x, back.y);
     assert_eq!(app.screen(), Screen::Settings);
+    assert_eq!(app.settings_page(), SettingsPage::Tests);
     // Done still closes settings, and HOME closes the test.
     let done = layout::DONE.center();
     app.touch(done.x, done.y);
