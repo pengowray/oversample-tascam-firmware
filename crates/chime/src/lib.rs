@@ -63,6 +63,8 @@ mod decoder;
 pub mod format;
 
 pub use decoder::Decoder;
+#[cfg(feature = "profile")]
+pub use decoder::Stage;
 pub use format::{LocalTime, MAX_PAYLOAD_BYTES, TimeMessage};
 
 /// A chime that was decoded and passed its CRC check.

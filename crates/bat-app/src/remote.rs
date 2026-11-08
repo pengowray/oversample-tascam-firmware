@@ -219,11 +219,7 @@ impl Remote {
             // SAFETY: `built` is set only after both decoders have been built, and is cleared
             // when the chime test builds its own.
             let decoder = unsafe { slot.assume_init_mut() };
-            for (i, &x) in block.iter().enumerate() {
-                if let Some(event) = decoder.push(x) {
-                    self.event(event, now + i as u64);
-                }
-            }
+            decoder.push_block(block, |i, event| self.event(event, now + i as u64));
         }
     }
 

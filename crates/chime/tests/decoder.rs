@@ -238,6 +238,43 @@ fn several_chimes_in_one_stream_are_each_decoded_once() {
     }
 }
 
+/// `push_block` gives the same events as `push`, at the same samples, whatever the block
+/// lengths.
+#[test]
+fn blocks_give_the_same_events_as_single_samples() {
+    let rate = 192_000;
+    let spacing = 4 * rate as usize;
+    let mut stream = vec![0.0; 3 * spacing];
+    for (i, time) in [UNIX, UNIX + 4].into_iter().enumerate() {
+        let chime = mix(rate, &generator::time_payload(time, TZ));
+        let start = rate as usize / 2 + spacing * i;
+        for (slot, value) in stream[start..].iter_mut().zip(&chime) {
+            *slot = *value * 0.01;
+        }
+    }
+    let samples = channel::to_f32(&channel::add_white_noise(stream, rate, 0.0, 9));
+
+    let mut decoder = Decoder::new(rate).unwrap();
+    let one_at_a_time: Vec<(usize, Event)> =
+        samples.iter().enumerate().filter_map(|(i, &x)| decoder.push(x).map(|event| (i, event))).collect();
+    assert_eq!(one_at_a_time.len(), 2, "{one_at_a_time:?}");
+
+    for lengths in [&[1024][..], &[1, 23, 24, 25, 1000], &[7]] {
+        let mut decoder = Decoder::new(rate).unwrap();
+        let mut events = Vec::new();
+        let mut at = 0;
+        for &length in lengths.iter().cycle() {
+            if at == samples.len() {
+                break;
+            }
+            let block = &samples[at..(at + length).min(samples.len())];
+            decoder.push_block(block, |i, event| events.push((at + i, event)));
+            at += block.len();
+        }
+        assert_eq!(events, one_at_a_time, "blocks of {lengths:?}");
+    }
+}
+
 #[test]
 fn a_chime_soon_after_another_is_read_while_the_echoes_are_still_fading() {
     // The recorder setup page leaves 1 s between chimes. With an RT60 of 500 ms and a low
@@ -746,17 +783,19 @@ fn a_message_of_only_zeros_is_not_a_chime() {
 #[test]
 fn nan_and_infinite_samples_do_not_stop_the_decoder() {
     let payload = time_payload();
-    let rate = 48_000u32;
-    let mut decoder = Decoder::new(rate).unwrap();
-    for _ in 0..1000 {
-        assert_eq!(decoder.push(f32::NAN), None);
-        assert_eq!(decoder.push(f32::INFINITY), None);
-        assert_eq!(decoder.push(f32::NEG_INFINITY), None);
+    // At 192 kHz the front end has two stages, and at 48 kHz one.
+    for rate in [48_000u32, 192_000] {
+        let mut decoder = Decoder::new(rate).unwrap();
+        for _ in 0..1000 {
+            assert_eq!(decoder.push(f32::NAN), None);
+            assert_eq!(decoder.push(f32::INFINITY), None);
+            assert_eq!(decoder.push(f32::NEG_INFINITY), None);
+            assert_eq!(decoder.push(3e20), None);
+        }
+        let x = channel::pad(mix(rate, &payload), pad_samples(rate), pad_samples(rate));
+        let events: Vec<Event> = channel::to_f32(&x).iter().filter_map(|&sample| decoder.push(sample)).collect();
+        assert_eq!(the_chime(&events).payload[..6], payload[..], "{rate} Hz");
     }
-    let x = channel::pad(mix(rate, &payload), pad_samples(rate), pad_samples(rate));
-    let events: Vec<Event> =
-        channel::to_f32(&x).iter().filter_map(|&sample| decoder.push(sample)).collect();
-    assert_eq!(the_chime(&events).payload[..6], payload[..]);
 }
 
 // -- The budget ----------------------------------------------------------------
