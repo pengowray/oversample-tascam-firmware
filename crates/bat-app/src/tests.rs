@@ -164,6 +164,34 @@ fn dragging_on_the_waterfall_tunes_het() {
 }
 
 #[test]
+fn dragging_the_comb_past_its_end_keeps_the_same_lo_under_the_finger() {
+    let mut storage = vec![0.0f32; 1024];
+    let mut app = BatApp::new(FS, &mut storage, buffers());
+    app.set_mode(Mode::Comb);
+    let wf = layout::waterfall();
+    let x = wf.center().x;
+    let y_at = |hz: f32| wf.top_left.y + ((VIEW_HI_HZ - hz) / (VIEW_HI_HZ - VIEW_LO_HZ) * wf.size.height as f32) as i32;
+    // Grab the middle LO (55 kHz with the first at 25 kHz) and drag it up past the top of its
+    // range, then down past the bottom. The comb stops at each end and never jumps back.
+    app.touch(x, y_at(55_000.0));
+    let mut last = app.comb_first_hz;
+    let mut hz = 55_000.0;
+    while hz < 95_000.0 {
+        hz += 500.0;
+        app.drag(x, y_at(hz));
+        assert!(app.comb_first_hz >= last, "comb moved down to {} at {hz} Hz", app.comb_first_hz);
+        last = app.comb_first_hz;
+    }
+    while hz > 1_000.0 {
+        hz -= 500.0;
+        app.drag(x, y_at(hz));
+        assert!(app.comb_first_hz <= last, "comb moved up to {} at {hz} Hz", app.comb_first_hz);
+        last = app.comb_first_hz;
+    }
+    assert_eq!(app.comb_first_hz, 15_000.0);
+}
+
+#[test]
 fn an_external_recorder_replaces_rec() {
     let mut storage = vec![0.0f32; 1024];
     let mut app = BatApp::new(FS, &mut storage, buffers());

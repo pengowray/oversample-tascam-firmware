@@ -5,13 +5,14 @@ Notes from reading the V2.01 and V2.03 update files (`#PortaX8_0215.201`,
 work was done, so earlier sections can describe plans and figures that later
 steps changed.
 
-**Status, 8 November 2026.** Test builds from B218 to B239 were installed and run
+**Status, 8 November 2026.** Test builds from B218 to B251 were installed and run
 on the owner's X8. Not every build in that range was installed: a step's heading
 says "installed" if its build ran on the unit, and "never installed" if a later
-build replaced it first. The last build installed is B239 (Step 21). The current
-build is B251 (Step 28 and the sections after it), which has not been installed
-yet. B250 was installed and hung as soon as a bat screen opened (Step 28 says why), so GUANO metadata, setting the clock from phone chimes and the location log
-have not run on a unit.
+build replaced it first. B250 hung as soon as a bat screen opened (Step 28 says
+why). The last build installed is B251 (Step 28), and its bat screens open. GUANO
+metadata, setting the clock from phone chimes and the location log have not been
+checked on a unit yet. The current build is B252 (Step 29), which has not been
+installed.
 
 **Hardware tested.** One X8. Its Information screen (GENERAL SETTINGS > SYSTEM >
 Information) shows `F/W: Version 2.03 Build 217` and `H/W: Version 1.00 Build 010`.
@@ -2356,6 +2357,22 @@ B241 or an earlier build. All the checks in `tools/x8patch.py` pass on this file
 1. **Start and stop.** With Phone remote on and the phone page reloaded, do `Start recording` and `Stop recording` work as before?
 2. **Old phone page.** If a phone still has the old page cached, its commands should do nothing at all. Reload the page.
 
+## Step 29 test file: dragging the comb past either end (built 2026-11-08, not yet installed)
+
+`work/patch28/#PortaX8_0252.203` (B252, SHA-256 `4621a0ba…eee34b57`). Includes steps 11 to 28. All the checks in
+`tools/x8patch.py` pass on this file. No new stock hook site (header version 18).
+
+**Reported on B251.** Dragging a finger on the waterfall in COMB made the comb jump back once it reached either end of its
+range (lowest LO 15 kHz, highest 96 kHz). The fault has been there since dragging was added. Each finger move chose the LO
+nearest the finger again; once the comb stopped at an end and the finger kept going, another LO became the nearest and the comb
+moved to put that one under the finger. For example, with the middle LO dragged upwards, the comb stopped at 36, 66 and 96 kHz,
+then dropped to 21, 51 and 81 kHz when the finger reached 81 kHz.
+
+**Change.** The LO nearest the finger at touch down is the one that follows the finger for the whole drag. Past the end of the
+range the comb stays put. HET has one LO and only stops at 15 and 95 kHz, so it did not jump.
+
+**What to check.** In COMB, drag past the top and the bottom of the waterfall: the comb stops and stays put.
+
 ## Step 27 test file: PITCH in the CPU test, in stereo too (built 2026-11-08, installed 2026-11-08: hangs when a bat screen opens, fixed in B251)
 
 `work/patch26/#PortaX8_0250.203` (B250, SHA-256 `4b73f77e…a35eca57`). Includes steps 11 to 26. Install this file in place of
@@ -2395,7 +2412,7 @@ processing takes 3.5 times as long as FD's, by FD's 12 points on the unit.
    stereo PITCH fits only with the recorder stopped, options are to switch to mono PITCH or turn PITCH off while recording, or a
    setting that turns off headphone listening when recording starts.
 
-## Step 28 test file: B250's hang on opening a bat screen fixed (built 2026-11-08, not yet installed)
+## Step 28 test file: B250's hang on opening a bat screen fixed (built 2026-11-08, installed 2026-11-08: the bat screens open)
 
 `work/patch27/#PortaX8_0251.203` (B251, SHA-256 `fca5191c…f88bf6cbb`). Includes steps 11 to 27. Install this file in place of
 any earlier build. All the checks in `tools/x8patch.py` pass on this file. No new stock hook site (header version 18).

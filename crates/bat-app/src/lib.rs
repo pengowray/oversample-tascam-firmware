@@ -422,6 +422,8 @@ pub struct BatApp<'a> {
     het: Heterodyne,
     comb: HetComb<COMB_COUNT>,
     comb_first_hz: f32,
+    /// Which of the comb's LOs the finger moves: the nearest at touch down, kept for the drag.
+    comb_grip: u8,
     fd: FrequencyDivider,
     fd_index: usize,
     te: TimeExpander<'a>,
@@ -620,6 +622,7 @@ impl<'a> BatApp<'a> {
             field!((*this).het).write(Heterodyne::new(sample_rate, 45_000.0));
             field!((*this).comb).write(HetComb::new(sample_rate, 25_000.0, DEFAULT_COMB_SPACING_HZ, COMB_COUNT));
             field!((*this).comb_first_hz).write(25_000.0);
+            field!((*this).comb_grip).write(0);
             field!((*this).fd).write(FrequencyDivider::new(sample_rate));
             field!((*this).fd_index).write(2);
             field!((*this).te).write(TimeExpander::new(sample_rate, te_storage));
@@ -1562,7 +1565,13 @@ impl<'a> BatApp<'a> {
     pub fn drag(&mut self, x: i32, y: i32) {
         if self.screen == Screen::Main {
             if let Some(hz) = layout::waterfall_freq_at(x, y) {
-                self.tune_to(hz);
+                match self.mode {
+                    Mode::Het => self.set_het_lo(hz),
+                    // The LO grabbed at touch down stays under the finger. Choosing the nearest
+                    // LO again here made the comb jump once it stopped at either end of its range.
+                    Mode::Comb => self.set_comb_first(hz - self.comb_grip as f32 * DEFAULT_COMB_SPACING_HZ),
+                    _ => {}
+                }
             }
         }
     }
@@ -1582,6 +1591,7 @@ impl<'a> BatApp<'a> {
                 // Move the comb so its nearest LO lands on the frequency.
                 let spacing = DEFAULT_COMB_SPACING_HZ;
                 let i = libm::roundf((hz - self.comb_first_hz) / spacing).clamp(0.0, (COMB_COUNT - 1) as f32);
+                self.comb_grip = i as u8;
                 self.set_comb_first(hz - i * spacing);
             }
             _ => {}
