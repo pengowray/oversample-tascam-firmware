@@ -4,7 +4,7 @@
 use embedded_graphics::pixelcolor::Rgb565;
 use embedded_graphics::prelude::*;
 use embedded_graphics::primitives::{
-    Circle, CornerRadii, PrimitiveStyle, PrimitiveStyleBuilder, Rectangle, RoundedRectangle,
+    Circle, CornerRadii, PrimitiveStyle, PrimitiveStyleBuilder, Rectangle, RoundedRectangle, Triangle,
 };
 use u8g2_fonts::types::{FontColor, HorizontalAlignment, VerticalPosition};
 use u8g2_fonts::{FontRenderer, fonts};
@@ -136,7 +136,7 @@ pub fn draw(app: &BatApp, fb: Fb) {
         let (at, count) = (app.cpu_test.at + 1, app.cpu_test.count);
         title_bar(fb, format_args!("{} row {at}/{count}", cpu_test_screen::TITLE), true);
     } else {
-        title_bar_fitted(fb, title, true);
+        title_bar_fitted(fb, title, true, app.input_kind() == InputKind::Playback);
     }
     if app.remote_on() {
         let colour = if app.remote.listening(app.samples) { ACCENT } else { TEXT_MUTED };
@@ -175,13 +175,26 @@ fn title_bar(fb: Fb, title: impl u8g2_fonts::Content, menu: bool) {
 }
 
 /// A title too long for the bar is cut short with "...", between the menu and the battery.
-fn title_bar_fitted(fb: Fb, title: &str, menu: bool) {
+/// With `chevron`, a small downward arrow follows the title, as on a drop-down: in BAT
+/// PLAYBACK a tap on the title opens the list of recordings.
+fn title_bar_fitted(fb: Fb, title: &str, menu: bool, chevron: bool) {
+    const CHEVRON_W: i32 = 14;
     fill(fb, Rectangle::new(Point::zero(), Size::new(320, TITLE_H as u32)), TITLE);
-    let (shown, cut) = fit(&BODY_BOLD, title, TITLE_MIDDLE.size.width as i32);
-    if cut {
-        text(fb, &BODY_BOLD, format_args!("{shown}..."), 160, 17, CENTER, TEXT);
+    let room = TITLE_MIDDLE.size.width as i32 - if chevron { CHEVRON_W } else { 0 };
+    let (shown, cut) = fit(&BODY_BOLD, title, room);
+    let w = width(&BODY_BOLD, shown) + if cut { width(&BODY_BOLD, "...") } else { 0 };
+    let total = w + if chevron { CHEVRON_W } else { 0 };
+    let x = 160 - total / 2;
+    let end = if cut {
+        text(fb, &BODY_BOLD, format_args!("{shown}..."), x, 17, LEFT, TEXT)
     } else {
-        text(fb, &BODY_BOLD, shown, 160, 17, CENTER, TEXT);
+        text(fb, &BODY_BOLD, shown, x, 17, LEFT, TEXT)
+    };
+    if chevron {
+        let (cx, cy) = (end + CHEVRON_W / 2 + 2, 12);
+        let _ = Triangle::new(Point::new(cx - 5, cy - 2), Point::new(cx + 5, cy - 2), Point::new(cx, cy + 3))
+            .into_styled(PrimitiveStyle::with_fill(TEXT))
+            .draw(fb);
     }
     title_icons(fb, menu);
 }

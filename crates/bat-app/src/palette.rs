@@ -22,6 +22,9 @@ pub const LINE: Rgb565 = rgb(0x606060);
 pub const TEXT: Rgb565 = rgb(0xFFFFFF);
 /// Labels and secondary values.
 pub const TEXT_MUTED: Rgb565 = rgb(0xC1C1C1);
+/// Rows that can't be used, such as recordings that can't be played: dimmer than TEXT_MUTED and
+/// still 6:1 against the black background.
+pub const TEXT_DIM: Rgb565 = rgb(0x8C8C8C);
 /// The selected mode button and the heterodyne marker: the X8's blue.
 pub const ACCENT: Rgb565 = rgb(0x0092E5);
 /// Recording: the X8's red.

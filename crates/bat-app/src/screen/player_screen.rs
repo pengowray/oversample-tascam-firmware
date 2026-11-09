@@ -150,7 +150,7 @@ fn list_row(player: &Player, fb: Fb, e: &FileEntry, y: i32, highlighted: bool, c
         rounded(fb, Rectangle::new(Point::new(4, y + 1), Size::new(312, LIST_ROW_H as u32 - 2)), 6, PANEL);
     }
     let playable = !matches!(e.info, FileInfo::NotPlayable(_));
-    let name_colour = if playable { TEXT } else { TEXT_MUTED };
+    let name_colour = if playable { TEXT } else { TEXT_DIM };
     let mut x = 12;
     if current {
         let _ = Triangle::new(Point::new(12, y + 9), Point::new(12, y + 19), Point::new(20, y + 14))
@@ -181,7 +181,7 @@ fn list_row(player: &Player, fb: Fb, e: &FileEntry, y: i32, highlighted: bool, c
                 NotPlayable::NoAudio => NOT_PLAYABLE_NO_AUDIO,
                 NotPlayable::Unreadable => NOT_PLAYABLE_UNREADABLE,
             };
-            text(fb, &SMALL, why, 12, second, LEFT, TEXT_MUTED);
+            text(fb, &SMALL, why, 12, second, LEFT, TEXT_DIM);
         }
         _ => {
             text(fb, &SMALL, format_args!("{}", Details { player, e }), 12, second, LEFT, TEXT_MUTED);
