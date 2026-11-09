@@ -56,6 +56,10 @@ SECTIONS
   {
     __itcm_start = .;
     *(.text.*BatApp7process*)
+    *(.text.*BatApp10take_input*)
+    *(.text.*BatApp11make_output*)
+    *(.text.*BatApp8mix_mono*)
+    *(.text.*BatApp7live_te*)
     *(.text.*BatApp7analyse*)
     *(.text.*Meter6update*)
     *(.text.*5level*)

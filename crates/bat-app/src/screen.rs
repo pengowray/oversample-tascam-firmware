@@ -633,7 +633,9 @@ fn value_line(app: &BatApp, fb: Fb) {
         Mode::Te => {
             text(fb, &BODY, "Slower by", label, y, LEFT, TEXT_MUTED);
             text(fb, &VALUE, format_args!("{:.0}\u{d7}", app.te.factor()), x, y, LEFT, TEXT);
+            // A file playing slowed has no capture to wait for.
             match app.te_status() {
+                _ if app.playback_slowing() > 1 => 0,
                 TeStatus::Waiting => text(fb, &BODY, "Waiting for a call", 312, y, RIGHT, TEXT_MUTED),
                 TeStatus::Capturing => text(fb, &BODY, "Capturing", 312, y, RIGHT, TEXT),
                 TeStatus::Playing { .. } => {

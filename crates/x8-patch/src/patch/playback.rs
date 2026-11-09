@@ -67,6 +67,8 @@ struct Play {
     /// of the file.
     out_done: u64,
     out_total: u64,
+    /// How many times slower the open file plays (TE in BAT PLAYBACK), as set when it opened.
+    slowing: u32,
     /// The ring has given its last frame: silence follows, to play out the resampler's delay.
     at_end: bool,
     /// The app is being fed from the file (rather than nothing, while the output gets silence).
@@ -185,6 +187,7 @@ fn take_events(app: &mut BatApp<'static>) {
     let p = state();
     let ring = events();
     while let Some(event) = ring.pop() {
+        let slowing = app.playback_slowing();
         let player = app.player_mut();
         match event {
             Event::Folder { scan, index, name, len } if scan == p.scan => {
@@ -198,7 +201,9 @@ fn take_events(app: &mut BatApp<'static>) {
             }
             Event::FoldersDone { request, ok } if request == p.folders => player.folders_finished(ok),
             Event::Opened { command, id, format, frame, skip, limit } if command == p.command => {
-                p.resampler.set_rates(format.sample_rate, OUT_RATE);
+                // Slowing the file is converting it to a rate that many times higher.
+                p.slowing = slowing;
+                p.resampler.set_rates(format.sample_rate, OUT_RATE * p.slowing);
                 p.format = Some(format);
                 p.start = frame;
                 p.limit = limit;
@@ -240,6 +245,12 @@ pub(super) fn play(app: &mut BatApp<'static>, time_blocks: u32) {
     take_events(app);
     pass_requests(app);
     let p = state();
+    if p.ready && app.playback_slowing() != p.slowing {
+        // TE chosen or left, or its factor changed: open the file again at the place reached.
+        p.ready = false;
+        app.player_mut().reopen();
+        pass_requests(app);
+    }
     if p.ready && app.player().playing() {
         if !p.feeding {
             // A new place in the file, or after a pause: the app's history does not lead into it.
@@ -249,7 +260,7 @@ pub(super) fn play(app: &mut BatApp<'static>, time_blocks: u32) {
         make_sound(app, p, start, time_blocks);
         if let Some(format) = p.format {
             let queued = OUT_WRITE.load(Relaxed).wrapping_sub(OUT_READ.load(Acquire));
-            let heard = heard_frame(p.start, p.out_done, queued, format.sample_rate, OUT_RATE);
+            let heard = heard_frame(p.start, p.out_done, queued, format.sample_rate, OUT_RATE * p.slowing);
             app.player_mut().set_position(heard.min(format.frames()));
         }
         if p.out_done >= p.out_total {
@@ -306,7 +317,8 @@ fn make_sound(app: &mut BatApp<'static>, p: &mut Play, start: u32, time_blocks: 
         let mut made = 0;
         while made < want {
             // About what the resampler needs for the rest of this step, and one more.
-            let needed = ((want - made) as u64 * u64::from(format.sample_rate)).div_ceil(u64::from(OUT_RATE)) + 1;
+            let out_rate = u64::from(OUT_RATE * p.slowing);
+            let needed = ((want - made) as u64 * u64::from(format.sample_rate)).div_ceil(out_rate) + 1;
             let needed = (needed as usize).min(IN_STEP);
             let taken_before = RING_TAKEN.load(Relaxed);
             if !p.at_end && p.limit.saturating_sub(taken_before) < align {

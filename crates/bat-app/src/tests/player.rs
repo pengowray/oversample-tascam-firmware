@@ -283,3 +283,51 @@ fn choosing_another_folder_lists_it_and_stops_the_file() {
     assert_eq!(app.player().transport(), Transport::NoFile);
     assert!(app.player().files().is_empty());
 }
+
+#[test]
+fn te_in_bat_playback_plays_the_slowed_file_and_analyses_it_at_real_speed() {
+    use crate::{Mode, TeStatus};
+    let mut storage = vec![0.0f32; 1024];
+    let mut app = BatApp::new(FS, &mut storage, buffers());
+    app.set_input_kind(InputKind::Playback);
+    app.set_mode(Mode::Het);
+    assert_eq!(app.playback_slowing(), 1);
+    app.set_mode(Mode::Te);
+    let slowing = app.playback_slowing();
+    assert_eq!(slowing, 10);
+    // A 40 kHz tone slowed 10 times is 4 kHz.
+    let n = 25_600;
+    let tone: Vec<f32> = (0..n).map(|i| 0.5 * (i as f32 * 4_000.0 / FS * core::f32::consts::TAU).sin()).collect();
+    let (mut out_l, mut out_r) = (vec![0.0f32; n], vec![0.0f32; n]);
+    let before = app.samples;
+    app.process(&tone, &tone, &mut out_l, &mut out_r);
+    // Every 10th sample is analysed.
+    assert_eq!(app.samples - before, (n / slowing as usize) as u64);
+    // The slowed file is heard, without waiting for a call.
+    let heard = out_l[n / 2..].iter().fold(0.0f32, |m, x| m.max(x.abs()));
+    assert!(heard > 0.01, "peak {heard}");
+    assert_eq!(app.te_status(), TeStatus::Waiting);
+    // Live input keeps the expander.
+    app.set_input_kind(InputKind::Live);
+    assert_eq!(app.playback_slowing(), 1);
+}
+
+#[test]
+fn reopen_keeps_the_place_and_whether_it_plays() {
+    let mut storage = vec![0.0f32; 1024];
+    let mut files = vec![FileEntry::new(0, 0, b"", 0, 0, 0); 3];
+    let mut app = listed(&mut storage, &mut files);
+    app.player_mut().choose(0);
+    app.player_mut().opened();
+    app.player_mut().take_request();
+    app.player_mut().set_position(5_000);
+    app.player_mut().reopen();
+    let id = app.player().current().unwrap().id;
+    assert_eq!(app.player_mut().take_request(), Some(Request::Open { id, frame: 5_000 }));
+    app.player_mut().opened();
+    assert_eq!(app.player().transport(), Transport::Playing);
+    app.player_mut().play_pause();
+    app.player_mut().reopen();
+    app.player_mut().opened();
+    assert_eq!(app.player().transport(), Transport::Paused);
+}

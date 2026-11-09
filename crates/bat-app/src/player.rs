@@ -543,6 +543,19 @@ impl<'a> Player<'a> {
         }
     }
 
+    /// Open the chosen file again at the place reached, playing or paused as before: for the host
+    /// when the way it plays the file changes (TE's factor, or TE chosen or left).
+    pub fn reopen(&mut self) {
+        let Some(id) = self.current else { return };
+        let play = match self.transport {
+            Transport::Playing => true,
+            Transport::Opening => self.play_after_open,
+            Transport::Paused if !self.closed => false,
+            _ => return,
+        };
+        self.open(id, self.position, play);
+    }
+
     /// Go to `fraction` (0 to 1) of the way through the chosen file, playing or paused as before.
     pub fn seek(&mut self, fraction: f32) {
         let (Some(id), Some(audio)) = (self.current, self.current_audio()) else { return };

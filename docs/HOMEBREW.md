@@ -11,8 +11,8 @@ says "installed" if its build ran on the unit, and "never installed" if a later
 build replaced it first. B250 hung as soon as a bat screen opened (Step 28 says
 why). The last build installed is B254 (Step 31), whose BAT PLAYBACK plays files
 from the card. GUANO metadata, setting the clock from phone chimes and the location
-log have not been checked on a unit yet. The current build is B255 (Step 32, a
-choice of folder in BAT PLAYBACK), which has not been installed.
+log have not been checked on a unit yet. The current build is B256 (Step 33, TE in BAT PLAYBACK
+slows the whole file), which has not been installed.
 
 **Hardware tested.** One X8. Its Information screen (GENERAL SETTINGS > SYSTEM >
 Information) shows `F/W: Version 2.03 Build 217` and `H/W: Version 1.00 Build 010`.
@@ -2356,6 +2356,47 @@ B241 or an earlier build. All the checks in `tools/x8patch.py` pass on this file
 
 1. **Start and stop.** With Phone remote on and the phone page reloaded, do `Start recording` and `Stop recording` work as before?
 2. **Old phone page.** If a phone still has the old page cached, its commands should do nothing at all. Reload the page.
+
+## Step 33 test file: TE in BAT PLAYBACK slows the whole file (built 2026-11-09, not yet installed)
+
+`work/patch32/#PortaX8_0256.203` (B256, SHA-256 `2b58eb61…e2193cee8`). Includes steps 11 to 32. Install this file in place of
+any earlier build. All the checks in `tools/x8patch.py` pass on this file. No new stock hook site (header version 18).
+
+The owner asked for a "real" TE in BAT PLAYBACK: the file played slower, for example 8 times, rather than TE's capture of
+half a second after each call. With a file there is no buffer to fill, so the whole file can play slowed, with no gaps.
+
+**On screen.** In BAT PLAYBACK, TE plays the file slowed by its factor (5, 8, 10, 16, 20 or 32, chosen with the wheel as
+before; 10 at start-up). "Slower by 10x" stays; the live TE status ("Waiting for a call") is not shown. The waterfall, the
+detector and the last-call panel show the file at its real speed and real frequencies, and scroll in file time, so they move
+that many times slower. The time and seek bar count file time. A stereo file plays in stereo when Listen to is Both. MARK
+does not start a capture. BAT DETECTOR's TE is unchanged.
+
+**How it works.** Slowing a file N times is the same as converting it to a rate N times higher and playing that at 192 kHz,
+so the DSP task sets the resampler to `sample_rate` into `192 kHz x N` (`BatApp::playback_slowing`). The app hears that input
+as it is (TE then works like 1:1) and analyses every Nth sample, which is the file at its real speed at 192 kHz. Changing the
+factor, or choosing TE or another mode while a file is open, opens the file again at the place reached (`Player::reopen`).
+`process_chunk` is split into `take_input` (meters, decoders, analysis) and `make_output` (the modes, volume, fades); the
+linker script keeps both in ITCM.
+
+For files above 192 kHz, sound in the file above 96 kHz folds back into the waterfall in TE, since every Nth sample is
+taken without a filter first; what is heard is not affected. The resampler's cost in TE is that of a 32-tap conversion for
+every file (a 192 kHz file otherwise plays with no conversion).
+
+| Item | B255 | B256 | Limit |
+|---|---|---|---|
+| ITCM | 81.6 KB | 76.4 KB | 89.2 KB |
+| DTCM | 149.1 KB | 149.1 KB | 152.8 KB |
+| `.noinit`, the end of the patch's memory | ends at 0x818febf0 | ends at 0x818fda70 | 0x81900000 |
+
+ITCM is smaller because the app's `process` was one function with much of its code in it twice; the parts are now separate.
+
+**What to check.**
+
+1. Play a 192 kHz take in BAT PLAYBACK and choose TE: is it heard slowed (10x at first), without gaps? Turn the wheel: does
+   the factor change, and does playing carry on from the same place?
+2. Do the waterfall and the last-call panel show calls at their real frequencies, scrolling slowly?
+3. Note `dsp` on the debug line in TE, for a 192 kHz file and a 384 kHz one.
+4. Switch from TE to HET and back while playing: does it carry on from the same place?
 
 ## Step 32 test file: BAT PLAYBACK lists any folder at the top of the card (built 2026-11-09, not yet installed)
 

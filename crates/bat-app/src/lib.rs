@@ -454,6 +454,9 @@ pub struct BatApp<'a> {
     fd_index: usize,
     te: TimeExpander<'a>,
     te_index: usize,
+    /// While a file plays slowed: samples of the slowed input to pass over before the next one
+    /// analysed.
+    slowed_phase: usize,
     /// Sample time of the last time-expansion trigger, for the screen.
     te_trigger: Option<u64>,
     pitch: PitchShifter,
@@ -662,6 +665,7 @@ impl<'a> BatApp<'a> {
             field!((*this).fd_index).write(2);
             field!((*this).te).write(TimeExpander::new(sample_rate, te_storage));
             field!((*this).te_index).write(2);
+            field!((*this).slowed_phase).write(0);
             field!((*this).te_trigger).write(None);
             field!((*this).pitch).write(PitchShifter::unconfigured());
             (*field!((*this).pitch)).init(sample_rate);
@@ -1463,7 +1467,7 @@ impl<'a> BatApp<'a> {
             }
             Button::Mark => {
                 self.marks.push(self.samples);
-                if self.mode == Mode::Te && matches!(self.te.state(), ExpanderState::Idle) {
+                if self.live_te() {
                     self.trigger_te();
                 }
             }
@@ -1861,7 +1865,7 @@ impl<'a> BatApp<'a> {
     /// both ears. The app does not read the pans, so two inputs panned to one side stay in
     /// that ear.
     fn wants_stereo(&self) -> bool {
-        matches!(self.mode, Mode::Het | Mode::Comb | Mode::Pitch | Mode::Thru)
+        (matches!(self.mode, Mode::Het | Mode::Comb | Mode::Pitch | Mode::Thru) || self.playback_slowing() > 1)
             && self.source() == MonitorSource::Both
             && self.inputs[1].is_some()
     }
@@ -1875,14 +1879,65 @@ impl<'a> BatApp<'a> {
     /// [`is_stereo`](Self::is_stereo)) `first` is heard in `out_l` and `second` in
     /// `out_r`; otherwise both outputs carry the same sound. All four slices must have
     /// the same length; any length works.
+    ///
+    /// In BAT PLAYBACK with TE chosen, the host plays the file slowed by
+    /// [`playback_slowing`](Self::playback_slowing), so the input is already slowed: it is heard
+    /// as it is, and every that-many-th sample (the file at its real speed) is analysed.
     pub fn process(&mut self, first: &[f32], second: &[f32], out_l: &mut [f32], out_r: &mut [f32]) {
         let n = first.len().min(second.len()).min(out_l.len()).min(out_r.len());
+        let slowing = self.playback_slowing() as usize;
         let mut start = 0;
         while start < n {
             let end = (start + CHUNK).min(n);
-            self.process_chunk(&first[start..end], &second[start..end], &mut out_l[start..end], &mut out_r[start..end]);
+            let (first, second) = (&first[start..end], &second[start..end]);
+            let (out_l, out_r) = (&mut out_l[start..end], &mut out_r[start..end]);
+            if slowing > 1 {
+                self.process_slowed_chunk(slowing, first, second, out_l, out_r);
+            } else {
+                self.take_input(first, second);
+                self.make_output(first, second, out_l, out_r);
+                self.count_samples(first.len());
+            }
             start = end;
         }
+    }
+
+    /// How many times slower the host plays the file: TE's factor in BAT PLAYBACK with TE chosen,
+    /// otherwise 1. See [`process`](Self::process).
+    pub fn playback_slowing(&self) -> u32 {
+        if self.input_kind == InputKind::Playback && self.mode == Mode::Te {
+            TE_FACTORS[self.te_index] as u32
+        } else {
+            1
+        }
+    }
+
+    /// A chunk of the file slowed `slowing` times: analyse every `slowing`-th sample, and play
+    /// the chunk as it is.
+    fn process_slowed_chunk(
+        &mut self,
+        slowing: usize,
+        first: &[f32],
+        second: &[f32],
+        out_l: &mut [f32],
+        out_r: &mut [f32],
+    ) {
+        let mut real = [[0.0f32; CHUNK / 4 + 1]; 2];
+        let mut kept = 0;
+        let mut i = self.slowed_phase;
+        while i < first.len() && kept < real[0].len() {
+            real[0][kept] = first[i];
+            real[1][kept] = second[i];
+            kept += 1;
+            i += slowing;
+        }
+        self.slowed_phase = i.saturating_sub(first.len());
+        if kept > 0 {
+            self.take_input(&real[0][..kept], &real[1][..kept]);
+            self.count_samples(kept);
+        }
+        self.mix_mono(first, second);
+        self.make_output(first, second, out_l, out_r);
     }
 
     /// Skip the analysis of the chunks passed from now on, or go back to
@@ -1916,6 +1971,7 @@ impl<'a> BatApp<'a> {
     pub fn input_lost(&mut self, frames: u32) {
         self.input_gap = true;
         self.lost_frames = self.lost_frames.saturating_add(frames);
+        self.slowed_phase = 0;
         self.samples += frames as u64;
         if self.recording {
             self.recorded_samples += frames as u64;
@@ -1939,7 +1995,9 @@ impl<'a> BatApp<'a> {
         }
     }
 
-    fn process_chunk(&mut self, first: &[f32], second: &[f32], out_l: &mut [f32], out_r: &mut [f32]) {
+    /// The meters, the decoders and the analysis, for a chunk of the inputs at their real speed.
+    /// Leaves the chunk's mono mix in `mono`.
+    fn take_input(&mut self, first: &[f32], second: &[f32]) {
         let len = first.len();
         let chunk_s = len as f32 / self.sample_rate;
         let peak = |x: &[f32]| x.iter().fold(0.0f32, |m, v| m.max(v.abs()));
@@ -1960,15 +2018,7 @@ impl<'a> BatApp<'a> {
         self.collect_phone_readings();
         self.stages.lap(Stage::Decoders);
 
-        let source = self.source();
-        let mono = &mut self.mono[..len];
-        for ((m, &a), &b) in mono.iter_mut().zip(first).zip(second) {
-            *m = match source {
-                MonitorSource::First => a,
-                MonitorSource::Second => b,
-                MonitorSource::Both => 0.5 * (a + b),
-            };
-        }
+        self.mix_mono(first, second);
 
         self.stages.lap(Stage::Input);
         self.detected = false;
@@ -1977,11 +2027,41 @@ impl<'a> BatApp<'a> {
         // Trigger time expansion on a marked detection. For a bat call that
         // is when it is confirmed, just after the call (the second of a
         // train), within the 50 ms the expander keeps from before its trigger.
-        if self.detected && self.mode == Mode::Te && matches!(self.te.state(), ExpanderState::Idle) {
+        // A file playing slowed is expanded already.
+        if self.detected && self.live_te() {
             self.trigger_te();
         }
-
         self.stages.lap(Stage::Analysis);
+    }
+
+    /// The chunk's mono mix of the inputs, into `mono`, as Listen to chooses.
+    fn mix_mono(&mut self, first: &[f32], second: &[f32]) {
+        let source = self.source();
+        let mono = &mut self.mono[..first.len()];
+        for ((m, &a), &b) in mono.iter_mut().zip(first).zip(second) {
+            *m = match source {
+                MonitorSource::First => a,
+                MonitorSource::Second => b,
+                MonitorSource::Both => 0.5 * (a + b),
+            };
+        }
+    }
+
+    /// Whether TE is chosen and its expander waits for a call: not while a file plays slowed.
+    fn live_te(&self) -> bool {
+        self.mode == Mode::Te && self.playback_slowing() == 1 && matches!(self.te.state(), ExpanderState::Idle)
+    }
+
+    fn count_samples(&mut self, len: usize) {
+        self.samples += len as u64;
+        if self.recording {
+            self.recorded_samples += len as u64;
+        }
+    }
+
+    /// The headphone output for a chunk of the inputs, whose mono mix is in `mono`.
+    fn make_output(&mut self, first: &[f32], second: &[f32], out_l: &mut [f32], out_r: &mut [f32]) {
+        let len = first.len();
         let analysis_runs = self.analysis_runs();
         let stereo = self.wants_stereo();
         if stereo && !self.stereo {
@@ -2015,7 +2095,10 @@ impl<'a> BatApp<'a> {
         self.last_mono = mono[len - 1];
         self.stages.lap(Stage::Input);
         let mono = &self.mono[..len];
-        self.te.process(mono, &mut self.te_out[..len]);
+        let slowed = self.playback_slowing() > 1;
+        if !slowed {
+            self.te.process(mono, &mut self.te_out[..len]);
+        }
         self.stages.lap(Stage::TeRecord);
         if stereo {
             // The two inputs go straight to the modes, except in a chunk with a join fade.
@@ -2056,7 +2139,8 @@ impl<'a> BatApp<'a> {
                 Mode::Het => self.het.process(mono, out),
                 Mode::Comb => self.comb.process(mono, out),
                 Mode::Fd => self.fd.process(mono, out),
-                Mode::Te => out.copy_from_slice(&self.te_out[..len]),
+                Mode::Te if !slowed => out.copy_from_slice(&self.te_out[..len]),
+                Mode::Te => out.copy_from_slice(mono),
                 Mode::Pitch => self.pitch.process(mono, out),
                 Mode::Thru => out.copy_from_slice(mono),
             }
@@ -2086,11 +2170,6 @@ impl<'a> BatApp<'a> {
         }
         self.last_out = [out_l[len - 1], out_r[len - 1]];
         self.stages.lap(Stage::Output);
-
-        self.samples += len as u64;
-        if self.recording {
-            self.recorded_samples += len as u64;
-        }
     }
 
     /// Feed the mono chunk to the spectrum analyzer, and each finished column
