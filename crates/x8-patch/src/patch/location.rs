@@ -81,13 +81,14 @@ pub(super) fn for_take() -> Option<(i32, i32)> {
     }
 }
 
-type FileOpen = unsafe extern "C" fn(*const u8, *const u8) -> usize;
+type FileOpen = unsafe extern "C" fn(*const u16, *const u8) -> usize;
 type FileClose = unsafe extern "C" fn(usize) -> i32;
 type FileSize = unsafe extern "C" fn(usize, *mut u32) -> usize;
 type FileSeek = unsafe extern "C" fn(usize, usize, u32, u32, i32) -> i32;
 type FileWrite = unsafe extern "C" fn(*const u8, usize, usize) -> usize;
 
-const NAME: &core::ffi::CStr = c"BAT_LOCATIONS.CSV";
+/// In UTF-16, as the file functions take names; relative to the folder the takes are in.
+const NAME: [u16; 18] = x8_patch::wide::widen(b"BAT_LOCATIONS.CSV\0");
 /// Where the lines are built: in the stock header buffer, after the GUANO chunk's place.
 const LINES_AT: usize = 0x9000;
 const LINES_BYTES: usize = 0x1000;
@@ -119,9 +120,9 @@ pub(super) unsafe fn write_log() {
     let out = unsafe { slice::from_raw_parts_mut(stock::HEADER_BUFFER.add(LINES_AT), LINES_BYTES) };
     let mut lines = Lines { out, len: 0 };
     // "r+" opens the log if it is there; "w+" makes it.
-    let mut file = unsafe { open(NAME.as_ptr().cast(), c"r+".as_ptr().cast()) };
+    let mut file = unsafe { open(NAME.as_ptr(), c"r+".as_ptr().cast()) };
     if file == 0 {
-        file = unsafe { open(NAME.as_ptr().cast(), c"w+".as_ptr().cast()) };
+        file = unsafe { open(NAME.as_ptr(), c"w+".as_ptr().cast()) };
         if file == 0 || lines.write_str(LOG_HEADER).is_err() {
             return;
         }

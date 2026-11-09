@@ -6,3 +6,4 @@
 pub mod clock_record;
 pub mod file_mask;
 pub mod take_guano;
+pub mod wide;

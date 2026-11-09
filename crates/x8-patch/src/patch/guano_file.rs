@@ -69,10 +69,11 @@ unsafe fn add_guano(file: usize) -> Option<()> {
         return None;
     }
     let (phone_now, utc_offset_minutes) = super::clock::take_times();
+    let mut name = [0u8; PATH_UNITS];
     let recorder = Recorder {
         firmware: stock::FIRMWARE_VERSION,
         patch_build: patch_build(),
-        file_name: path(file).and_then(guano::file_name),
+        file_name: path(file, &mut name).and_then(guano::file_name),
         phone_now,
         utc_offset_minutes,
         location_e6: super::location::for_take(),
@@ -111,13 +112,15 @@ fn stack_left() -> Option<usize> {
 }
 
 /// The path the take's file slot holding `file` was opened with.
-fn path(file: usize) -> Option<&'static [u8]> {
-    (0..stock::FILE_SLOTS).find_map(|slot| {
-        let entry = stock::TAKE_FILES + slot * stock::TAKE_FILE_STEP;
+fn path(file: usize, out: &mut [u8; PATH_UNITS]) -> Option<&[u8]> {
+    let entry = (0..stock::FILE_SLOTS)
+        .map(|slot| stock::TAKE_FILES + slot * stock::TAKE_FILE_STEP)
         // SAFETY: the stock table of a take's open files, which only the recorder's task changes.
-        unsafe {
-            (ptr::read_volatile(entry as *const usize) == file)
-                .then(|| slice::from_raw_parts((entry + 4) as *const u8, stock::TAKE_FILE_PATH_BYTES))
-        }
-    })
+        .find(|&entry| unsafe { ptr::read_volatile(entry as *const usize) } == file)?;
+    // SAFETY: the path after the handle, in UTF-16.
+    let units = unsafe { slice::from_raw_parts((entry + 4) as *const u16, PATH_UNITS) };
+    x8_patch::wide::narrow(units, out)
 }
+
+/// Units in a take table path: 0x200 bytes of UTF-16.
+const PATH_UNITS: usize = stock::TAKE_FILE_PATH_BYTES / 2;

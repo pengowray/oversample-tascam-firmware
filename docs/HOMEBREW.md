@@ -2359,7 +2359,7 @@ B241 or an earlier build. All the checks in `tools/x8patch.py` pass on this file
 
 ## Step 30 test file: PITCH about 40% cheaper (built 2026-11-09, not yet installed)
 
-`work/patch29/#PortaX8_0253.203` (B253, SHA-256 `5a058cd9…b2dc67d66`). Includes steps 11 to 29. Install this file in place of
+`work/patch29/#PortaX8_0253.203` (B253, SHA-256 `43fb4e73…43db4ca76`). Includes steps 11 to 29. Install this file in place of
 any earlier build. All the checks in `tools/x8patch.py` pass on this file. No new stock hook site (header version 18).
 
 The aim is to make mono PITCH fit while recording. On B251 PITCH's own cost was 41 to 49 points (Step 27). PITCH is still hidden
@@ -2377,6 +2377,9 @@ the same: the figures in `pitch_shift::measurements` for steady tones, chirps an
 - **Rotations from a table.** Each moved peak's rotation comes from a 1,024-entry table, interpolated, instead of a series.
 - **Smaller.** A shifter is 17 KB (was 23 KB).
 
+**Also: file names in UTF-16.** The location log now opens `BAT_LOCATIONS.CSV` by its UTF-16 name, and GUANO's `Original
+Filename` reads the take's UTF-16 name. Both used 8-bit text before; see "Reading files from the card".
+
 | On a PC, ms per second of 192 kHz audio, no SIMD | B251 | B253 |
 |---|---|---|
 | Pitch shifter, noise | 16.1 | 9.6 |
@@ -2391,7 +2394,7 @@ chime decoders kept up at 66 while recording. Stereo PITCH would still be over 9
 |---|---|---|---|
 | ITCM | 80.6 KB | 80.8 KB | 89.2 KB |
 | DTCM | 141.1 KB | 135.1 KB | 152.8 KB |
-| `.noinit`, the end of the patch's memory | ends at 0x818f92d8 | ends at 0x818f9a08 | 0x81900000 |
+| `.noinit`, the end of the patch's memory | ends at 0x818f92d8 | ends at 0x818f99e8 | 0x81900000 |
 
 **What to check.**
 
@@ -2773,6 +2776,51 @@ the takes are opened in: the record command opens them by bare name (`sprintf("%
 where REC in state 3 pauses) while a bat take records with the switch off. Transport 4 is a REC pause and 6 a pause by an event;
 both are counted. MARK in state 3 adds a mark at the recorded position (`FUN_80df217c(0, FUN_80dae75c())`), so a MARK posted
 right after a resume marks where the gap is.
+
+## Reading files from the card (2026-11-09)
+
+Read in V2.03 with the Ghidra project, for a bat player that reads WAV files itself. "Read" means seen in decompiled code;
+"inferred" means worked out from the callers. Not yet run on a unit.
+
+**File names are UTF-16LE, ending in a 0 unit.** Only the mode ("r", "r+", "w", "w+") is an 8-bit C string. The stock code
+widens a name before opening it: `FUN_80da26b8` widens "C:\dr-1.sys" with `FUN_80de2668` and opens it with `FUN_80de7366`, and
+the record command converts each take name with `FUN_80de275c`. The take file table at 0x81cbacac holds those UTF-16 names
+(copied with `FUN_80de2494`). Until B253 the patch passed `BAT_LOCATIONS.CSV` as 8-bit text and read the take name as 8-bit
+text, so the location log would have opened a garbled name and GUANO's `Original Filename` would have held one character.
+`crates/x8-patch/src/wide.rs` converts both ways.
+
+| Address | What it does | Arguments, result | Read or inferred |
+|---|---|---|---|
+| `FUN_80de7366` | Open, through a wrapper | `(path, mode)`: path relative to the current folder, or absolute ("C:\..."). Returns a FILE pointer, 0 if it fails. Builds the path in a shared buffer at 0x81900368 with no lock | Read |
+| `FUN_80dfee00` | Open, the core function | `(absolute path, mode)`. No current folder and no shared buffer | Read |
+| `FUN_80de74c0` | Read | `(buffer, bytes, file)`: returns the bytes read, 0 at the end or on an error | Read |
+| `FUN_80de74b6` | Write | `(buffer, bytes, file)` | Read |
+| `FUN_80de74cc` | Seek | `(file, unused, offset low, offset high, whence)`: whence 0 from the start, 1 from here, 2 from the end. Returns 0 or -1 | Read |
+| `FUN_80de77ce` | Size | `(file, *u32)`: the low 32 bits. Returns 0 | Read |
+| `FUN_80de744c` | Close | `(file)`, for files from either open | Read |
+| `FUN_80de777a` | Change folder | `(path)`: the current folder, shared by every task | Read |
+| `FUN_80e0d95c` | Open a folder, core | `(absolute path)` | Read |
+| `FUN_80de76fc` | Open a folder, wrapper | `(path, use_path)`: with `use_path` 0 it opens the current folder | Read |
+| `FUN_80de7732` | Next entry | `(folder)`: an entry, 0 at the end. On exFAT the entry is in one static buffer at 0x81d45bc4 | Read |
+| `FUN_80de772e` | Close a folder | `(folder)` | Read |
+| `FUN_80df51cc` | Stock RIFF parser | `(buffer, length, *data offset, flag, slot)`: returns the data size | Inferred |
+
+**Folder entries.** An entry E has at E+0x00 a pointer to a 32-byte FAT directory entry: +0x0B attributes (0x10 folder, 0x02
+hidden), +0x0E time and +0x10 date in FAT's packed form, +0x1C size. The long name is at E+0x4E in UTF-16, up to 255
+characters. Only 2 folder handles exist in the whole system.
+
+**Folders.** Takes go in `C:\SOUND` and its folders, named `FOLDER_` and a 4-digit number. Browse goes 2 folder levels deep.
+
+**Several tasks.** The core file system has semaphores (3 s timeouts) for its file table, folder table, volume and FAT, and one
+around every card transfer. The wrapper layer (open with a relative path, change folder, the shared path buffer) has none, and
+the recorder, Browse and the player use it from task 4. So the bat player should open files by absolute path with the core
+open, never change folder, and use only file handles after that. Reads wait for the card's interrupt, so they must run in a
+task, and they can take a long time when the card retries (up to 10 tries of up to 4 s), so they should not run in the DSP task.
+Reads during a take would compete with the recorder's writes.
+
+**Reads.** One read can be any length. Runs of whole sectors go straight to the caller's buffer by DMA; a buffer that is not
+4-byte aligned goes through a 512-byte bounce buffer, a sector at a time. Buffers should be 32-byte aligned. The stock player
+reads 256 KB at a time on task 6.
 
 ## Firmware map (V2.03, in progress)
 

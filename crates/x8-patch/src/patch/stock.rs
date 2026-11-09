@@ -215,7 +215,7 @@ pub const FILE_WRITE: usize = 0x80de_74b7;
 pub const HEADER_BUFFER: *mut u8 = 0x87b4_0190 as *mut u8;
 pub const HEADER_BUFFER_BYTES: usize = 0x4_0000;
 /// A take's open files, one entry for each file slot: the file handle (0 when the slot is not
-/// written), then the path it was opened with, a C string of up to 0x200 bytes
+/// written), then the path it was opened with, in UTF-16 ending in a 0 unit, up to 0x200 bytes
 /// (block 0x81cb7a48 + 0x3264, filled by `FUN_80db19b8`).
 pub const TAKE_FILES: usize = 0x81cb_acac;
 pub const TAKE_FILE_STEP: usize = 0x204;
