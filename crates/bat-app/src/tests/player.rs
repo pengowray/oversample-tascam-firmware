@@ -19,7 +19,8 @@ fn entry(id: u16, name: &str, d: u16, t: u16) -> FileEntry {
     e
 }
 
-/// An app in BAT PLAYBACK with three files listed: ids 0 (oldest) to 2 (newest).
+/// An app in BAT PLAYBACK with three files listed: ids 0 (oldest) to 2 (newest), named so that
+/// BROWSE's order puts the newest first.
 fn listed<'a>(storage: &'a mut [f32], files: &'a mut [FileEntry]) -> BatApp<'a> {
     let mut app = BatApp::new(FS, storage, buffers());
     app.set_input_kind(InputKind::Playback);
@@ -27,8 +28,8 @@ fn listed<'a>(storage: &'a mut [f32], files: &'a mut [FileEntry]) -> BatApp<'a> 
     player.set_storage(files);
     player.scan_started();
     player.add_file(entry(1, "B.wav", date(2026, 3, 2), 0));
-    player.add_file(entry(0, "A.wav", date(2026, 3, 1), 0));
-    player.add_file(entry(2, "C.wav", date(2026, 3, 3), 0));
+    player.add_file(entry(0, "C.wav", date(2026, 3, 1), 0));
+    player.add_file(entry(2, "A.wav", date(2026, 3, 3), 0));
     player.scan_finished(true);
     app
 }
@@ -38,11 +39,11 @@ fn names(app: &BatApp) -> Vec<String> {
 }
 
 #[test]
-fn the_list_is_newest_first_and_keeps_only_what_fits() {
+fn the_list_is_in_browse_order_and_keeps_only_what_fits() {
     let mut storage = vec![0.0f32; 1024];
     let mut files = vec![FileEntry::new(0, 0, b"", 0, 0, 0); 3];
     let mut app = listed(&mut storage, &mut files);
-    assert_eq!(names(&app), ["C.wav", "B.wav", "A.wav"]);
+    assert_eq!(names(&app), ["A.wav", "B.wav", "C.wav"]);
     app.player_mut().add_file(entry(3, "D.wav", date(2026, 3, 4), 0));
     assert_eq!(app.player().files().len(), 3);
     assert_eq!(app.player().dropped(), 1);
@@ -330,4 +331,36 @@ fn reopen_keeps_the_place_and_whether_it_plays() {
     app.player_mut().reopen();
     app.player_mut().opened();
     assert_eq!(app.player().transport(), Transport::Paused);
+}
+
+/// BROWSE's order as one list: in each folder its folders first, by name, then its files, by name,
+/// with capitals before small letters and digits before both. The newest file is highlighted.
+#[test]
+fn the_list_follows_browse_with_folders_first_and_the_newest_highlighted() {
+    let mut storage = vec![0.0f32; 1024];
+    let mut files = vec![FileEntry::new(0, 0, b"", 0, 0, 0); 8];
+    let mut app = BatApp::new(FS, &mut storage, buffers());
+    app.set_input_kind(InputKind::Playback);
+    let player = app.player_mut();
+    player.set_storage(&mut files);
+    player.scan_started();
+    player.add_folder(1, b"FOLDER_0001");
+    player.add_folder(2, b"FOLDER_0001/below");
+    player.add_folder(3, b"BATS");
+    let in_folder = |id, folder, name: &str, day| {
+        let mut e = entry(id, name, date(2026, 3, day), 0);
+        e.folder = folder;
+        e
+    };
+    player.add_file(in_folder(0, 0, "b.wav", 1));
+    player.add_file(in_folder(1, 0, "B.wav", 2));
+    player.add_file(in_folder(2, 0, "_x.wav", 3));
+    player.add_file(in_folder(3, 0, "1.wav", 4));
+    player.add_file(in_folder(4, 1, "Z.wav", 5));
+    player.add_file(in_folder(5, 2, "y.wav", 9));
+    player.add_file(in_folder(6, 3, "c.wav", 6));
+    player.scan_finished(true);
+    assert_eq!(names(&app), ["c.wav", "y.wav", "Z.wav", "1.wav", "B.wav", "_x.wav", "b.wav"]);
+    // y.wav, in FOLDER_0001/below, is the newest.
+    assert_eq!(app.player().list.highlight, 1);
 }

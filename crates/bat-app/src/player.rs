@@ -2,8 +2,8 @@
 //!
 //! The host scans the card, reads each file's header, opens the chosen file and feeds its audio
 //! through [`BatApp::process`](crate::BatApp::process). This module keeps the list in the order
-//! the screen shows it (newest first), the transport state the screen draws, and the requests the
-//! host carries out ([`Request`]).
+//! the screen shows it (BROWSE's order), the transport state the screen draws, and the requests
+//! the host carries out ([`Request`]).
 
 /// Bytes kept of a file's name. Longer names are cut short in the list, and cannot be opened.
 pub const NAME_BYTES: usize = 48;
@@ -49,13 +49,9 @@ impl FileEntry {
         core::str::from_utf8(&self.name[..self.name_len as usize]).unwrap_or("?")
     }
 
-    /// Newer files sort first; files from the same moment, by name, last name first.
-    fn newer_than(&self, other: &FileEntry) -> bool {
-        let key = |e: &FileEntry| ((e.date as u32) << 16) | e.time as u32;
-        match key(self).cmp(&key(other)) {
-            core::cmp::Ordering::Equal => self.name[..self.name_len as usize] > other.name[..other.name_len as usize],
-            order => order.is_gt(),
-        }
+    /// The card's date and time, for comparing which file is newer.
+    fn when(&self) -> u32 {
+        ((self.date as u32) << 16) | self.time as u32
     }
 
     /// (year, month 1 to 12, day, hour, minute), or None if the date is not set.
@@ -400,7 +396,21 @@ impl<'a> Player<'a> {
         self.top_scan = if ok { Scan::Done } else { Scan::Failed };
     }
 
-    /// Add a file, in date order, newest first.
+    /// A file's place in BROWSE's order: its folders from the top, then its name. BROWSE lists a
+    /// folder's folders before its files, each by name compared character by character, so capitals
+    /// come before small letters (docs/HOMEBREW.md, "BROWSE's order"). As one list, that puts the
+    /// files of a folder's folders before the folder's own files. A folder past [`FOLDERS`] has no
+    /// name kept, and its files sort with the folder listed.
+    fn browse_key<'s>(&'s self, e: &'s FileEntry) -> impl Iterator<Item = (bool, &'s [u8])> + 's {
+        let folders = if e.folder == 0 { None } else { self.folder_name(e.folder) };
+        folders
+            .into_iter()
+            .flat_map(|path| path.split('/'))
+            .map(|folder| (false, folder.as_bytes()))
+            .chain(core::iter::once((true, &e.name[..e.name_len as usize])))
+    }
+
+    /// Add a file, in BROWSE's order.
     pub fn add_file(&mut self, entry: FileEntry) {
         if self.count == self.files.len() {
             self.dropped += 1;
@@ -413,7 +423,10 @@ impl<'a> Player<'a> {
             self.current = Some(entry.id);
             self.keep = None;
         }
-        let at = self.files[..self.count].iter().position(|e| entry.newer_than(e)).unwrap_or(self.count);
+        let at = self.files[..self.count]
+            .iter()
+            .position(|e| self.browse_key(&entry).cmp(self.browse_key(e)).is_lt())
+            .unwrap_or(self.count);
         self.files.copy_within(at..self.count, at + 1);
         self.files[at] = entry;
         self.count += 1;
@@ -427,6 +440,14 @@ impl<'a> Player<'a> {
 
     pub fn scan_finished(&mut self, ok: bool) {
         self.scan = if ok { Scan::Done } else { Scan::Failed };
+        // With no file chosen yet, the newest file is highlighted, as BROWSE highlights the latest
+        // take, so the take just recorded is one press away. A highlight already moved stays.
+        if self.current.is_none() && self.keep.is_none() && self.list == ListView::default() {
+            let newest = self.files[..self.count].iter().enumerate().max_by_key(|&(i, e)| (e.when(), i));
+            if let Some((row, _)) = newest {
+                self.list.move_highlight(row as i32, self.count, crate::layout::LIST_ROWS);
+            }
+        }
         if self.keep.take().is_some() {
             // The chosen file is gone.
             self.transport = Transport::NoFile;

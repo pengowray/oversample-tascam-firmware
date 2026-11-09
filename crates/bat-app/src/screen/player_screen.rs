@@ -27,7 +27,8 @@ pub(super) const READ_FOLDERS_FAILED_HELP: &str = "Check the card, tap Back, the
 pub(super) const NO_FOLDERS: &str = "No folders on the card";
 pub(super) const NO_FOLDERS_HELP: &str = "WAV files need to be in a folder to play here";
 pub(super) const DEFAULT_FOLDER_NOTE: &str = "Where the X8 saves its recordings";
-pub(super) const NEWEST_FIRST: &str = "newest first";
+/// The list is in the order the X8's BROWSE shows the same files.
+pub(super) const LIST_ORDER: &str = "in BROWSE order";
 pub(super) const NOT_PLAYABLE_NOT_WAV: &str = "Can't play: named .wav but not a WAV file";
 pub(super) const NOT_PLAYABLE_UNSUPPORTED: &str = "Can't play: unsupported WAV (8-bit, compressed or RF64)";
 pub(super) const NOT_PLAYABLE_NO_AUDIO: &str = "Can't play: no audio in the file";
@@ -133,9 +134,9 @@ pub(super) fn files(app: &BatApp, fb: Fb) {
                 LEFT,
                 TEXT,
             );
-            // "newest first" says nothing about one row.
+            // The order says nothing about one row.
             if total > 1 {
-                text(fb, &BODY, format_args!(", {NEWEST_FIRST}"), x, LIST_HEADING_BASELINE, LEFT, TEXT_MUTED);
+                text(fb, &BODY, format_args!(", {LIST_ORDER}"), x, LIST_HEADING_BASELINE, LEFT, TEXT_MUTED);
             }
         }
     }
