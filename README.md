@@ -15,7 +15,7 @@ firmware is not included: the patcher changes your own copy of the official upda
 
 Experimental. Earlier builds have run on one X8 (F/W Version 2.03 Build 217, H/W Version 1.00
 Build 010, as GENERAL SETTINGS > SYSTEM > Information shows them). Other hardware versions are
-untested. The current build is B256. The optional AK-BT1 Bluetooth adapter
+untested. The current build is B257. The optional AK-BT1 Bluetooth adapter
 has not been tried with the patch. [docs/HOMEBREW.md](docs/HOMEBREW.md) lists what each build changed
 and what to check.
 

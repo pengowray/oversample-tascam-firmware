@@ -2357,6 +2357,57 @@ B241 or an earlier build. All the checks in `tools/x8patch.py` pass on this file
 1. **Start and stop.** With Phone remote on and the phone page reloaded, do `Start recording` and `Stop recording` work as before?
 2. **Old phone page.** If a phone still has the old page cached, its commands should do nothing at all. Reload the page.
 
+## Step 34 test file: phone commands for the clock and listening mode, a Phone tab with a QR code, BROWSE's order, the logo screen (built 2026-11-10, not yet installed)
+
+`work/patch33/#PortaX8_0257.203` (B257, SHA-256 `603c95a2…b65581333`). Includes steps 11 to 33. Install this file in place of
+any earlier build. All the checks in `tools/x8patch.py` pass on this file. No new stock hook site (header version 18). The
+chime crate is pinned to Oversample commit 31dd8e3.
+
+**Phone remote.** Two new commands, in format version 1 ([PHONE_REMOTE.md](PHONE_REMOTE.md)): 3 sets the clock to the
+chime's time, and 4 picks a listening mode (argument 1 HET, 2 COMB, 3 FD, 4 TE, 5 PITCH, 6 1:1). The phone page
+([remote.oversample.com](https://remote.oversample.com/#x8)) now has Set X8 clock as its main button, the five listening
+modes the X8 offers, and plays each command once. The X8 sets its clock from a set clock chime whatever the switch below
+the remote panel says; that switch, renamed "Set clock from all chimes", now covers only start, stop and mode chimes. A set
+clock chime also works on the PHONE TIME screen, with Phone remote on or off. The app changes the mode itself, as the mode
+buttons do; PITCH, hidden on the X8, gets one low note and "Phone asked for PITCH. / The X8 is too slow for it." Set clock
+and mode changes beep one high note. A set clock during a take beeps when the chime is read, says "Phone: clock will be set
+/ when recording stops.", and the clock is set after the take as before. The host's remote code now gets only start and
+stop (`RecorderCommand`).
+
+**Phone tab.** SETTINGS has four tabs: Listen, Record, Phone, Tests. Phone holds the phone remote panel and its clock switch
+(moved from Record), the Phone time button (moved from Tests), and a QR code for `https://remote.oversample.com/#x8` with
+the address beside it. The code is version 2, level M, 5 px a module on a white card with a 3-module margin; it is stored as
+bits in `crates/bat-app/src/qr.rs`, and the tests rebuild it with a QR encoder and read it back from the drawn screen.
+
+**BAT PLAYBACK's order.** The list follows BROWSE: in each folder, its folders first, then its files, each by name compared
+as UTF-16 code units, so capitals come before small letters. As one list, the files of a folder's folders come before the
+folder's own files. The heading says "in BROWSE order". With no file chosen, the newest file is highlighted. Read in V2.03:
+BROWSE builds its list in `FUN_80dd04c4` and sorts each folder's children with `FUN_80df469c` (an unstable quicksort) and
+the comparator at 0x80dd0d40: the type word (1 folder, 1000 file), then `FUN_80de2584`, a plain wcscmp. There is no sort
+setting.
+
+**Logo screen.** The bat and "Oversample Edition" in place of TASCAM's logo at start-up and power-off, from
+[The logo screen](#the-logo-screen-2026-11-10). This is its first build.
+
+| Item | B256 | B257 | Limit |
+|---|---|---|---|
+| ITCM | 76.4 KB | 76.7 KB | 89.2 KB |
+| DTCM | 149.1 KB | 149.1 KB | 152.8 KB |
+| `.noinit`, the end of the patch's memory | ends at 0x818fda70 | ends at 0x818ff9c0 | 0x81900000 |
+
+The patch's memory has 1.6 KB left before 0x81900000. The next feature that adds code or state needs room found first.
+
+**What to check.**
+
+1. Start-up and power-off: the logo screen shows the bat and "Oversample Edition".
+2. SETTINGS, Phone tab: scan the QR code with a phone. Does it open remote.oversample.com on the Tascam X8 tab?
+3. With Phone remote on and BAT DETECTOR open, press Set X8 clock on the phone: one high note, "Phone: clock set", and the
+   clock right in GENERAL SETTINGS. Then during a take: "Phone: clock will be set / when recording stops.", set after STOP.
+4. Press each listening mode on the phone: one high note, the mode button changes, "Phone: listening mode COMB".
+5. Start recording and Stop recording still work, each pressed once.
+6. On the PHONE TIME screen with Phone remote off, press Set X8 clock on the phone: is the clock set?
+7. BAT PLAYBACK: is the list in the same order as BROWSE, and is the newest file highlighted?
+
 ## Step 33 test file: TE in BAT PLAYBACK slows the whole file (built 2026-11-09, not yet installed)
 
 `work/patch32/#PortaX8_0256.203` (B256, SHA-256 `2b58eb61…e2193cee8`). Includes steps 11 to 32. Install this file in place of
