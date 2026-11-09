@@ -14,11 +14,12 @@ use bat_app::player::{FileEntry, FileInfo, NotPlayable, Request, Scan, Transport
 use bat_app::{BatApp, InputKind};
 use bat_dsp::resample::Resampler;
 use bat_dsp::wav::{self, Format};
-use x8_patch::card::{header_info, heard_frame};
+use x8_patch::card::{header_info, heard_frame, pack_root};
 
 use super::audio::PRIME_FRAMES;
 use super::reader::{
-    CLOSE, Event, FILE_COMMANDS, OPEN, RING_FAILED, RING_TAKEN, RING_WRITTEN, SCAN_REQUESTS, events, running,
+    CLOSE, Event, FILE_COMMANDS, FOLDER_REQUESTS, OPEN, RING_FAILED, RING_TAKEN, RING_WRITTEN, SCAN_COMMANDS, events,
+    running,
 };
 use super::state::{
     BLOCKS, IN_DROPPED, IN_DROPPED_SEEN, IN_READ, IN_WRITE, OUT_READ, OUT_WRITE, PLAYBACK, SOURCE_PEAK,
@@ -50,9 +51,11 @@ const ANALYSIS_ON_ABOVE: u32 = 8_192;
 /// The player's state, in DTCM: the resampler's history is read for every output sample.
 struct Play {
     resampler: Resampler,
-    /// The scan the app's list comes from, and the latest file command posted.
+    /// The scan the app's list comes from, the latest file command posted, and the latest
+    /// request to list the folders at the top of the card.
     scan: u32,
     command: u32,
+    folders: u32,
     /// The reader has opened the file of `command` and is filling the ring.
     ready: bool,
     format: Option<Format>,
@@ -124,6 +127,9 @@ pub(super) fn start_session(app: &mut BatApp<'static>) {
     if player.scan() == Scan::Running {
         player.scan_finished(false);
     }
+    if player.folder_scan() == Scan::Running {
+        player.list_folders();
+    }
     // The player keeps one request at a time, so each is passed on before the next.
     player.close();
     pass_requests(app);
@@ -142,8 +148,7 @@ fn pass_requests(app: &mut BatApp<'static>) {
     while let Some(request) = app.player_mut().take_request() {
         match request {
             Request::Scan => {
-                p.scan = SCAN_REQUESTS.load(Relaxed).wrapping_add(1);
-                SCAN_REQUESTS.store(p.scan, Release);
+                p.scan = SCAN_COMMANDS.post(pack_root(app.player().root().as_bytes()));
                 app.player_mut().scan_started();
                 if !running() {
                     app.player_mut().scan_finished(false);
@@ -155,6 +160,13 @@ fn pass_requests(app: &mut BatApp<'static>) {
                 p.command = FILE_COMMANDS.post([OPEN, id.into(), frame]);
                 if !running() {
                     app.player_mut().open_failed();
+                }
+            }
+            Request::ListFolders => {
+                p.folders = FOLDER_REQUESTS.load(Relaxed).wrapping_add(1);
+                FOLDER_REQUESTS.store(p.folders, Release);
+                if !running() {
+                    app.player_mut().folders_finished(false);
                 }
             }
             Request::Close => {
@@ -181,6 +193,10 @@ fn take_events(app: &mut BatApp<'static>) {
             Event::File { scan, entry } if scan == p.scan => player.add_file(entry),
             Event::Info { scan, id, info } if scan == p.scan => player.set_info(id, info),
             Event::ScanDone { scan, ok } if scan == p.scan => player.scan_finished(ok),
+            Event::TopFolder { request, name, len } if request == p.folders => {
+                player.add_top_folder(&name[..len as usize])
+            }
+            Event::FoldersDone { request, ok } if request == p.folders => player.folders_finished(ok),
             Event::Opened { command, id, format, frame, skip, limit } if command == p.command => {
                 p.resampler.set_rates(format.sample_rate, OUT_RATE);
                 p.format = Some(format);

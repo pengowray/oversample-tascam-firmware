@@ -2,11 +2,11 @@
 //! paths the file functions take, what a file's header says, and where in a file to start
 //! reading. See src/patch/reader.rs.
 
-use bat_app::player::{Audio, FileInfo, NotPlayable};
+use bat_app::player::{Audio, FileInfo, NotPlayable, TOP_NAME_BYTES};
 use bat_dsp::wav::{Format, WavError};
 
-/// The folder the X8 records into, as an absolute path for the core file functions.
-pub const SOUND: &[u8] = b"C:\\SOUND";
+/// The card, as the core file functions name it.
+const DRIVE: &[u8] = b"C:";
 
 /// UTF-16 units in a path, with its ending 0.
 pub const PATH_UNITS: usize = 256;
@@ -22,10 +22,17 @@ pub struct Path {
 }
 
 impl Path {
-    /// `C:\SOUND`.
-    pub fn sound() -> Self {
+    /// `C:`, which [`push`](Self::push) adds folders to.
+    pub fn drive() -> Self {
         let mut path = Self { units: [0; PATH_UNITS], len: 0 };
-        path.append(SOUND);
+        path.append(DRIVE);
+        path
+    }
+
+    /// `C:\`, the top of the card, for listing its folders.
+    pub fn card_top() -> Self {
+        let mut path = Self::drive();
+        path.append(b"\\");
         path
     }
 
@@ -52,6 +59,39 @@ impl Path {
     pub fn as_units(&self) -> &[u16] {
         &self.units[..=self.len]
     }
+}
+
+/// Words in a request to list a folder at the top of the card: the name's length, then its
+/// bytes, four to a word.
+pub const ROOT_WORDS: usize = 1 + TOP_NAME_BYTES / 4;
+const _: () = assert!(TOP_NAME_BYTES.is_multiple_of(4));
+
+/// A folder name as [`ROOT_WORDS`] words, cut to [`TOP_NAME_BYTES`].
+pub fn pack_root(name: &[u8]) -> [u32; ROOT_WORDS] {
+    let len = name.len().min(TOP_NAME_BYTES);
+    let mut words = [0; ROOT_WORDS];
+    words[0] = len as u32;
+    for (i, &b) in name[..len].iter().enumerate() {
+        words[1 + i / 4] |= u32::from(b) << (8 * (i % 4));
+    }
+    words
+}
+
+/// The name in [`pack_root`]'s words, and its length.
+pub fn unpack_root(words: &[u32; ROOT_WORDS]) -> ([u8; TOP_NAME_BYTES], usize) {
+    let len = (words[0] as usize).min(TOP_NAME_BYTES);
+    let mut name = [0; TOP_NAME_BYTES];
+    for (i, b) in name[..len].iter_mut().enumerate() {
+        *b = (words[1 + i / 4] >> (8 * (i % 4))) as u8;
+    }
+    (name, len)
+}
+
+/// Whether the folder choice lists a folder at the top of the card with this name and these
+/// attributes: not hidden or a system folder, not one of the folders macOS makes (starting with
+/// `.`), and a name that fits.
+pub fn is_listed_folder(name: &[u8], hidden_or_system: bool) -> bool {
+    !hidden_or_system && !name.is_empty() && name[0] != b'.' && name.len() <= TOP_NAME_BYTES
 }
 
 /// Whether the list shows a file with this name: a name ending in `.wav`, in any case. Names
@@ -118,7 +158,9 @@ mod tests {
 
     #[test]
     fn builds_paths_with_backslashes() {
-        let mut path = Path::sound();
+        assert_eq!(Path::card_top().as_units(), units("C:\\"));
+        let mut path = Path::drive();
+        assert!(path.push(b"SOUND"));
         assert_eq!(path.as_units(), units("C:\\SOUND"));
         assert!(path.push(b"FOLDER_0001") && path.push(b"260101_0001.wav"));
         assert_eq!(path.as_units(), units("C:\\SOUND\\FOLDER_0001\\260101_0001.wav"));
@@ -126,15 +168,34 @@ mod tests {
 
     #[test]
     fn refuses_long_and_non_ascii_parts() {
-        let mut path = Path::sound();
+        let mut path = Path::drive();
+        assert!(path.push(b"SOUND"));
         let before = path;
         assert!(!path.push(&[b'a'; PATH_UNITS]));
         assert!(!path.push("caf\u{e9}.wav".as_bytes()));
         assert!(path == before);
         // The longest that fits leaves room for the ending 0.
-        let room = PATH_UNITS - SOUND.len() - 2;
+        let room = PATH_UNITS - b"C:\\SOUND".len() - 2;
         assert!(path.push(&vec![b'a'; room]));
         assert_eq!(path.as_units().len(), PATH_UNITS);
+    }
+
+    #[test]
+    fn folder_names_survive_packing() {
+        for name in [&b""[..], b"SOUND", b"Xeno-canto downloads 2025", &[b'x'; TOP_NAME_BYTES]] {
+            let (back, len) = unpack_root(&pack_root(name));
+            assert_eq!(&back[..len], name);
+        }
+        let (_, len) = unpack_root(&pack_root(&[b'x'; 50]));
+        assert_eq!(len, TOP_NAME_BYTES);
+    }
+
+    #[test]
+    fn lists_ordinary_folders() {
+        assert!(is_listed_folder(b"BATS", false));
+        assert!(!is_listed_folder(b"System Volume Information", true));
+        assert!(!is_listed_folder(b".Spotlight-V100", false));
+        assert!(!is_listed_folder(&[b'x'; TOP_NAME_BYTES + 1], false));
     }
 
     #[test]

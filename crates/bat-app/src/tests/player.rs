@@ -93,7 +93,7 @@ fn a_finger_that_moves_scrolls_the_list_and_chooses_nothing() {
     app.drag(160, y - 2 * layout::LIST_ROW_H);
     app.release();
     assert_eq!(app.screen, Screen::Files);
-    assert_eq!(app.player().top, 2);
+    assert_eq!(app.player().list.top, 2);
     assert_eq!(app.player_mut().take_request(), None);
 }
 
@@ -211,4 +211,75 @@ fn a_chosen_file_that_is_gone_after_reading_again_is_dropped() {
     player.scan_finished(true);
     assert!(player.current().is_none());
     assert_eq!(player.transport(), Transport::NoFile);
+}
+
+fn folder_names(app: &BatApp) -> Vec<String> {
+    let player = app.player();
+    (0..player.top_folder_count()).map(|i| player.top_folder(i).unwrap().to_string()).collect()
+}
+
+#[test]
+fn folder_opens_the_card_s_top_folders_with_sound_first() {
+    let mut storage = vec![0.0f32; 1024];
+    let mut files = vec![FileEntry::new(0, 0, b"", 0, 0, 0); 3];
+    let mut app = listed(&mut storage, &mut files);
+    assert_eq!(app.player_mut().take_request(), None);
+    app.open_files();
+    app.touch(layout::FILES_FOLDER.center().x, layout::FILES_FOLDER.center().y);
+    app.release();
+    assert_eq!(app.screen, Screen::Folders);
+    assert_eq!(app.player().folder_scan(), Scan::Running);
+    assert_eq!(app.player_mut().take_request(), Some(Request::ListFolders));
+    let player = app.player_mut();
+    for name in ["bats", "PortaX8", "SOUND", "A folder name much too long for the folder list"] {
+        player.add_top_folder(name.as_bytes());
+    }
+    player.folders_finished(true);
+    assert_eq!(folder_names(&app), ["SOUND", "bats", "PortaX8"]);
+    // The highlight starts on the folder listed.
+    assert_eq!(app.player().folder_list.highlight, 0);
+    assert!(app.player().is_root(0));
+    // HOME goes back to the list of recordings.
+    app.button(Button::Home);
+    assert_eq!(app.screen, Screen::Files);
+}
+
+#[test]
+fn choosing_another_folder_lists_it_and_stops_the_file() {
+    let mut storage = vec![0.0f32; 1024];
+    let mut files = vec![FileEntry::new(0, 0, b"", 0, 0, 0); 3];
+    let mut app = listed(&mut storage, &mut files);
+    app.player_mut().choose(0);
+    app.player_mut().opened();
+    assert_eq!(app.player().transport(), Transport::Playing);
+    app.player_mut().take_request();
+    app.open_files();
+    app.touch(layout::FILES_FOLDER.center().x, layout::FILES_FOLDER.center().y);
+    app.release();
+    app.player_mut().take_request();
+    for name in ["SOUND", "BATS"] {
+        app.player_mut().add_top_folder(name.as_bytes());
+    }
+    app.player_mut().folders_finished(true);
+    // The folder listed already: back to its list, nothing read again.
+    app.button(Button::Play);
+    assert_eq!(app.screen, Screen::Files);
+    assert_eq!(app.player_mut().take_request(), None);
+    assert_eq!(app.player().transport(), Transport::Playing);
+    // Another folder, by touch.
+    app.touch(layout::FILES_FOLDER.center().x, layout::FILES_FOLDER.center().y);
+    app.release();
+    app.player_mut().take_request();
+    for name in ["SOUND", "BATS"] {
+        app.player_mut().add_top_folder(name.as_bytes());
+    }
+    app.player_mut().folders_finished(true);
+    let y = layout::LIST_TOP + layout::LIST_ROW_H + 10;
+    app.touch(160, y);
+    app.release();
+    assert_eq!(app.screen, Screen::Files);
+    assert_eq!(app.player().root(), "BATS");
+    assert_eq!(app.player_mut().take_request(), Some(Request::Scan));
+    assert_eq!(app.player().transport(), Transport::NoFile);
+    assert!(app.player().files().is_empty());
 }

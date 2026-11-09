@@ -16,7 +16,7 @@
 //! buttons, and the X8's recorder in that state at 1 min 15 s.
 //! `RATE=48000` shows the warning for an input at that rate.
 //! `PLAYBACK=1` shows the screen as BAT PLAYBACK shows it on the X8.
-//! `FILES=list|playing|paused|nofile|reading|empty|failed` adds made-up recordings to BAT PLAYBACK's
+//! `FILES=list|playing|paused|nofile|reading|empty|failed|folders|foldersreading|foldersfailed|nofolders` adds made-up recordings to BAT PLAYBACK's
 //! player: `list` shows the list, the others the main screen or the list in that state.
 //! `BUILD=240` gives the app the X8 patch's build number, for the CPU test.
 //! `INPUTS=5,6` or `INPUTS=5` names the inputs for the meters and settings;
@@ -397,6 +397,26 @@ fn fake_files<'a>(app: &mut BatApp<'a>, storage: &'a mut [FileEntry], which: &st
             }
             app.open_files();
             app.player_mut().move_highlight(3, 8);
+        }
+        "folders" | "foldersreading" | "foldersfailed" | "nofolders" => {
+            app.open_files();
+            // Tap Folder, at the bottom right.
+            app.touch(213, 453);
+            app.release();
+            let player = app.player_mut();
+            let names: &[&[u8]] = match which {
+                "folders" => &[b"PortaX8", b"BATS", b"SOUND", b"Xeno-canto downloads 2025", b"bats 384k"],
+                "foldersreading" => &[b"BATS", b"SOUND"],
+                _ => &[],
+            };
+            for name in names {
+                player.add_top_folder(name);
+            }
+            match which {
+                "folders" | "nofolders" => player.folders_finished(true),
+                "foldersfailed" => player.folders_finished(false),
+                _ => {}
+            }
         }
         "playing" | "paused" => {
             let player = app.player_mut();

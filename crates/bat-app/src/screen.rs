@@ -128,6 +128,11 @@ pub fn draw(app: &BatApp, fb: Fb) {
         player_screen::files(app, fb);
         return;
     }
+    if app.screen == Screen::Folders {
+        title_bar(fb, player_screen::TITLE, false);
+        player_screen::folders(app, fb);
+        return;
+    }
     let title = match app.input_kind() {
         InputKind::Live => "BAT DETECTOR",
         InputKind::Playback => player_screen::title(app),

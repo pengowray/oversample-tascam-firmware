@@ -262,5 +262,6 @@ pub const DIR_TIME: usize = 0x0e;
 pub const DIR_DATE: usize = 0x10;
 pub const DIR_SIZE: usize = 0x1c;
 pub const ATTR_HIDDEN: u8 = 0x02;
+pub const ATTR_SYSTEM: u8 = 0x04;
 pub const ATTR_VOLUME: u8 = 0x08;
 pub const ATTR_FOLDER: u8 = 0x10;

@@ -1,4 +1,5 @@
-//! BAT PLAYBACK's card reader: a task that lists the WAV files in `C:\SOUND` and its folders,
+//! BAT PLAYBACK's card reader: a task that lists the folders at the top of the card, lists the
+//! WAV files in one of them (`C:\SOUND` unless the user chooses another) and its folders,
 //! reads each one's header, and reads the file playing into a ring for the DSP task
 //! (playback.rs), which owns the app and passes on what the reader finds.
 //!
@@ -7,7 +8,8 @@
 //! folder and two files open: the file playing, and one whose header it is reading.
 //!
 //! **Commands** come from the DSP task only: [`FILE_COMMANDS`] holds the latest Open or Close,
-//! and [`SCAN_REQUESTS`] counts requests to list the card. **Results** go back in a ring of
+//! [`SCAN_COMMANDS`] the latest folder to list, and [`FOLDER_REQUESTS`] counts requests to list
+//! the folders at the top of the card. **Results** go back in a ring of
 //! [`Event`]s, each tagged with the command or scan it answers, so the DSP task can ignore the
 //! answer to a command it has since replaced. **Audio** goes into `spare::READ_RING`, counted in
 //! bytes by [`RING_WRITTEN`] (the reader) and [`RING_TAKEN`] (the DSP task); both start again at
@@ -24,9 +26,9 @@ use core::sync::atomic::{
     AtomicBool, AtomicU32, Ordering::Acquire, Ordering::Relaxed, Ordering::Release, Ordering::SeqCst, fence,
 };
 
-use bat_app::player::{FOLDER_NAME_BYTES, FileEntry, FileInfo, NotPlayable};
+use bat_app::player::{FOLDER_NAME_BYTES, FileEntry, FileInfo, NotPlayable, TOP_NAME_BYTES};
 use bat_dsp::wav::{self, Format, WavError};
-use x8_patch::card::{Path, checked, header_info, is_wav_name, read_start};
+use x8_patch::card::{Path, ROOT_WORDS, checked, header_info, is_listed_folder, is_wav_name, read_start, unpack_root};
 use x8_patch::handoff::{Mailbox, Ring};
 
 use super::state::{BAT_ACTIVE, BLOCKS, PLAYBACK};
@@ -57,11 +59,13 @@ const FIRST_HEADER: u32 = 8 * 1024;
 /// Entries listed between short sleeps: entries often come from the file system's own buffers,
 /// without waiting for the card, so a long folder would otherwise keep the tasks below waiting.
 const YIELD_EVERY: u32 = 32;
-/// Folder levels listed below `C:\SOUND`: the X8's own folders, and one more.
+/// Folder levels listed below the folder chosen: in `C:\SOUND`, the X8's own folders, and one
+/// more.
 const DEEPEST: u8 = 2;
-/// Folders the reader keeps, `C:\SOUND` first. The app names the first 32.
+/// Folders the reader keeps, the folder chosen first. The app names the first 32.
 const FOLDERS: usize = 64;
 const FOLDER_NAME: usize = 61;
+const _: () = assert!(FOLDER_NAME >= TOP_NAME_BYTES);
 /// Files with longer names are left out.
 const NAME: usize = 96;
 
@@ -85,7 +89,7 @@ const _: () = assert!(core::mem::size_of::<CardFile>() * spare::LIST_FILES <= sp
 #[derive(Clone, Copy)]
 #[repr(C)]
 pub(super) struct CardFolder {
-    /// The folder it is in; `C:\SOUND` is folder 0 and has none.
+    /// The folder it is in; the folder chosen is folder 0 and has none.
     parent: u8,
     depth: u8,
     name_len: u8,
@@ -116,6 +120,16 @@ pub(super) enum Event {
         scan: u32,
         ok: bool,
     },
+    /// For the request counted `request` in FOLDER_REQUESTS: a folder at the top of the card.
+    TopFolder {
+        request: u32,
+        name: [u8; TOP_NAME_BYTES],
+        len: u8,
+    },
+    FoldersDone {
+        request: u32,
+        ok: bool,
+    },
     /// For file command `command`: the file is open, reading started at the sector holding
     /// `frame`, `skip` bytes before it, and its audio ends `limit` bytes after that sector.
     Opened {
@@ -140,8 +154,11 @@ const _: () = assert!(core::mem::align_of::<Event>() <= 32);
 pub(super) static FILE_COMMANDS: Mailbox<3> = Mailbox::new();
 pub(super) const OPEN: u32 = 1;
 pub(super) const CLOSE: u32 = 2;
-/// Counts requests to list the card (the DSP task).
-pub(super) static SCAN_REQUESTS: AtomicU32 = AtomicU32::new(0);
+/// Requests to list the WAV files in a folder at the top of the card: the folder's name, as
+/// `x8_patch::card::pack_root` gives it.
+pub(super) static SCAN_COMMANDS: Mailbox<ROOT_WORDS> = Mailbox::new();
+/// Counts requests to list the folders at the top of the card (the DSP task).
+pub(super) static FOLDER_REQUESTS: AtomicU32 = AtomicU32::new(0);
 static EVENTS_WRITTEN: AtomicU32 = AtomicU32::new(0);
 static EVENTS_READ: AtomicU32 = AtomicU32::new(0);
 /// Bytes of the file playing in the ring, from the sector the reading started at: written by
@@ -371,6 +388,7 @@ struct Reader {
     /// The latest file command and scan request handled.
     command_seen: u32,
     scan_seen: u32,
+    folders_seen: u32,
     /// The scan in progress, and how far it has got.
     scan: u32,
     scanning: Scanning,
@@ -390,12 +408,13 @@ impl Reader {
         Self {
             command_seen: 0,
             scan_seen: 0,
+            folders_seen: 0,
             scan: 0,
             scanning: Scanning::No,
             folders: 0,
             files: 0,
             file: 0,
-            path: Path::sound(),
+            path: Path::drive(),
             format: None,
             next: 0,
             end: 0,
@@ -423,7 +442,8 @@ impl Reader {
         self.close();
         self.scanning = Scanning::No;
         self.command_seen = FILE_COMMANDS.latest();
-        self.scan_seen = SCAN_REQUESTS.load(Acquire);
+        self.scan_seen = SCAN_COMMANDS.latest();
+        self.folders_seen = FOLDER_REQUESTS.load(Acquire);
         STATE.store(AWAY, Relaxed);
     }
 
@@ -445,27 +465,70 @@ impl Reader {
             }
             return true;
         }
-        let scan = SCAN_REQUESTS.load(Acquire);
-        if scan != self.scan_seen {
-            self.scan_seen = scan;
-            self.start_scan(scan);
+        // Listing the folders is quick, so a scan in progress carries on after it.
+        let folders = FOLDER_REQUESTS.load(Acquire);
+        if folders != self.folders_seen {
+            self.folders_seen = folders;
+            self.list_top_folders(folders);
+            return true;
+        }
+        if let Some((number, words)) = SCAN_COMMANDS.read(self.scan_seen) {
+            self.scan_seen = number;
+            let (name, len) = unpack_root(&words);
+            self.start_scan(number, &name[..len]);
             return true;
         }
         false
     }
 
+    /// Tell the DSP task the folders at the top of the card.
+    fn list_top_folders(&mut self, request: u32) {
+        STATE.store(LISTING, Relaxed);
+        let folder = open_folder(&Path::card_top());
+        if folder == 0 {
+            count_error();
+            self.post(Event::FoldersDone { request, ok: false });
+            return;
+        }
+        let mut name = [0u8; NAME];
+        let mut entries = 0u32;
+        while active() {
+            let entry = next_entry(folder);
+            if entry == 0 {
+                break;
+            }
+            entries += 1;
+            if entries.is_multiple_of(YIELD_EVERY) {
+                sleep_ms(1);
+            }
+            let Some(len) = entry_name(entry, &mut name) else { continue };
+            let (attributes, ..) = entry_details(entry);
+            let hidden = attributes & (stock::ATTR_HIDDEN | stock::ATTR_SYSTEM | stock::ATTR_VOLUME) != 0;
+            if attributes & stock::ATTR_FOLDER != 0 && is_listed_folder(&name[..len], hidden) {
+                let mut shown = [0; TOP_NAME_BYTES];
+                shown[..len].copy_from_slice(&name[..len]);
+                self.post(Event::TopFolder { request, name: shown, len: len as u8 });
+            }
+        }
+        close_folder(folder);
+        self.post(Event::FoldersDone { request, ok: true });
+    }
+
     fn folder_path(&self, index: usize) -> Option<Path> {
-        // The folder and its parents, from the folder up; folder 0 is C:\SOUND itself.
-        let mut chain = [0usize; DEEPEST as usize];
+        // The folder and its parents, from the folder up to folder 0, the folder chosen.
+        let mut chain = [0usize; DEEPEST as usize + 1];
         let mut depth = 0;
         let mut at = index;
-        while at != 0 {
+        loop {
             *chain.get_mut(depth)? = at;
             depth += 1;
+            if at == 0 {
+                break;
+            }
             // SAFETY: an entry of the folder table that this scan wrote.
             at = unsafe { (*card_folder(at)).parent } as usize;
         }
-        let mut path = Path::sound();
+        let mut path = Path::drive();
         for &folder in chain[..depth].iter().rev() {
             // SAFETY: as above.
             let folder = unsafe { &*card_folder(folder) };
@@ -572,16 +635,19 @@ impl Reader {
         true
     }
 
-    fn start_scan(&mut self, scan: u32) {
+    fn start_scan(&mut self, scan: u32, root: &[u8]) {
         self.scan = scan;
         self.files = 0;
         self.folders = 1;
+        let mut stored = [0; FOLDER_NAME];
+        stored[..root.len()].copy_from_slice(root);
         // SAFETY: folder 0 of the table.
-        unsafe { card_folder(0).write(CardFolder { parent: 0, depth: 0, name_len: 0, name: [0; FOLDER_NAME] }) };
+        unsafe { card_folder(0).write(CardFolder { parent: 0, depth: 0, name_len: root.len() as u8, name: stored }) };
+        let len = root.len().min(FOLDER_NAME_BYTES);
         let mut name = [0; FOLDER_NAME_BYTES];
-        name[..5].copy_from_slice(b"SOUND");
+        name[..len].copy_from_slice(&root[..len]);
         self.scanning = Scanning::Folder(0);
-        self.post(Event::Folder { scan, index: 0, name, len: 5 });
+        self.post(Event::Folder { scan, index: 0, name, len: len as u8 });
     }
 
     /// List one folder, or read one header. False if there is no scan in progress.
@@ -595,7 +661,7 @@ impl Reader {
             Scanning::Folder(index) => {
                 self.scanning = Scanning::Folder(index + 1);
                 if !self.list_folder(index) && index == 0 {
-                    // No card, or no SOUND folder.
+                    // No card, or no folder by that name.
                     self.scanning = Scanning::No;
                     self.post(Event::ScanDone { scan: self.scan, ok: false });
                 }

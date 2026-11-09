@@ -33,7 +33,12 @@ pub const LIST_ROW_H: i32 = 47;
 pub const LIST_ROWS: usize = 8;
 pub const LIST: Rectangle =
     Rectangle::new(Point::new(0, LIST_TOP), Size::new(320, (LIST_ROW_H * LIST_ROWS as i32) as u32));
+/// The folder choice's Back, the width of the screen.
 pub const LIST_BACK: Rectangle = Rectangle::new(Point::new(6, BUTTONS_Y), Size::new(308, BUTTON_H as u32));
+/// The list of recordings' Back, and the button that names the folder listed and opens the
+/// folder choice.
+pub const FILES_BACK: Rectangle = Rectangle::new(Point::new(6, BUTTONS_Y), Size::new(100, BUTTON_H as u32));
+pub const FILES_FOLDER: Rectangle = Rectangle::new(Point::new(112, BUTTONS_Y), Size::new(202, BUTTON_H as u32));
 
 /// The fraction of the file at screen position `x` on the seek bar.
 pub fn seek_fraction(x: i32) -> f32 {

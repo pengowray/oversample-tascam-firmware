@@ -5,14 +5,14 @@ Notes from reading the V2.01 and V2.03 update files (`#PortaX8_0215.201`,
 work was done, so earlier sections can describe plans and figures that later
 steps changed.
 
-**Status, 9 November 2026.** Test builds from B218 to B251 were installed and run
+**Status, 9 November 2026.** Test builds from B218 to B254 were installed and run
 on the owner's X8. Not every build in that range was installed: a step's heading
 says "installed" if its build ran on the unit, and "never installed" if a later
 build replaced it first. B250 hung as soon as a bat screen opened (Step 28 says
-why). The last build installed is B251 (Step 28), and its bat screens open. GUANO
-metadata, setting the clock from phone chimes and the location log have not been
-checked on a unit yet. The current build is B254 (Step 31, the new BAT PLAYBACK),
-which has not been installed.
+why). The last build installed is B254 (Step 31), whose BAT PLAYBACK plays files
+from the card. GUANO metadata, setting the clock from phone chimes and the location
+log have not been checked on a unit yet. The current build is B255 (Step 32, a
+choice of folder in BAT PLAYBACK), which has not been installed.
 
 **Hardware tested.** One X8. Its Information screen (GENERAL SETTINGS > SYSTEM >
 Information) shows `F/W: Version 2.03 Build 217` and `H/W: Version 1.00 Build 010`.
@@ -2357,7 +2357,46 @@ B241 or an earlier build. All the checks in `tools/x8patch.py` pass on this file
 1. **Start and stop.** With Phone remote on and the phone page reloaded, do `Start recording` and `Stop recording` work as before?
 2. **Old phone page.** If a phone still has the old page cached, its commands should do nothing at all. Reload the page.
 
-## Step 31 test file: BAT PLAYBACK plays files from the card itself (built 2026-11-09, not yet installed)
+## Step 32 test file: BAT PLAYBACK lists any folder at the top of the card (built 2026-11-09, not yet installed)
+
+`work/patch31/#PortaX8_0255.203` (B255, SHA-256 `de8ee0e4…31188131b`). Includes steps 11 to 31. Install this file in place of
+any earlier build. All the checks in `tools/x8patch.py` pass on this file. No new stock hook site (header version 18).
+
+**Result of B254.** The player works. But with WAV files above 192 kHz in `C:\SOUND`, the stock firmware shows a
+"Non-Supported" dialog (CLOSE, OK) over the LAUNCHER each time. The owner asked for BAT PLAYBACK to play WAV files from other
+folders, with SOUND as the default, so files the stock firmware can't play can be kept out of SOUND.
+
+**On screen.** The list's Back button is narrower, and beside it a button names the folder listed ("Folder: SOUND"). It opens
+a list of the folders at the top of the card: SOUND first ("Where the X8 saves its recordings"), then the rest in alphabetical
+order, with the folder listed now marked by a triangle. Tap a folder, or turn the wheel to it and press PLAY, to list the WAV
+files in it and two levels of its folders. HOME or Back returns to the list of recordings. Choosing another folder stops the
+file playing. The choice lasts until the X8 is turned off.
+
+**How it works.** The DSP task posts the folder's name with each request to list files (`SCAN_COMMANDS`, a mailbox of 11 words),
+and the reader lists `C:\<name>` in place of `C:\SOUND`. A second request (`FOLDER_REQUESTS`) has the reader list `C:\` and
+send back each folder that is not hidden, a system folder or one starting with `.` (macOS makes those), with a name of 40
+characters at most. A scan in progress carries on after that listing. Folders hold up to 24 names; WAV files at the top of the
+card itself are not listed.
+
+| Item | B254 | B255 | Limit |
+|---|---|---|---|
+| ITCM | 81.9 KB | 81.6 KB | 89.2 KB |
+| DTCM | 148.1 KB | 149.1 KB | 152.8 KB |
+| `.noinit`, the end of the patch's memory | ends at 0x818fd060 | ends at 0x818febf0 | 0x81900000 |
+
+**Not known until it runs on the unit:** whether `C:\` is the path the folder functions take for the top of the card (the
+firmware's file system code has the string `C:\` beside its other functions, which suggests so). If it is wrong, the folder
+list says "Couldn't read the SD card" and the default SOUND list still works.
+
+**What to check.**
+
+1. Make a folder such as `BATS` at the top of the card and move the files above 192 kHz into it from SOUND. Does the
+   "Non-Supported" dialog stop?
+2. In BAT PLAYBACK, tap **Folder: SOUND**. Are the card's folders listed, SOUND first? Are system folders left out?
+3. Choose `BATS`: are its files listed, and do they play? Choose SOUND again: are the X8's takes back?
+4. Leave BAT PLAYBACK and come back: is the folder chosen still listed?
+
+## Step 31 test file: BAT PLAYBACK plays files from the card itself (built 2026-11-09, installed)
 
 `work/patch30/#PortaX8_0254.203` (B254, SHA-256 `b721bb30…ef148b028`). Includes steps 11 to 30. Install this file in place of
 any earlier build. All the checks in `tools/x8patch.py` pass on this file. No new stock hook site (header version 18).

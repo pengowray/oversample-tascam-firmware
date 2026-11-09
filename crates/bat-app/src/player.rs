@@ -11,6 +11,12 @@ pub const NAME_BYTES: usize = 48;
 pub const FOLDERS: usize = 32;
 /// Bytes kept of a folder's name.
 pub const FOLDER_NAME_BYTES: usize = 24;
+/// Folders at the top of the card that the folder choice lists.
+pub const TOP_FOLDERS: usize = 24;
+/// Bytes kept of the name of a folder at the top of the card. Longer names are left out.
+pub const TOP_NAME_BYTES: usize = 40;
+/// The folder listed until another is chosen: the one the X8 records into.
+pub const DEFAULT_FOLDER: &str = "SOUND";
 
 /// One WAV file on the card, as the host found it.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -125,14 +131,46 @@ pub enum Transport {
 /// What the app asks the host to do, from [`Player::take_request`].
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Request {
-    /// List the card's WAV files again: call `scan_started`, then `add_folder` and `add_file`
+    /// List the WAV files in the folder [`Player::root`] names, at the top of the card, and in
+    /// its folders: call `scan_started`, then `add_folder` (the root is folder 0) and `add_file`
     /// for what it finds, `set_info` for each header, and `scan_finished`.
     Scan,
+    /// List the folders at the top of the card: call `add_top_folder` for each, then
+    /// `folders_finished`.
+    ListFolders,
     /// Open file `id` (or keep it open) and go to `frame`, then call `opened`. Feed its audio
     /// while [`Player::playing`] is true.
     Open { id: u16, frame: u32 },
     /// Close the file: the bat screen is closing, or the list is being read again.
     Close,
+}
+
+/// A list's highlighted row (the one the wheel moves and PLAY chooses) and its first row shown.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct ListView {
+    pub highlight: usize,
+    pub top: usize,
+}
+
+impl ListView {
+    /// Move the highlight by `steps` rows of `count`, keeping it on screen with `rows` rows shown.
+    pub fn move_highlight(&mut self, steps: i32, count: usize, rows: usize) {
+        if count == 0 {
+            return;
+        }
+        self.highlight = (self.highlight as i32 + steps).clamp(0, count as i32 - 1) as usize;
+        if self.highlight < self.top {
+            self.top = self.highlight;
+        } else if self.highlight >= self.top + rows {
+            self.top = self.highlight + 1 - rows;
+        }
+    }
+
+    /// Scroll so row `top` of `count` is first, keeping `rows` rows filled where possible.
+    pub fn scroll_to(&mut self, top: i32, count: usize, rows: usize) {
+        let last = count.saturating_sub(rows) as i32;
+        self.top = top.clamp(0, last.max(0)) as usize;
+    }
 }
 
 pub struct Player<'a> {
@@ -154,11 +192,21 @@ pub struct Player<'a> {
     /// While the card is read again: the chosen file's name and folder name, to find it in the
     /// new list and keep its place.
     keep: Option<([u8; NAME_BYTES], u8, [u8; FOLDER_NAME_BYTES], u8)>,
-    /// The list row the wheel moves and PLAY plays, as an index into `files`.
-    pub(crate) highlight: usize,
-    /// The first list row shown.
-    pub(crate) top: usize,
+    /// The list of recordings, as rows of `files`.
+    pub(crate) list: ListView,
+    /// The folder listed, at the top of the card.
+    root: [u8; TOP_NAME_BYTES],
+    root_len: u8,
+    /// The folders at the top of the card, for choosing the folder listed: [`DEFAULT_FOLDER`]
+    /// first, then in alphabetical order.
+    top_folders: [[u8; TOP_NAME_BYTES]; TOP_FOLDERS],
+    top_lens: [u8; TOP_FOLDERS],
+    top_count: usize,
+    top_scan: Scan,
+    pub(crate) folder_list: ListView,
     request: Option<Request>,
+    /// [`Request::ListFolders`], kept apart so it never replaces another request.
+    folders_wanted: bool,
 }
 
 impl<'a> Player<'a> {
@@ -176,9 +224,16 @@ impl<'a> Player<'a> {
             position: 0,
             closed: false,
             keep: None,
-            highlight: 0,
-            top: 0,
+            list: ListView { highlight: 0, top: 0 },
+            root: default_root(),
+            root_len: DEFAULT_FOLDER.len() as u8,
+            top_folders: [[0; TOP_NAME_BYTES]; TOP_FOLDERS],
+            top_lens: [0; TOP_FOLDERS],
+            top_count: 0,
+            top_scan: Scan::NotStarted,
+            folder_list: ListView { highlight: 0, top: 0 },
             request: None,
+            folders_wanted: false,
         }
     }
 
@@ -192,8 +247,7 @@ impl<'a> Player<'a> {
         self.count = 0;
         self.dropped = 0;
         self.folder_lens = [0; FOLDERS];
-        self.highlight = 0;
-        self.top = 0;
+        self.list = ListView::default();
         self.current = None;
         self.transport = Transport::NoFile;
         self.position = 0;
@@ -251,7 +305,27 @@ impl<'a> Player<'a> {
     }
 
     pub fn take_request(&mut self) -> Option<Request> {
-        self.request.take()
+        self.request.take().or_else(|| core::mem::take(&mut self.folders_wanted).then_some(Request::ListFolders))
+    }
+
+    /// The folder listed, at the top of the card.
+    pub fn root(&self) -> &str {
+        core::str::from_utf8(&self.root[..self.root_len as usize]).unwrap_or("?")
+    }
+
+    /// The folders at the top of the card, as found by the last [`Request::ListFolders`].
+    pub fn top_folder(&self, row: usize) -> Option<&str> {
+        let len = *self.top_lens[..self.top_count].get(row)? as usize;
+        Some(core::str::from_utf8(&self.top_folders[row][..len]).unwrap_or("?"))
+    }
+
+    pub fn top_folder_count(&self) -> usize {
+        self.top_count
+    }
+
+    /// How far the host has got with listing the folders at the top of the card.
+    pub fn folder_scan(&self) -> Scan {
+        self.top_scan
     }
 
     // The host's side.
@@ -286,6 +360,44 @@ impl<'a> Player<'a> {
             self.folders[i][..len].copy_from_slice(&name[..len]);
             self.folder_lens[i] = len as u8;
         }
+    }
+
+    /// A folder at the top of the card. Names longer than [`TOP_NAME_BYTES`] are left out.
+    pub fn add_top_folder(&mut self, name: &[u8]) {
+        if self.top_count == TOP_FOLDERS || name.is_empty() || name.len() > TOP_NAME_BYTES {
+            return;
+        }
+        let before = |a: &[u8], b: &[u8]| {
+            let default = |n: &[u8]| n.eq_ignore_ascii_case(DEFAULT_FOLDER.as_bytes());
+            if default(a) != default(b) {
+                return default(a);
+            }
+            a.iter().map(u8::to_ascii_uppercase).lt(b.iter().map(u8::to_ascii_uppercase))
+        };
+        let at = (0..self.top_count)
+            .position(|i| before(name, &self.top_folders[i][..self.top_lens[i] as usize]))
+            .unwrap_or(self.top_count);
+        self.top_folders.copy_within(at..self.top_count, at + 1);
+        self.top_lens.copy_within(at..self.top_count, at + 1);
+        self.top_folders[at] = [0; TOP_NAME_BYTES];
+        self.top_folders[at][..name.len()].copy_from_slice(name);
+        self.top_lens[at] = name.len() as u8;
+        self.top_count += 1;
+        // The highlight starts on the folder listed now.
+        if let Some(row) = (0..self.top_count).find(|&i| self.is_root(i)) {
+            self.folder_list = ListView::default();
+            self.folder_list.move_highlight(row as i32, self.top_count, crate::layout::LIST_ROWS);
+        }
+    }
+
+    /// Whether folder choice row `row` is the folder listed now.
+    pub fn is_root(&self, row: usize) -> bool {
+        row < self.top_count
+            && self.top_folders[row][..self.top_lens[row] as usize] == self.root[..self.root_len as usize]
+    }
+
+    pub fn folders_finished(&mut self, ok: bool) {
+        self.top_scan = if ok { Scan::Done } else { Scan::Failed };
     }
 
     /// Add a file, in date order, newest first.
@@ -354,6 +466,33 @@ impl<'a> Player<'a> {
 
     // The user's side.
 
+    /// Ask the host to list the folders at the top of the card again.
+    pub fn list_folders(&mut self) {
+        self.top_count = 0;
+        self.top_scan = Scan::Running;
+        self.folder_list = ListView::default();
+        self.folders_wanted = true;
+    }
+
+    /// List the folder at folder choice row `row` instead. The chosen file stops, unless the
+    /// folder is the one listed now. Returns whether there is a folder at that row.
+    pub fn choose_folder(&mut self, row: usize) -> bool {
+        if row >= self.top_count {
+            return false;
+        }
+        self.folder_list.highlight = row;
+        if self.is_root(row) && self.scan != Scan::Failed {
+            return true;
+        }
+        self.root = self.top_folders[row];
+        self.root_len = self.top_lens[row];
+        self.forget_list();
+        self.keep = None;
+        self.request = Some(Request::Scan);
+        self.scan = Scan::Running;
+        true
+    }
+
     /// Ask the host to list the card, unless a file is playing.
     pub fn rescan(&mut self) {
         if self.transport != Transport::Playing && self.scan != Scan::Running {
@@ -370,7 +509,7 @@ impl<'a> Player<'a> {
             return false;
         }
         let id = e.id;
-        self.highlight = row;
+        self.list.highlight = row;
         self.current = Some(id);
         self.open(id, 0, true);
         true
@@ -418,21 +557,20 @@ impl<'a> Player<'a> {
 
     /// Move the list's highlight by `steps` rows, keeping it on screen with `rows` rows shown.
     pub fn move_highlight(&mut self, steps: i32, rows: usize) {
-        if self.count == 0 {
-            return;
-        }
-        self.highlight = (self.highlight as i32 + steps).clamp(0, self.count as i32 - 1) as usize;
-        if self.highlight < self.top {
-            self.top = self.highlight;
-        } else if self.highlight >= self.top + rows {
-            self.top = self.highlight + 1 - rows;
-        }
+        self.list.move_highlight(steps, self.count, rows);
     }
 
     /// Scroll the list so row `top` is first, keeping `rows` rows filled where possible.
     pub fn scroll_to(&mut self, top: i32, rows: usize) {
-        let last = self.count.saturating_sub(rows) as i32;
-        self.top = top.clamp(0, last.max(0)) as usize;
+        self.list.scroll_to(top, self.count, rows);
+    }
+
+    pub fn move_folder_highlight(&mut self, steps: i32, rows: usize) {
+        self.folder_list.move_highlight(steps, self.top_count, rows);
+    }
+
+    pub fn scroll_folders_to(&mut self, top: i32, rows: usize) {
+        self.folder_list.scroll_to(top, self.top_count, rows);
     }
 
     /// The bat screen is closing: the host closes the file. The list stays.
@@ -445,6 +583,12 @@ impl<'a> Player<'a> {
             self.closed = true;
         }
     }
+}
+
+fn default_root() -> [u8; TOP_NAME_BYTES] {
+    let mut root = [0; TOP_NAME_BYTES];
+    root[..DEFAULT_FOLDER.len()].copy_from_slice(DEFAULT_FOLDER.as_bytes());
+    root
 }
 
 impl Default for Player<'_> {
