@@ -2359,7 +2359,7 @@ B241 or an earlier build. All the checks in `tools/x8patch.py` pass on this file
 
 ## Step 34 test file: phone commands for the clock and listening mode, a Phone tab with a QR code, BROWSE's order, the logo screen (built 2026-11-10, not yet installed)
 
-`work/patch33/#PortaX8_0257.203` (B257, SHA-256 `603c95a2…b65581333`). Includes steps 11 to 33. Install this file in place of
+`work/patch33/#PortaX8_0257.203` (B257, SHA-256 `79c4e79e…a0c803882`). Includes steps 11 to 33. Install this file in place of
 any earlier build. All the checks in `tools/x8patch.py` pass on this file. No new stock hook site (header version 18). The
 chime crate is pinned to Oversample commit 31dd8e3.
 
@@ -2376,7 +2376,7 @@ stop (`RecorderCommand`).
 
 **Phone tab.** SETTINGS has four tabs: Listen, Record, Phone, Tests. Phone holds the phone remote panel and its clock switch
 (moved from Record), the Phone time button (moved from Tests), and a QR code for `https://remote.oversample.com/#x8` with
-the address beside it. The code is version 2, level M, 5 px a module on a white card with a 3-module margin; it is stored as
+the address beside it. In BAT PLAYBACK, where the phone remote is off, the code and Phone time start at the top of the page. The code is version 2, level M, 5 px a module on a white card with a 3-module margin; it is stored as
 bits in `crates/bat-app/src/qr.rs`, and the tests rebuild it with a QR encoder and read it back from the drawn screen.
 
 **BAT PLAYBACK's order.** The list follows BROWSE: in each folder, its folders first, then its files, each by name compared
@@ -2393,9 +2393,9 @@ setting.
 |---|---|---|---|
 | ITCM | 76.4 KB | 76.7 KB | 89.2 KB |
 | DTCM | 149.1 KB | 149.1 KB | 152.8 KB |
-| `.noinit`, the end of the patch's memory | ends at 0x818fda70 | ends at 0x818ff9c0 | 0x81900000 |
+| `.noinit`, the end of the patch's memory | ends at 0x818fda70 | ends at 0x818ffcd0 | 0x81900000 |
 
-The patch's memory has 1.6 KB left before 0x81900000. The next feature that adds code or state needs room found first.
+The patch's memory has 0.8 KB left before 0x81900000. The next feature that adds code or state needs room found first.
 
 **What to check.**
 
