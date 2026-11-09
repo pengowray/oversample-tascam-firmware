@@ -64,7 +64,11 @@ pub(super) fn bar(app: &BatApp, fb: Fb) {
     }
     let baseline = cy + 5;
     let Some(audio) = player.current_audio() else {
-        text(fb, &SMALL, NO_FILE, PLAY_BUTTON.top_left.x + 38, baseline - 1, LEFT, TEXT_MUTED);
+        // A file chosen but its header not read again yet (after the card is read again) shows
+        // an empty bar.
+        if player.current().is_none() {
+            text(fb, &SMALL, NO_FILE, PLAY_BUTTON.top_left.x + 38, baseline - 1, LEFT, TEXT_MUTED);
+        }
         return;
     };
     let fraction = app.seek_shown().unwrap_or(0.0);

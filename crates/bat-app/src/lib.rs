@@ -1572,7 +1572,10 @@ impl<'a> BatApp<'a> {
                 self.open_files();
                 return;
             }
-            if layout::PLAY_BUTTON.contains(p) {
+            // With no file chosen, the whole bar opens the list: it says so.
+            if layout::PLAY_BUTTON.contains(p)
+                || (layout::STATUS.contains(p) && self.player.transport() == player::Transport::NoFile)
+            {
                 self.play_button();
                 return;
             }
@@ -1743,7 +1746,7 @@ impl<'a> BatApp<'a> {
 
     /// Show the list of recordings, asking the host to read the card the first time.
     pub fn open_files(&mut self) {
-        if self.player.scan() == player::Scan::NotStarted {
+        if matches!(self.player.scan(), player::Scan::NotStarted | player::Scan::Failed) {
             self.player.rescan();
         }
         if let Some(i) = self.player.current().and_then(|c| self.player.files().iter().position(|e| e.id == c.id)) {

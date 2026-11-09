@@ -172,3 +172,43 @@ fn the_wheel_moves_the_highlight_and_play_plays_it() {
     assert_eq!(app.screen, Screen::Main);
     assert_eq!(app.player_mut().take_request(), Some(Request::Open { id: 0, frame: 0 }));
 }
+
+#[test]
+fn reading_the_card_again_keeps_the_chosen_file_and_its_place() {
+    let mut storage = vec![0.0f32; 1024];
+    let mut files = vec![FileEntry::new(0, 0, b"", 0, 0, 0); 8];
+    let mut app = listed(&mut storage, &mut files);
+    app.player_mut().choose(1);
+    app.player_mut().take_request();
+    app.player_mut().opened();
+    app.player_mut().set_position(5000);
+    app.player_mut().close();
+    app.player_mut().take_request();
+    app.player_mut().rescan();
+    assert_eq!(app.player_mut().take_request(), Some(Request::Scan));
+    let player = app.player_mut();
+    player.scan_started();
+    player.add_file(entry(10, "B.wav", date(2026, 3, 2), 0));
+    player.add_file(entry(11, "D.wav", date(2026, 3, 9), 0));
+    player.scan_finished(true);
+    assert_eq!(player.current().map(|e| e.id), Some(10));
+    assert_eq!(player.position(), 5000);
+    app.button(Button::Play);
+    assert_eq!(app.player_mut().take_request(), Some(Request::Open { id: 10, frame: 5000 }));
+}
+
+#[test]
+fn a_chosen_file_that_is_gone_after_reading_again_is_dropped() {
+    let mut storage = vec![0.0f32; 1024];
+    let mut files = vec![FileEntry::new(0, 0, b"", 0, 0, 0); 8];
+    let mut app = listed(&mut storage, &mut files);
+    app.player_mut().choose(1);
+    app.player_mut().opened();
+    app.player_mut().play_pause();
+    let player = app.player_mut();
+    player.scan_started();
+    player.add_file(entry(10, "Z.wav", date(2026, 3, 2), 0));
+    player.scan_finished(true);
+    assert!(player.current().is_none());
+    assert_eq!(player.transport(), Transport::NoFile);
+}

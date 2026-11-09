@@ -151,6 +151,9 @@ pub struct Player<'a> {
     position: u32,
     /// The host closed the file (the bat screen closed): open it again before playing.
     closed: bool,
+    /// While the card is read again: the chosen file's name and folder name, to find it in the
+    /// new list and keep its place.
+    keep: Option<([u8; NAME_BYTES], u8, [u8; FOLDER_NAME_BYTES], u8)>,
     /// The list row the wheel moves and PLAY plays, as an index into `files`.
     pub(crate) highlight: usize,
     /// The first list row shown.
@@ -172,6 +175,7 @@ impl<'a> Player<'a> {
             play_after_open: false,
             position: 0,
             closed: false,
+            keep: None,
             highlight: 0,
             top: 0,
             request: None,
@@ -252,9 +256,26 @@ impl<'a> Player<'a> {
 
     // The host's side.
 
-    /// The host has started listing the card. The old list and the chosen file are forgotten.
+    /// The host has started listing the card. The old list is forgotten. The chosen file stays
+    /// chosen, at the same place, if the new list has a file with its name in a folder with the
+    /// same name.
     pub fn scan_started(&mut self) {
+        self.keep = self.current().map(|e| {
+            let mut folder = [0; FOLDER_NAME_BYTES];
+            let folder_len = self.folder_name(e.folder).map_or(0, |f| {
+                folder[..f.len()].copy_from_slice(f.as_bytes());
+                f.len()
+            });
+            (e.name, e.name_len, folder, folder_len as u8)
+        });
+        let (transport, position, closed) = (self.transport, self.position, self.closed);
         self.forget_list();
+        if self.keep.is_some() {
+            // Not playing: a scan is not started while a file plays.
+            self.transport = if transport == Transport::Ended { Transport::Ended } else { Transport::Paused };
+            self.position = position;
+            self.closed = closed || transport == Transport::Opening;
+        }
         self.scan = Scan::Running;
     }
 
@@ -273,6 +294,13 @@ impl<'a> Player<'a> {
             self.dropped += 1;
             return;
         }
+        if let Some((name, name_len, folder, folder_len)) = self.keep
+            && entry.name[..entry.name_len as usize] == name[..name_len as usize]
+            && self.folder_name(entry.folder).map_or(&[][..], str::as_bytes) == &folder[..folder_len as usize]
+        {
+            self.current = Some(entry.id);
+            self.keep = None;
+        }
         let at = self.files[..self.count].iter().position(|e| entry.newer_than(e)).unwrap_or(self.count);
         self.files.copy_within(at..self.count, at + 1);
         self.files[at] = entry;
@@ -287,6 +315,12 @@ impl<'a> Player<'a> {
 
     pub fn scan_finished(&mut self, ok: bool) {
         self.scan = if ok { Scan::Done } else { Scan::Failed };
+        if self.keep.take().is_some() {
+            // The chosen file is gone.
+            self.transport = Transport::NoFile;
+            self.position = 0;
+            self.closed = false;
+        }
     }
 
     /// The host has opened the file asked for, at the frame asked for.
