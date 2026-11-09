@@ -890,13 +890,13 @@ impl<'a> BatApp<'a> {
     }
 
     /// The pages this host has anything for: Record is left out when it offers none of the MIX
-    /// file, GUANO metadata and pausing. Phone always has the QR code and the chime test.
+    /// file, GUANO metadata and pausing, and Tests when it has no debug figures. Phone always has
+    /// the QR code and the chime test.
     pub fn settings_pages(&self) -> impl Iterator<Item = SettingsPage> + '_ {
-        SettingsPage::ALL.into_iter().filter(|&page| {
-            page != SettingsPage::Record
-                || self.mix_file_available
-                || self.guano_available
-                || self.pause_option_available
+        SettingsPage::ALL.into_iter().filter(|&page| match page {
+            SettingsPage::Record => self.mix_file_available || self.guano_available || self.pause_option_available,
+            SettingsPage::Tests => self.debug_available,
+            SettingsPage::Listen | SettingsPage::Phone => true,
         })
     }
 
@@ -1683,7 +1683,7 @@ impl<'a> BatApp<'a> {
                 self.remote.on = !self.remote.on;
                 return;
             }
-            SettingsPage::Phone if layout::PHONE_TIME.contains(p) => {
+            SettingsPage::Phone if layout::phone_time(self.remote.available).contains(p) => {
                 self.open_chime_test();
                 return;
             }
@@ -2443,7 +2443,7 @@ impl<'a> BatApp<'a> {
                 }
                 SettingsPage::Phone => {
                     (self.remote.available && layout::panel_switch_row(layout::PHONE_REMOTE).contains(p))
-                        || layout::PHONE_TIME.contains(p)
+                        || layout::phone_time(self.remote.available).contains(p)
                 }
                 SettingsPage::Tests => self.debug_available && layout::TESTS_CPU_TEST.contains(p),
             };

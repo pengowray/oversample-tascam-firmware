@@ -73,11 +73,11 @@ fn the_screen_opens_from_settings_and_goes_back() {
     let mut storage = vec![0.0f32; 1024];
     let mut app = BatApp::new(FS, &mut storage, buffers());
     app.open_settings();
-    // Listen, Phone and Tests: this host offers nothing for Record.
-    let phone = layout::tab(1, 3).center();
+    // Listen and Phone: this host offers nothing for Record or Tests, nor the phone remote.
+    let phone = layout::tab(1, 2).center();
     app.touch(phone.x, phone.y);
     assert_eq!(app.settings_page(), SettingsPage::Phone);
-    let chime_test = layout::PHONE_TIME.center();
+    let chime_test = layout::phone_time(false).center();
     assert!(app.is_tappable(chime_test.x, chime_test.y));
     app.touch(chime_test.x, chime_test.y);
     assert_eq!(app.screen(), Screen::ChimeTest);

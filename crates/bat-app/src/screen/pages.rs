@@ -7,8 +7,8 @@ use embedded_graphics::primitives::{PrimitiveStyle, Rectangle};
 
 use super::{BODY, BODY_BOLD, Fb, LEFT, SMALL, outline_selected, rounded, switch_control, text};
 use crate::layout::{
-    PHONE_CLOCK, PHONE_REMOTE, PHONE_TIME, QR_CARD, QR_MARGIN, QR_MODULE, QR_TEXT_X, RECORD_GUANO, RECORD_MIX_FILE,
-    RECORD_PAUSE, TESTS_CPU_TEST, TESTS_DEBUG, panel_switch,
+    PHONE_CLOCK, PHONE_REMOTE, QR_MARGIN, QR_MODULE, QR_TEXT_X, RECORD_GUANO, RECORD_MIX_FILE, RECORD_PAUSE,
+    TESTS_CPU_TEST, TESTS_DEBUG, panel_switch, phone_time, qr_card,
 };
 use crate::palette::*;
 use crate::{BatApp, Mode, RecorderCommand, RemoteCommand, RemoteResult, Setting, qr};
@@ -141,23 +141,25 @@ pub(super) fn phone(app: &BatApp, fb: Fb) {
         let line = state(&CLOCK_FROM_REMOTE_STATE, app.clock_from_remote());
         switch_panel(fb, PHONE_CLOCK, CLOCK_FROM_REMOTE_NAME, &[line], app.clock_from_remote(), selected);
     }
-    qr_code(fb);
-    let y = QR_CARD.top_left.y;
+    let card = qr_card(app.remote_available());
+    qr_code(fb, card);
+    let y = card.top_left.y;
     text(fb, &BODY_BOLD, QR_HEADING, QR_TEXT_X, y + 14, LEFT, TEXT);
     text(fb, &SMALL, qr::ADDRESS, QR_TEXT_X, y + 32, LEFT, TEXT);
     for (line, y) in QR_HELP.iter().zip([y + 50, y + 64]) {
         text(fb, &SMALL, *line, QR_TEXT_X, y, LEFT, TEXT_MUTED);
     }
-    rounded(fb, PHONE_TIME, 4, BUTTON);
-    let (x, y) = (PHONE_TIME.top_left.x + 10, PHONE_TIME.top_left.y);
+    let button = phone_time(app.remote_available());
+    rounded(fb, button, 4, BUTTON);
+    let (x, y) = (button.top_left.x + 10, button.top_left.y);
     text(fb, &BODY_BOLD, CHIME_TEST_NAME, x, y + 19, LEFT, TEXT);
     text(fb, &SMALL, CHIME_TEST_HELP, x, y + 37, LEFT, TEXT_MUTED);
 }
 
 /// Black modules on a white card. Square corners, so the card's edge never cuts into the quiet zone.
-fn qr_code(fb: Fb) {
-    let _ = QR_CARD.into_styled(PrimitiveStyle::with_fill(Rgb565::WHITE)).draw(fb);
-    let origin = QR_CARD.top_left + Point::new(QR_MARGIN * QR_MODULE, QR_MARGIN * QR_MODULE);
+fn qr_code(fb: Fb, card: Rectangle) {
+    let _ = card.into_styled(PrimitiveStyle::with_fill(Rgb565::WHITE)).draw(fb);
+    let origin = card.top_left + Point::new(QR_MARGIN * QR_MODULE, QR_MARGIN * QR_MODULE);
     let module = Size::new(QR_MODULE as u32, QR_MODULE as u32);
     for y in 0..qr::SIZE {
         for x in 0..qr::SIZE {
@@ -279,8 +281,8 @@ pub(crate) fn lines_with_widths() -> std::vec::Vec<(std::string::String, i32, i3
     for line in QR_HELP.iter().chain([&qr::ADDRESS]) {
         add(&SMALL, line, beside_qr);
     }
-    add(&SMALL, CHIME_TEST_HELP, PHONE_TIME.size.width as i32 - 20);
-    add(&BODY_BOLD, CHIME_TEST_NAME, PHONE_TIME.size.width as i32 - 20);
+    add(&SMALL, CHIME_TEST_HELP, phone_time(true).size.width as i32 - 20);
+    add(&BODY_BOLD, CHIME_TEST_NAME, phone_time(true).size.width as i32 - 20);
     let states = [MIX_FILE_FOLLOWS, DEBUG_STATE, GUANO_STATE, PAUSE_STATE, CLOCK_FROM_REMOTE_STATE];
     for line in states.iter().flatten().chain([&MIX_FILE_OVERRIDES, &GUANO_HELP]) {
         add(&SMALL, line, inside);

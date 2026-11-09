@@ -230,9 +230,12 @@ fn main() {
         });
     }
     match args.get(4).map(String::as_str) {
+        // As BAT DETECTOR on the X8 has it: all four tabs.
         Some("tools") => {
             app.set_remote_available(true);
             app.set_remote_on(true);
+            app.set_debug_available(true);
+            app.set_mix_file_available(true);
             app.open_settings_page(match std::env::var("PAGE").as_deref() {
                 Ok("record") => bat_app::SettingsPage::Record,
                 Ok("phone") => bat_app::SettingsPage::Phone,

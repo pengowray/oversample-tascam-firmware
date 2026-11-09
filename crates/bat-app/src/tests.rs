@@ -312,10 +312,12 @@ fn listen_to_steps_from_what_is_shown_when_inputs_change() {
 fn hidden_controls_are_not_tappable() {
     let mut storage = vec![0.0f32; 1024];
     let mut app = BatApp::new(FS, &mut storage, buffers());
+    // Without debug figures there is no Tests page to open.
+    app.open_settings_page(SettingsPage::Tests);
+    assert_eq!(app.settings_page(), SettingsPage::Listen);
+    app.set_debug_available(true);
     app.open_settings_page(SettingsPage::Tests);
     let debug = layout::control_row(Setting::DebugInfo).center();
-    assert!(!app.is_tappable(debug.x, debug.y));
-    app.set_debug_available(true);
     assert!(app.is_tappable(debug.x, debug.y));
     app.open_settings_page(SettingsPage::Listen);
     let minus = layout::setting_minus(1).center();
@@ -1524,10 +1526,7 @@ fn settings_tabs() {
     let mut app = BatApp::new(FS, &mut storage, buffers());
     app.open_settings();
     assert_eq!(app.settings_page(), SettingsPage::Listen);
-    assert_eq!(
-        app.settings_pages().collect::<Vec<_>>(),
-        [SettingsPage::Listen, SettingsPage::Phone, SettingsPage::Tests]
-    );
+    assert_eq!(app.settings_pages().collect::<Vec<_>>(), [SettingsPage::Listen, SettingsPage::Phone]);
     app.set_mix_file_available(true);
     app.set_debug_available(true);
     assert_eq!(app.settings_pages().count(), 4);
@@ -1641,7 +1640,7 @@ fn the_phone_page_qr_code_reads_back() {
     app.set_remote_available(true);
     app.open_settings_page(SettingsPage::Phone);
     let pixels = draw(&app);
-    let card = layout::QR_CARD;
+    let card = layout::qr_card(true);
     let (x0, y0) = (card.top_left.x as usize, card.top_left.y as usize);
     let mut image =
         rqrr::PreparedImage::prepare_from_greyscale(card.size.width as usize, card.size.height as usize, |x, y| {
@@ -1651,4 +1650,21 @@ fn the_phone_page_qr_code_reads_back() {
     assert_eq!(grids.len(), 1);
     let (_, content) = grids[0].decode().expect("a readable code");
     assert_eq!(content, "HTTPS://REMOTE.OVERSAMPLE.COM/#x8");
+}
+
+/// On a host without the phone remote (BAT PLAYBACK on the X8), the QR code and Phone time move to
+/// the top of the Phone page, and Phone time still opens the chime test.
+#[test]
+fn the_phone_page_without_the_remote_starts_with_the_qr_code() {
+    let mut storage = vec![0.0f32; 1024];
+    let mut app = BatApp::new(FS, &mut storage, buffers());
+    app.open_settings_page(SettingsPage::Phone);
+    let pixels = draw(&app);
+    let card = layout::qr_card(false);
+    assert_eq!(card.top_left.y, layout::PAGE_TOP);
+    assert_eq!(pixels[(card.top_left.y as usize + 1) * WIDTH + card.top_left.x as usize + 1], 0xffff);
+    let button = layout::phone_time(false).center();
+    assert!(app.is_tappable(button.x, button.y));
+    app.touch(button.x, button.y);
+    assert_eq!(app.screen(), Screen::ChimeTest);
 }

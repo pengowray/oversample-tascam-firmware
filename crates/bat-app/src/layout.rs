@@ -205,14 +205,22 @@ pub const QR_MODULE: i32 = 5;
 /// light margin, which the dark background is not.
 pub const QR_MARGIN: i32 = 3;
 const QR_CARD_SIDE: u32 = ((crate::qr::SIZE as i32 + 2 * QR_MARGIN) * QR_MODULE) as u32;
-pub const QR_CARD: Rectangle = Rectangle::new(Point::new(6, PAGE_TOP + 184), Size::new(QR_CARD_SIDE, QR_CARD_SIDE));
+/// The white card of the QR code: under the remote's panels, or at the top of the page on a host
+/// without the phone remote (BAT PLAYBACK), so the page has no gap.
+pub const fn qr_card(remote_shown: bool) -> Rectangle {
+    let top = if remote_shown { PAGE_TOP + 184 } else { PAGE_TOP };
+    Rectangle::new(Point::new(6, top), Size::new(QR_CARD_SIDE, QR_CARD_SIDE))
+}
 /// The address and its help, right of the code.
-pub const QR_TEXT_X: i32 = QR_CARD.top_left.x + QR_CARD.size.width as i32 + 10;
+pub const QR_TEXT_X: i32 = 6 + QR_CARD_SIDE as i32 + 10;
 /// Opens the chime test, right of the code and level with its bottom.
-pub const PHONE_TIME: Rectangle = Rectangle::new(
-    Point::new(QR_TEXT_X - 4, QR_CARD.top_left.y + QR_CARD.size.height as i32 - 48),
-    Size::new((314 - (QR_TEXT_X - 4)) as u32, 48),
-);
+pub const fn phone_time(remote_shown: bool) -> Rectangle {
+    let card = qr_card(remote_shown);
+    Rectangle::new(
+        Point::new(QR_TEXT_X - 4, card.top_left.y + QR_CARD_SIDE as i32 - 48),
+        Size::new((314 - (QR_TEXT_X - 4)) as u32, 48),
+    )
+}
 /// Tests page: the debug figures' switch, then the CPU test's button, with its help inside.
 pub const TESTS_DEBUG: Rectangle = panel(PAGE_TOP, 48);
 pub const TESTS_CPU_TEST: Rectangle = panel(PAGE_TOP + 56, 62);
