@@ -15,9 +15,10 @@ descriptor or code changes:
   centred. Each pixel's alpha is the logo's opacity times its darkness, so the logo's black
   outlines and eyes stay dark and its light ears stay light. The launcher glyph does the
   opposite, because the launcher draws its glyphs in white on a dark background.
-- LOWER, 245 x 21, in place of the main tile of "Portacapture X8". The firmware draws this tile
-  one pixel left of and above the 243 x 24 image, so the text is kept to columns 1 to 243 and
-  rows 1 to 20, which are inside the image. The text is centred on the image's middle column.
+- LOWER, 245 x 21, in place of the main tile of "Portacapture X8", whose top left corner is at
+  x -1, y -1 in the 243 x 24 image. The text is kept to columns 1 to 243 and rows 1 to 20 of the
+  tile, counting from 0: the same area that the stock text fills. Column 0, column 244 and row 0
+  are a transparent border in the stock tile. The text is centred on the image's middle column.
 - DESCENDER, 6 x 7, the stock image's second tile (the descender of the p in "Portacapture"),
   all zero.
 
