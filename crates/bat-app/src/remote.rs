@@ -1,13 +1,14 @@
 //! The phone remote: the phone plays a tone and then a chime whose deployment ID holds a
-//! command, to start or stop recording.
+//! command, to set the clock, start or stop recording, or change the listening mode.
 //!
 //! The chime decoders cost too much to run all the time while recording, so the app looks for
 //! the tone in the spectrum its analysis already makes, which costs one comparison per
 //! spectrum column. The tone wakes the decoders for long enough to read a chime.
 //!
 //! The commands say what to do, not "press REC", so a chime read twice, or read on both
-//! inputs, does no harm. The app only reports the command. The host carries it out, and tells
-//! the app the outcome with [`BatApp::remote_result`], which beeps in the headphones.
+//! inputs, does no harm. The app changes the listening mode itself. It passes start and stop to the
+//! host, which carries them out and tells the app the outcome with [`BatApp::remote_result`], and a
+//! clock command to the host's clock with the chime's time. Each outcome beeps in the headphones.
 //!
 //! [`BatApp::remote_result`]: crate::BatApp::remote_result
 
@@ -34,7 +35,16 @@ const LISTEN_S: u64 = 6;
 const RESULT_SHOWN_S: u64 = 5;
 
 /// What the phone asked for: the command in a chime's deployment ID (`chime::format`).
-pub use chime::format::{RemoteCommand, RemoteMessage};
+pub use chime::format::{ListeningMode, RemoteCommand, RemoteMessage};
+
+use crate::Mode;
+
+/// A phone command that the host carries out with its recorder.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum RecorderCommand {
+    Start,
+    Stop,
+}
 
 /// What came of a command.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -44,7 +54,7 @@ pub enum RemoteResult {
     Stopped,
     AlreadyStopped,
     /// The HOLD switch is on, and the X8 would show its HOLD pop-up instead of recording.
-    HoldOn(RemoteCommand),
+    HoldOn(RecorderCommand),
     /// MANUAL's recording guide is on, and REC would open it instead of recording.
     GuideOn,
     /// A settings page is open in MANUAL, and the X8 ignores REC until it closes.
@@ -54,6 +64,16 @@ pub enum RemoteResult {
     /// The chime has a phone remote message with a version, command or argument this build does
     /// not know: the phone page is newer than the patch.
     Unknown,
+    /// The host set its clock to the phone's time.
+    ClockSet,
+    /// A take is under way: the host sets its clock when the take ends.
+    ClockAfterTake,
+    /// The host could not set its clock.
+    ClockFailed,
+    /// The app plays this listening mode now.
+    ModeSet(Mode),
+    /// This host does not offer the mode, so nothing changed.
+    ModeNotOffered(Mode),
 }
 
 impl RemoteResult {
@@ -61,6 +81,9 @@ impl RemoteResult {
         match self {
             RemoteResult::Started | RemoteResult::AlreadyRecording => [(880.0, NOTE_MS), (1_320.0, NOTE_MS)],
             RemoteResult::Stopped | RemoteResult::AlreadyStopped => [(1_320.0, NOTE_MS), (880.0, NOTE_MS)],
+            RemoteResult::ClockSet | RemoteResult::ClockAfterTake | RemoteResult::ModeSet(_) => {
+                [(1_320.0, NOTE_MS), (0.0, 0)]
+            }
             _ => [(330.0, 3 * NOTE_MS), (0.0, 0)],
         }
     }
@@ -102,9 +125,12 @@ pub(crate) struct Remote {
     pub(crate) last: Option<LastCommand>,
     /// The time in the latest command's chime, so its reading on the other input is ignored.
     last_unix: u32,
-    /// The latest chime's time, not yet passed on.
-    reading: Option<Reading>,
-    pending: Option<RemoteCommand>,
+    /// The latest chime's time, not yet passed on, and whether it came with a clock command.
+    reading: Option<(Reading, bool)>,
+    pending: Option<RecorderCommand>,
+    pending_mode: Option<ListeningMode>,
+    /// A clock command was read, and its outcome has not been reported yet.
+    pub(crate) clock_pending: bool,
     result: Option<(RemoteResult, u64)>,
     beep: Beep,
 }
@@ -128,6 +154,8 @@ impl Remote {
             last_unix: 0,
             reading: None,
             pending: None,
+            pending_mode: None,
+            clock_pending: false,
             result: None,
             beep: Beep::new(),
         }
@@ -229,8 +257,9 @@ impl Remote {
                 // The decoder counts samples from when it was built; the time since the chime
                 // started is the same in both counts.
                 let start_sample = now as i64 - (chime.end_sample as i64 - chime.start_sample);
+                let sets_clock = message.remote_command() == Some(RemoteCommand::SetClock);
                 if self.last_unix != message.unix_time {
-                    self.reading = Some(Reading::new(&message, start_sample, now));
+                    self.reading = Some((Reading::new(&message, start_sample, now), sets_clock));
                 }
                 let Some(remote) = message.remote() else { return };
                 let same_chime =
@@ -239,7 +268,10 @@ impl Remote {
                 self.last_unix = message.unix_time;
                 if !same_chime {
                     match remote.known() {
-                        Some(command) => self.pending = Some(command),
+                        Some(RemoteCommand::Start) => self.pending = Some(RecorderCommand::Start),
+                        Some(RemoteCommand::Stop) => self.pending = Some(RecorderCommand::Stop),
+                        Some(RemoteCommand::SetClock) => self.clock_pending = true,
+                        Some(RemoteCommand::Listen(mode)) => self.pending_mode = Some(mode),
                         None => self.report(RemoteResult::Unknown, now),
                     }
                     // Stop listening once the other input has had time to finish this chime.
@@ -250,13 +282,17 @@ impl Remote {
         }
     }
 
-    /// The latest chime's time, once.
-    pub(crate) fn take_reading(&mut self) -> Option<Reading> {
+    /// The latest chime's time, once, and whether its chime was a clock command.
+    pub(crate) fn take_reading(&mut self) -> Option<(Reading, bool)> {
         self.reading.take()
     }
 
-    pub(crate) fn take_command(&mut self) -> Option<RemoteCommand> {
+    pub(crate) fn take_command(&mut self) -> Option<RecorderCommand> {
         self.pending.take()
+    }
+
+    pub(crate) fn take_mode(&mut self) -> Option<ListeningMode> {
+        self.pending_mode.take()
     }
 
     pub(crate) fn report(&mut self, result: RemoteResult, now: u64) {

@@ -4,7 +4,7 @@ use std::boxed::Box;
 
 use super::*;
 use crate::screen::pages_lines;
-use crate::{RemoteCommand, RemoteResult, Screen};
+use crate::{RecorderCommand, RemoteResult, Screen};
 
 use chime::encode as chime_gen;
 
@@ -13,6 +13,11 @@ const UNIX: u32 = 1_793_000_000;
 /// What the phone page puts in the deployment ID, as the decoder gives it.
 const START: [u8; 8] = *b"BATX\x01\x01\x00\x00";
 const STOP: [u8; 8] = *b"BATX\x01\x02\x00\x00";
+const SET_CLOCK: [u8; 8] = *b"BATX\x01\x03\x00\x00";
+/// Listening mode 3, FD.
+const LISTEN_FD: [u8; 8] = *b"BATX\x01\x04\x03\x00";
+/// Listening mode 5, PITCH, which the X8 does not offer.
+const LISTEN_PITCH: [u8; 8] = *b"BATX\x01\x04\x05\x00";
 
 /// The chime for `id`, with the page's melody.
 fn command_chime(id: [u8; 8], unix: u32, carrier_gain: f32) -> Vec<f32> {
@@ -70,7 +75,7 @@ fn press(id: [u8; 8], unix: u32, gain: f32, noise_level: f32) -> Vec<f32> {
     x
 }
 
-fn run(app: &mut BatApp, x: &[f32]) -> Vec<RemoteCommand> {
+fn run(app: &mut BatApp, x: &[f32]) -> Vec<RecorderCommand> {
     let (mut l, mut r) = (vec![0.0; 1024], vec![0.0; 1024]);
     let mut commands = Vec::new();
     for block in x.chunks(1024) {
@@ -93,9 +98,9 @@ fn a_tone_then_a_chime_gives_the_command() {
     let mut storage = vec![0.0f32; SECOND];
     let mut buffers = Box::new(Buffers::new());
     let mut app = remote_app(&mut storage, &mut buffers);
-    assert_eq!(run(&mut app, &press(START, UNIX, 0.1, 1e-4)), [RemoteCommand::Start]);
+    assert_eq!(run(&mut app, &press(START, UNIX, 0.1, 1e-4)), [RecorderCommand::Start]);
     assert_eq!(app.remote.tones, 1);
-    assert_eq!(run(&mut app, &press(STOP, UNIX + 10, 0.1, 1e-4)), [RemoteCommand::Stop]);
+    assert_eq!(run(&mut app, &press(STOP, UNIX + 10, 0.1, 1e-4)), [RecorderCommand::Stop]);
 }
 
 #[test]
@@ -113,7 +118,7 @@ fn with_location_the_chime_still_gives_the_command() {
     let mut x = noise(SECOND + tone.len() + SECOND + chime.len() + SECOND, 1e-4, &mut seed);
     add_at(&mut x, SECOND, &tone);
     add_at(&mut x, SECOND + tone.len() + SECOND, &chime);
-    assert_eq!(run(&mut app, &x), [RemoteCommand::Stop]);
+    assert_eq!(run(&mut app, &x), [RecorderCommand::Stop]);
 }
 
 #[test]
@@ -143,8 +148,9 @@ fn a_chime_without_a_command_does_nothing() {
 
 #[test]
 fn an_unknown_command_is_reported_once() {
-    // An unknown command, a version this build does not know, and a known command with an argument.
-    for id in [*b"BATX\x01\x03\x00\x00", *b"BATX\x02\x01\x00\x00", *b"BATX\x01\x01\x05\x00"] {
+    // An unknown command, a version this build does not know, a known command with an argument, and
+    // a listening mode this build does not know.
+    for id in [*b"BATX\x01\x05\x00\x00", *b"BATX\x02\x01\x00\x00", *b"BATX\x01\x01\x05\x00", *b"BATX\x01\x04\x07\x00"] {
         let mut storage = vec![0.0f32; SECOND];
         let mut buffers = Box::new(Buffers::new());
         let mut app = remote_app(&mut storage, &mut buffers);
@@ -160,7 +166,7 @@ fn the_same_chime_on_both_inputs_gives_one_command() {
     let mut buffers = Box::new(Buffers::new());
     let mut app = remote_app(&mut storage, &mut buffers);
     app.set_inputs([Some(InputName { short: "3", long: "Input 3" }), Some(InputName { short: "4", long: "Input 4" })]);
-    assert_eq!(run(&mut app, &press(START, UNIX, 0.1, 1e-4)), [RemoteCommand::Start]);
+    assert_eq!(run(&mut app, &press(START, UNIX, 0.1, 1e-4)), [RecorderCommand::Start]);
     assert_eq!(app.remote.chimes_read, 2);
 }
 
@@ -194,12 +200,12 @@ fn the_chime_test_takes_the_decoders_and_the_remote_rebuilds_them() {
     let mut storage = vec![0.0f32; SECOND];
     let mut buffers = Box::new(Buffers::new());
     let mut app = remote_app(&mut storage, &mut buffers);
-    assert_eq!(run(&mut app, &press(START, UNIX, 0.1, 1e-4)), [RemoteCommand::Start]);
+    assert_eq!(run(&mut app, &press(START, UNIX, 0.1, 1e-4)), [RecorderCommand::Start]);
     app.open_chime_test();
     run(&mut app, &press(START, UNIX + 10, 0.1, 1e-4));
     app.open_settings_page(crate::SettingsPage::Record);
     assert_eq!(app.screen(), Screen::Settings);
-    assert_eq!(run(&mut app, &press(STOP, UNIX + 20, 0.1, 1e-4)), [RemoteCommand::Stop]);
+    assert_eq!(run(&mut app, &press(STOP, UNIX + 20, 0.1, 1e-4)), [RecorderCommand::Stop]);
 }
 
 #[test]
@@ -229,7 +235,7 @@ fn a_result_shows_for_a_while() {
     let mut storage = vec![0.0f32; SECOND];
     let mut buffers = Box::new(Buffers::new());
     let mut app = remote_app(&mut storage, &mut buffers);
-    app.remote_result(RemoteResult::HoldOn(RemoteCommand::Start));
+    app.remote_result(RemoteResult::HoldOn(RecorderCommand::Start));
     assert!(app.remote.result_shown(app.samples).is_some());
     let silence = vec![0.0f32; 6 * SECOND];
     run(&mut app, &silence);
@@ -292,7 +298,7 @@ fn if_the_first_chime_fails_the_second_tone_keeps_the_decoders_running() {
     let second_tone_at = SECOND + tone.len() + 5 * SECOND;
     add_at(&mut x, second_tone_at, &tone);
     add_at(&mut x, second_tone_at + tone.len() + 2 * SECOND, &second_chime);
-    assert_eq!(run(&mut app, &x), [RemoteCommand::Start]);
+    assert_eq!(run(&mut app, &x), [RecorderCommand::Start]);
 }
 
 #[test]
@@ -310,17 +316,57 @@ fn a_command_chime_gives_the_phone_time() {
     let mut buffers = Box::new(Buffers::new());
     let mut app = remote_app(&mut storage, &mut buffers);
     assert!(app.clock_from_remote());
-    assert_eq!(run(&mut app, &press(START, UNIX, 0.1, 1e-4)), [RemoteCommand::Start]);
+    assert_eq!(run(&mut app, &press(START, UNIX, 0.1, 1e-4)), [RecorderCommand::Start]);
     let time = app.take_phone_time().expect("the chime's time");
     assert!(time.set_clock);
     assert_eq!(app.take_phone_time(), None);
 
-    app.open_settings_page(crate::SettingsPage::Record);
+    app.open_settings_page(crate::SettingsPage::Phone);
     let row = layout::control_row(Setting::ClockFromRemote).center();
     assert!(app.is_tappable(row.x, row.y));
     app.touch(row.x, row.y);
     assert!(!app.clock_from_remote());
     app.button(Button::Home);
-    assert_eq!(run(&mut app, &press(STOP, UNIX + 20, 0.1, 1e-4)), [RemoteCommand::Stop]);
+    assert_eq!(run(&mut app, &press(STOP, UNIX + 20, 0.1, 1e-4)), [RecorderCommand::Stop]);
     assert!(!app.take_phone_time().expect("the chime's time").set_clock);
+}
+
+/// A clock command sets the clock even with the setting for other phone chimes off, and its result
+/// beeps once the host says how the set went.
+#[test]
+fn a_clock_command_sets_the_clock() {
+    let mut storage = vec![0.0f32; SECOND];
+    let mut buffers = Box::new(Buffers::new());
+    let mut app = remote_app(&mut storage, &mut buffers);
+    app.open_settings_page(crate::SettingsPage::Phone);
+    let row = layout::control_row(Setting::ClockFromRemote).center();
+    app.touch(row.x, row.y);
+    assert!(!app.clock_from_remote());
+    app.button(Button::Home);
+    assert_eq!(run(&mut app, &press(SET_CLOCK, UNIX, 0.1, 1e-4)), []);
+    assert!(app.take_phone_time().expect("the chime's time").set_clock);
+    assert_eq!(app.remote.result_shown(app.samples), None);
+    app.set_clock_state(crate::ClockState::Setting);
+    assert_eq!(app.remote.result_shown(app.samples), None);
+    app.set_clock_state(crate::ClockState::Set(0));
+    assert_eq!(app.remote.result_shown(app.samples), Some(RemoteResult::ClockSet));
+    assert!(app.remote.beeping());
+    // A later set, from the clock screen, is not the phone command's.
+    assert!(!app.remote.clock_pending);
+}
+
+/// A listening mode command changes the mode when the host offers it, and reports one it does not.
+#[test]
+fn a_listening_mode_command_changes_the_mode() {
+    let mut storage = vec![0.0f32; SECOND];
+    let mut buffers = Box::new(Buffers::new());
+    let mut app = remote_app(&mut storage, &mut buffers);
+    app.set_modes(&crate::Mode::WITHOUT_PITCH);
+    assert_eq!(app.mode, crate::Mode::Het);
+    assert_eq!(run(&mut app, &press(LISTEN_FD, UNIX, 0.1, 1e-4)), []);
+    assert_eq!(app.mode, crate::Mode::Fd);
+    assert_eq!(app.remote.result_shown(app.samples), Some(RemoteResult::ModeSet(crate::Mode::Fd)));
+    assert_eq!(run(&mut app, &press(LISTEN_PITCH, UNIX + 20, 0.1, 1e-4)), []);
+    assert_eq!(app.mode, crate::Mode::Fd);
+    assert_eq!(app.remote.result_shown(app.samples), Some(RemoteResult::ModeNotOffered(crate::Mode::Pitch)));
 }

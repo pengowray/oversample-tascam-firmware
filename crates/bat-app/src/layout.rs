@@ -185,19 +185,37 @@ pub const fn panel_switch(panel: Rectangle) -> Rectangle {
     Rectangle::new(Point::new(260, panel.top_left.y + 8), Size::new(SWITCH_W, SWITCH_H))
 }
 
-/// Record page: the MIX file, GUANO metadata, whether REC pauses takes, then the phone remote with
-/// its status lines and its clock switch. A panel is 48 px with one help line, 14 px more for each
-/// line after; the gaps are 6 px, as small as keeps the panels apart, so all five fit above the note.
+/// Record page: the MIX file, GUANO metadata, then whether REC pauses takes. A panel is 48 px with
+/// one help line, 14 px more for each line after; the gaps are 6 px, as small as keeps the panels
+/// apart.
 pub const RECORD_MIX_FILE: Rectangle = panel(PAGE_TOP, 48);
 pub const RECORD_GUANO: Rectangle = panel(PAGE_TOP + 54, 62);
 pub const RECORD_PAUSE: Rectangle = panel(PAGE_TOP + 122, 48);
-pub const RECORD_REMOTE: Rectangle = panel(PAGE_TOP + 176, 110);
+/// Phone page: the phone remote with its status lines, its clock switch, then the phone page's QR
+/// code with the address and the Phone time button beside it. The remote's switch is what people
+/// change most, so it is at the top; the QR code is needed once for each phone.
+pub const PHONE_REMOTE: Rectangle = panel(PAGE_TOP, 124);
 /// Under the phone remote, because only its chimes are heard on the main screen.
-pub const RECORD_CLOCK: Rectangle = panel(PAGE_TOP + 292, 48);
-/// Tests page: the debug figures' switch, then a button for each test, with its help inside.
+pub const PHONE_CLOCK: Rectangle = panel(PAGE_TOP + 130, 48);
+/// Size of one module of the QR code, in pixels. At 5 px the code is 125 px, about 19 mm on the
+/// X8's screen, which a phone reads from 20 cm.
+pub const QR_MODULE: i32 = 5;
+/// The white margin round the code, in modules. The QR standard asks for 4; 3 leaves a gap above
+/// the settings note, and phone cameras read codes with less. It is white because readers need a
+/// light margin, which the dark background is not.
+pub const QR_MARGIN: i32 = 3;
+const QR_CARD_SIDE: u32 = ((crate::qr::SIZE as i32 + 2 * QR_MARGIN) * QR_MODULE) as u32;
+pub const QR_CARD: Rectangle = Rectangle::new(Point::new(6, PAGE_TOP + 184), Size::new(QR_CARD_SIDE, QR_CARD_SIDE));
+/// The address and its help, right of the code.
+pub const QR_TEXT_X: i32 = QR_CARD.top_left.x + QR_CARD.size.width as i32 + 10;
+/// Opens the chime test, right of the code and level with its bottom.
+pub const PHONE_TIME: Rectangle = Rectangle::new(
+    Point::new(QR_TEXT_X - 4, QR_CARD.top_left.y + QR_CARD.size.height as i32 - 48),
+    Size::new((314 - (QR_TEXT_X - 4)) as u32, 48),
+);
+/// Tests page: the debug figures' switch, then the CPU test's button, with its help inside.
 pub const TESTS_DEBUG: Rectangle = panel(PAGE_TOP, 48);
-pub const TESTS_CHIME_TEST: Rectangle = panel(PAGE_TOP + 56, 48);
-pub const TESTS_CPU_TEST: Rectangle = panel(PAGE_TOP + 112, 62);
+pub const TESTS_CPU_TEST: Rectangle = panel(PAGE_TOP + 56, 62);
 
 /// Panel of stepped setting `i`.
 pub fn setting_row(i: usize) -> Rectangle {
@@ -220,7 +238,7 @@ pub fn control_row(setting: Setting) -> Rectangle {
     match setting {
         Setting::AutoLevel => AUTO_VOLUME_ROW,
         Setting::MixFile => panel_switch_row(RECORD_MIX_FILE),
-        Setting::ClockFromRemote => panel_switch_row(RECORD_CLOCK),
+        Setting::ClockFromRemote => panel_switch_row(PHONE_CLOCK),
         Setting::PauseWithRec => panel_switch_row(RECORD_PAUSE),
         Setting::DebugInfo => panel_switch_row(TESTS_DEBUG),
         Setting::Mark(kind) => {
@@ -267,7 +285,7 @@ pub fn auto_volume_at(x: i32) -> AutoVolume {
 pub fn switch(setting: Setting) -> Rectangle {
     match setting {
         Setting::MixFile => panel_switch(RECORD_MIX_FILE),
-        Setting::ClockFromRemote => panel_switch(RECORD_CLOCK),
+        Setting::ClockFromRemote => panel_switch(PHONE_CLOCK),
         Setting::PauseWithRec => panel_switch(RECORD_PAUSE),
         Setting::DebugInfo => panel_switch(TESTS_DEBUG),
         _ => {

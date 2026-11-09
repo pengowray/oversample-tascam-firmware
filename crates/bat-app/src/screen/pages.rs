@@ -1,29 +1,32 @@
-//! The settings screen's Record and Tests pages, and the phone remote's notices on the main
+//! The settings screen's Record, Phone and Tests pages, and the phone remote's notices on the main
 //! screen.
 
-use embedded_graphics::primitives::Rectangle;
+use embedded_graphics::pixelcolor::Rgb565;
+use embedded_graphics::prelude::*;
+use embedded_graphics::primitives::{PrimitiveStyle, Rectangle};
 
 use super::{BODY, BODY_BOLD, Fb, LEFT, SMALL, outline_selected, rounded, switch_control, text};
 use crate::layout::{
-    RECORD_CLOCK, RECORD_GUANO, RECORD_MIX_FILE, RECORD_PAUSE, RECORD_REMOTE, TESTS_CHIME_TEST, TESTS_CPU_TEST,
-    TESTS_DEBUG, panel_switch,
+    PHONE_CLOCK, PHONE_REMOTE, PHONE_TIME, QR_CARD, QR_MARGIN, QR_MODULE, QR_TEXT_X, RECORD_GUANO, RECORD_MIX_FILE,
+    RECORD_PAUSE, TESTS_CPU_TEST, TESTS_DEBUG, panel_switch,
 };
 use crate::palette::*;
-use crate::{BatApp, RemoteCommand, RemoteResult, Setting};
+use crate::{BatApp, Mode, RecorderCommand, RemoteCommand, RemoteResult, Setting, qr};
 
 /// In the title bar of the main screen while the remote's switch is on. Muted while it waits for
 /// a tone, and in the accent colour while the chime decoders run.
 pub(super) const TITLE_LABEL: &str = "REMOTE";
 
 pub(super) const REMOTE_NAME: &str = "Phone remote (experimental)";
-pub(super) const REMOTE_HELP: [&str; 2] = [
-    "Phone chimes start or stop recording about 4 s later.",
-    "BAT DETECTOR only. Almost no CPU until the phone plays.",
-];
-pub(super) const REMOTE_BEEPS: &str = "Two notes up: started. Two down: stopped. One low: failed.";
+pub(super) const REMOTE_HELP: [&str; 2] =
+    ["Phone chimes set the clock, start or stop recording,", "and change the listening mode. BAT DETECTOR only."];
+/// The beeps' words match the phone page's help.
+pub(super) const REMOTE_BEEPS: [&str; 2] =
+    ["Two rising notes: started. Two falling: stopped.", "One high: clock or mode set. One low: failed."];
 pub(super) const CHIME_TEST_NAME: &str = "Phone time";
-pub(super) const CHIME_TEST_HELP: &str = "Shows if the X8 reads chimes. Can set the X8 clock.";
-pub(super) const CLOCK_FROM_REMOTE_NAME: &str = "Set X8 clock from chimes";
+pub(super) const CHIME_TEST_HELP: &str = "Time from a chime";
+/// Since B257 the phone's Set X8 clock always sets the clock; this switch is for the other commands.
+pub(super) const CLOCK_FROM_REMOTE_NAME: &str = "Set clock from all chimes";
 pub(super) const PAUSE_NAME: &str = "Pause with REC";
 /// Each switch's line says what its current setting does: [off, on].
 pub(super) const PAUSE_STATE: [&str; 2] =
@@ -31,7 +34,7 @@ pub(super) const PAUSE_STATE: [&str; 2] =
 /// On the main screen when REC was kept from pausing a take.
 pub(super) const PAUSE_OFF_LINES: [&str; 2] = ["Pausing is off.", "STOP ends the take."];
 pub(super) const CLOCK_FROM_REMOTE_STATE: [&str; 2] =
-    ["X8 clock is set only from the PHONE TIME screen", "Chimes set the X8 clock to the phone's time"];
+    ["Only the phone's \"Set X8 clock\" sets the clock.", "Start, Stop and mode chimes also set the clock."];
 pub(super) const CPU_TEST_NAME: &str = "CPU test";
 pub(super) const CPU_TEST_HELP: [&str; 2] =
     ["Runs every listening mode with Auto volume off and on,", "8 s each, up to 3 min. Lists CPU load and lost input."];
@@ -47,6 +50,34 @@ pub(super) const GUANO_NAME: &str = "GUANO metadata";
 pub(super) const GUANO_STATE: [&str; 2] =
     ["No GUANO metadata. WAV files are stock X8 files", "Each WAV file gets start time, recorder model, location"];
 pub(super) const GUANO_HELP: &str = "Bat analysis apps read GUANO. Most audio apps ignore it.";
+
+/// Beside the QR code on the Phone page.
+pub(super) const QR_HEADING: &str = "Phone page";
+pub(super) const QR_HELP: [&str; 2] = ["Plays the chimes.", "Scan with the phone."];
+/// The clock command and the listening modes, on the remote panel's last line.
+const LAST_SET_CLOCK: &str = "Set clock";
+const LAST_MODE: [&str; 6] = ["HET mode", "COMB mode", "FD mode", "TE mode", "PITCH mode", "1:1 mode"];
+pub(super) const CLOCK_SET_LINES: [&str; 1] = ["Phone: clock set"];
+pub(super) const CLOCK_AFTER_TAKE_LINES: [&str; 2] = ["Phone: clock will be set", "when recording stops."];
+pub(super) const CLOCK_FAILED_LINES: [&str; 2] = ["Could not set the clock.", "Try again from the phone."];
+/// For each mode of `Mode::ALL`.
+pub(super) const MODE_SET_LINES: [[&str; 1]; 6] = [
+    ["Phone: listening mode HET"],
+    ["Phone: listening mode COMB"],
+    ["Phone: listening mode FD"],
+    ["Phone: listening mode TE"],
+    ["Phone: listening mode PITCH"],
+    ["Phone: listening mode 1:1"],
+];
+/// Only PITCH is left out on the X8, because it cannot keep up there.
+pub(super) const MODE_NOT_OFFERED_LINES: [[&str; 2]; 6] = [
+    ["Phone asked for HET.", "Not offered on this X8."],
+    ["Phone asked for COMB.", "Not offered on this X8."],
+    ["Phone asked for FD.", "Not offered on this X8."],
+    ["Phone asked for TE.", "Not offered on this X8."],
+    ["Phone asked for PITCH.", "The X8 is too slow for it."],
+    ["Phone asked for 1:1.", "Not offered on this X8."],
+];
 
 /// The line for a switch's current setting.
 fn state(lines: &[&'static str; 2], on: bool) -> &'static str {
@@ -100,35 +131,75 @@ pub(super) fn record(app: &BatApp, fb: Fb) {
             selected,
         );
     }
+}
+
+/// The phone remote and its clock switch, the phone page's QR code, and the chime test.
+pub(super) fn phone(app: &BatApp, fb: Fb) {
     if app.remote_available() {
         remote_panel(app, fb);
         let selected = app.selected_setting() == Setting::ClockFromRemote;
         let line = state(&CLOCK_FROM_REMOTE_STATE, app.clock_from_remote());
-        switch_panel(fb, RECORD_CLOCK, CLOCK_FROM_REMOTE_NAME, &[line], app.clock_from_remote(), selected);
+        switch_panel(fb, PHONE_CLOCK, CLOCK_FROM_REMOTE_NAME, &[line], app.clock_from_remote(), selected);
+    }
+    qr_code(fb);
+    let y = QR_CARD.top_left.y;
+    text(fb, &BODY_BOLD, QR_HEADING, QR_TEXT_X, y + 14, LEFT, TEXT);
+    text(fb, &SMALL, qr::ADDRESS, QR_TEXT_X, y + 32, LEFT, TEXT);
+    for (line, y) in QR_HELP.iter().zip([y + 50, y + 64]) {
+        text(fb, &SMALL, *line, QR_TEXT_X, y, LEFT, TEXT_MUTED);
+    }
+    rounded(fb, PHONE_TIME, 4, BUTTON);
+    let (x, y) = (PHONE_TIME.top_left.x + 10, PHONE_TIME.top_left.y);
+    text(fb, &BODY_BOLD, CHIME_TEST_NAME, x, y + 19, LEFT, TEXT);
+    text(fb, &SMALL, CHIME_TEST_HELP, x, y + 37, LEFT, TEXT_MUTED);
+}
+
+/// Black modules on a white card. Square corners, so the card's edge never cuts into the quiet zone.
+fn qr_code(fb: Fb) {
+    let _ = QR_CARD.into_styled(PrimitiveStyle::with_fill(Rgb565::WHITE)).draw(fb);
+    let origin = QR_CARD.top_left + Point::new(QR_MARGIN * QR_MODULE, QR_MARGIN * QR_MODULE);
+    let module = Size::new(QR_MODULE as u32, QR_MODULE as u32);
+    for y in 0..qr::SIZE {
+        for x in 0..qr::SIZE {
+            if qr::dark(x, y) {
+                let at = origin + Point::new(x as i32 * QR_MODULE, y as i32 * QR_MODULE);
+                let _ = Rectangle::new(at, module).into_styled(PrimitiveStyle::with_fill(Rgb565::BLACK)).draw(fb);
+            }
+        }
     }
 }
 
-/// The debug figures' switch and the two tests.
+/// The debug figures' switch and the CPU test.
 pub(super) fn tests(app: &BatApp, fb: Fb) {
     if app.debug_available() {
         let selected = app.selected_setting() == Setting::DebugInfo;
         switch_panel(fb, TESTS_DEBUG, DEBUG_NAME, &[state(&DEBUG_STATE, app.debug_info())], app.debug_info(), selected);
-    }
-    test_button(fb, TESTS_CHIME_TEST, CHIME_TEST_NAME, &[CHIME_TEST_HELP]);
-    if app.debug_available() {
         test_button(fb, TESTS_CPU_TEST, CPU_TEST_NAME, &CPU_TEST_HELP);
     }
 }
 
+/// The name of a phone command on the remote panel's last line.
+fn command_name(command: Option<RemoteCommand>) -> &'static str {
+    match command {
+        Some(RemoteCommand::Start) => "Start",
+        Some(RemoteCommand::Stop) => "Stop",
+        Some(RemoteCommand::SetClock) => LAST_SET_CLOCK,
+        Some(RemoteCommand::Listen(mode)) => LAST_MODE[mode_index(Mode::from(mode))],
+        None => "Unknown command",
+    }
+}
+
 fn remote_panel(app: &BatApp, fb: Fb) {
-    rounded(fb, RECORD_REMOTE, 6, PANEL);
-    let (x, y) = (RECORD_REMOTE.top_left.x + 10, RECORD_REMOTE.top_left.y);
+    rounded(fb, PHONE_REMOTE, 6, PANEL);
+    let (x, y) = (PHONE_REMOTE.top_left.x + 10, PHONE_REMOTE.top_left.y);
     text(fb, &BODY, REMOTE_NAME, x, y + 20, LEFT, TEXT);
-    switch_control(fb, panel_switch(RECORD_REMOTE), app.remote_on());
+    switch_control(fb, panel_switch(PHONE_REMOTE), app.remote_on());
     for (line, y) in REMOTE_HELP.iter().zip([y + 40, y + 54]) {
         text(fb, &SMALL, *line, x, y, LEFT, TEXT_MUTED);
     }
-    text(fb, &SMALL, REMOTE_BEEPS, x, y + 68, LEFT, TEXT_MUTED);
+    for (line, y) in REMOTE_BEEPS.iter().zip([y + 68, y + 82]) {
+        text(fb, &SMALL, *line, x, y, LEFT, TEXT_MUTED);
+    }
     let remote = &app.remote;
     text(
         fb,
@@ -138,23 +209,19 @@ fn remote_panel(app: &BatApp, fb: Fb) {
             remote.tones, remote.chimes_read, remote.chimes_failed
         ),
         x,
-        y + 86,
+        y + 100,
         LEFT,
         TEXT,
     );
     match remote.last {
         Some(last) => {
-            let name = match last.message.known() {
-                Some(RemoteCommand::Start) => "Start",
-                Some(RemoteCommand::Stop) => "Stop",
-                None => "Unknown command",
-            };
+            let name = command_name(last.message.known());
             let seconds = app.samples.saturating_sub(last.read_at) / app.sample_rate as u64;
             let line = format_args!("Last: {name}, {seconds} s ago, carrier {:.0} dBFS", last.level_dbfs);
-            text(fb, &SMALL, line, x, y + 100, LEFT, TEXT);
+            text(fb, &SMALL, line, x, y + 114, LEFT, TEXT);
         }
         None => {
-            text(fb, &SMALL, "No command read yet", x, y + 100, LEFT, TEXT_MUTED);
+            text(fb, &SMALL, "No command read yet", x, y + 114, LEFT, TEXT_MUTED);
         }
     }
 }
@@ -169,13 +236,22 @@ pub(super) fn result_lines(result: RemoteResult) -> &'static [&'static str] {
         RemoteResult::AlreadyRecording => &["Phone asked to start.", "Already recording."],
         RemoteResult::Stopped => &["Phone: recording stopped"],
         RemoteResult::AlreadyStopped => &["Phone asked to stop.", "Already stopped."],
-        RemoteResult::HoldOn(RemoteCommand::Start) => &["Cannot start: HOLD is on.", "Slide HOLD off."],
-        RemoteResult::HoldOn(RemoteCommand::Stop) => &["Cannot stop: HOLD is on.", "Slide HOLD off."],
+        RemoteResult::HoldOn(RecorderCommand::Start) => &["Cannot start: HOLD is on.", "Slide HOLD off."],
+        RemoteResult::HoldOn(RecorderCommand::Stop) => &["Cannot stop: HOLD is on.", "Slide HOLD off."],
         RemoteResult::GuideOn => &["Cannot start: recording guide", "is on. Turn it off in MANUAL."],
         RemoteResult::PageOpen => &["Cannot start: MANUAL settings", "page open. Press PLAY, close it."],
         RemoteResult::NoResponse => &["Recorder did not respond to", "the phone's command within 5 s."],
         RemoteResult::Unknown => &UNKNOWN_LINES,
+        RemoteResult::ClockSet => &CLOCK_SET_LINES,
+        RemoteResult::ClockAfterTake => &CLOCK_AFTER_TAKE_LINES,
+        RemoteResult::ClockFailed => &CLOCK_FAILED_LINES,
+        RemoteResult::ModeSet(mode) => &MODE_SET_LINES[mode_index(mode)],
+        RemoteResult::ModeNotOffered(mode) => &MODE_NOT_OFFERED_LINES[mode_index(mode)],
     }
+}
+
+fn mode_index(mode: Mode) -> usize {
+    Mode::ALL.iter().position(|&m| m == mode).unwrap_or(0)
 }
 
 /// Test helpers: each line that has a limit, with its width and the room for it.
@@ -193,10 +269,18 @@ pub(crate) fn lines_with_widths() -> std::vec::Vec<(std::string::String, i32, i3
     };
     let mut lines = Vec::new();
     let mut add = |font: &FontRenderer, line: &str, room: i32| lines.push((line.to_string(), width(font, line), room));
-    let inside = RECORD_REMOTE.size.width as i32 - 20;
-    for line in REMOTE_HELP.iter().chain(&CPU_TEST_HELP).chain([&REMOTE_BEEPS, &CHIME_TEST_HELP]) {
+    let inside = PHONE_REMOTE.size.width as i32 - 20;
+    for line in REMOTE_HELP.iter().chain(&CPU_TEST_HELP).chain(&REMOTE_BEEPS) {
         add(&SMALL, line, inside);
     }
+    // Right of the QR code.
+    let beside_qr = 314 - QR_TEXT_X;
+    add(&BODY_BOLD, QR_HEADING, beside_qr);
+    for line in QR_HELP.iter().chain([&qr::ADDRESS]) {
+        add(&SMALL, line, beside_qr);
+    }
+    add(&SMALL, CHIME_TEST_HELP, PHONE_TIME.size.width as i32 - 20);
+    add(&BODY_BOLD, CHIME_TEST_NAME, PHONE_TIME.size.width as i32 - 20);
     let states = [MIX_FILE_FOLLOWS, DEBUG_STATE, GUANO_STATE, PAUSE_STATE, CLOCK_FROM_REMOTE_STATE];
     for line in states.iter().flatten().chain([&MIX_FILE_OVERRIDES, &GUANO_HELP]) {
         add(&SMALL, line, inside);
@@ -208,18 +292,28 @@ pub(crate) fn lines_with_widths() -> std::vec::Vec<(std::string::String, i32, i3
     add(&SMALL, "Tones heard 100. Chimes read 100, failed 100.", inside);
     add(&SMALL, "Last: Start, 3600 s ago, carrier -100 dBFS", inside);
     add(&SMALL, "Last: Unknown command, 3600 s ago, carrier -100 dBFS", inside);
+    for name in LAST_MODE.iter().chain([&LAST_SET_CLOCK]) {
+        add(&SMALL, &std::format!("Last: {name}, 3600 s ago, carrier -100 dBFS"), inside);
+    }
     for result in [
         RemoteResult::Started,
         RemoteResult::AlreadyRecording,
         RemoteResult::Stopped,
         RemoteResult::AlreadyStopped,
-        RemoteResult::HoldOn(RemoteCommand::Start),
-        RemoteResult::HoldOn(RemoteCommand::Stop),
+        RemoteResult::HoldOn(RecorderCommand::Start),
+        RemoteResult::HoldOn(RecorderCommand::Stop),
         RemoteResult::GuideOn,
         RemoteResult::PageOpen,
         RemoteResult::NoResponse,
         RemoteResult::Unknown,
-    ] {
+        RemoteResult::ClockSet,
+        RemoteResult::ClockAfterTake,
+        RemoteResult::ClockFailed,
+    ]
+    .into_iter()
+    .chain(Mode::ALL.map(RemoteResult::ModeSet))
+    .chain(Mode::ALL.map(RemoteResult::ModeNotOffered))
+    {
         for line in result_lines(result) {
             add(&BODY, line, crate::layout::WF_W as i32 - 20);
         }

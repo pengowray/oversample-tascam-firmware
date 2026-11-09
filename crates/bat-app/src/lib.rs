@@ -24,6 +24,7 @@ mod level;
 pub mod palette;
 mod phone_time;
 pub mod player;
+mod qr;
 mod remote;
 mod screen;
 mod stages;
@@ -43,7 +44,7 @@ use layout::{SNAP_H, SNAP_W, WF_H, WF_W};
 pub use level::AutoVolume;
 pub use phone_time::{ClockState, PhoneTime};
 pub use player::{FileEntry, Player};
-pub use remote::{RemoteCommand, RemoteResult};
+pub use remote::{ListeningMode, RecorderCommand, RemoteCommand, RemoteResult};
 pub use stages::Stage;
 
 /// Screen size in pixels.
@@ -127,6 +128,19 @@ pub enum Mode {
     Thru,
 }
 
+impl From<ListeningMode> for Mode {
+    fn from(mode: ListeningMode) -> Self {
+        match mode {
+            ListeningMode::Het => Mode::Het,
+            ListeningMode::Comb => Mode::Comb,
+            ListeningMode::Fd => Mode::Fd,
+            ListeningMode::Te => Mode::Te,
+            ListeningMode::Pitch => Mode::Pitch,
+            ListeningMode::Thru => Mode::Thru,
+        }
+    }
+}
+
 impl Mode {
     pub const ALL: [Mode; 6] = [Mode::Het, Mode::Comb, Mode::Fd, Mode::Te, Mode::Pitch, Mode::Thru];
     /// The modes the X8 runs fast enough: PITCH cannot keep up there.
@@ -201,19 +215,24 @@ impl Gesture {
 pub enum SettingsPage {
     /// What changes the sound in the headphones, and the sounds to mark.
     Listen,
-    /// What a take's files get, and the phone remote.
+    /// What a take's files get.
     Record,
-    /// The debug figures, the chime test and the CPU test.
+    /// The phone remote, the phone page's QR code and the chime test: everything the phone page
+    /// does with the X8, on one page.
+    Phone,
+    /// The debug figures and the CPU test.
     Tests,
 }
 
 impl SettingsPage {
-    pub const ALL: [SettingsPage; 3] = [SettingsPage::Listen, SettingsPage::Record, SettingsPage::Tests];
+    pub const ALL: [SettingsPage; 4] =
+        [SettingsPage::Listen, SettingsPage::Record, SettingsPage::Phone, SettingsPage::Tests];
 
     pub fn label(self) -> &'static str {
         match self {
             SettingsPage::Listen => "Listen",
             SettingsPage::Record => "Record",
+            SettingsPage::Phone => "Phone",
             SettingsPage::Tests => "Tests",
         }
     }
@@ -262,7 +281,8 @@ impl Setting {
 
     pub fn page(self) -> SettingsPage {
         match self {
-            Setting::MixFile | Setting::ClockFromRemote | Setting::PauseWithRec => SettingsPage::Record,
+            Setting::MixFile | Setting::PauseWithRec => SettingsPage::Record,
+            Setting::ClockFromRemote => SettingsPage::Phone,
             Setting::DebugInfo => SettingsPage::Tests,
             _ => SettingsPage::Listen,
         }
@@ -870,13 +890,12 @@ impl<'a> BatApp<'a> {
     }
 
     /// The pages this host has anything for: Record is left out when it offers none of the MIX
-    /// file, GUANO metadata and the phone remote.
+    /// file, GUANO metadata and pausing. Phone always has the QR code and the chime test.
     pub fn settings_pages(&self) -> impl Iterator<Item = SettingsPage> + '_ {
         SettingsPage::ALL.into_iter().filter(|&page| {
             page != SettingsPage::Record
                 || self.mix_file_available
                 || self.guano_available
-                || self.remote.available
                 || self.pause_option_available
         })
     }
@@ -1004,8 +1023,8 @@ impl<'a> BatApp<'a> {
         self.remote.counts()
     }
 
-    /// A command from the phone that the host has not acted on yet.
-    pub fn take_remote_command(&mut self) -> Option<RemoteCommand> {
+    /// A start or stop command from the phone that the host has not acted on yet.
+    pub fn take_remote_command(&mut self) -> Option<RecorderCommand> {
         self.remote.take_command()
     }
 
@@ -1308,9 +1327,20 @@ impl<'a> BatApp<'a> {
         self.host_clock = local_seconds.map(|s| (s, self.samples));
     }
 
-    /// What the host's clock is doing, for the clock screen.
+    /// What the host's clock is doing, for the clock screen. The outcome of a phone's clock command
+    /// also beeps and shows on the main screen.
     pub fn set_clock_state(&mut self, state: ClockState) {
         self.clock_state = state;
+        if self.remote.clock_pending {
+            let result = match state {
+                ClockState::Set(_) => RemoteResult::ClockSet,
+                ClockState::AfterTake => RemoteResult::ClockAfterTake,
+                ClockState::Failed => RemoteResult::ClockFailed,
+                ClockState::Idle | ClockState::Setting => return,
+            };
+            self.remote.clock_pending = false;
+            self.remote.report(result, self.samples);
+        }
     }
 
     pub fn clock_state(&self) -> ClockState {
@@ -1360,17 +1390,30 @@ impl<'a> BatApp<'a> {
         Some((phone, host + (self.samples.saturating_sub(at) as f32 / self.sample_rate) as i64))
     }
 
-    /// The readings the decoders gave this chunk, kept and queued for the host. Not inlined, so
-    /// it stays out of `process`, which the X8 patch runs from ITCM.
+    /// The readings the decoders gave this chunk, kept and queued for the host, and a listening
+    /// mode the phone asked for. A clock command sets the clock from either screen, whatever the
+    /// setting for other phone chimes. Not inlined, so it stays out of `process`, which the X8
+    /// patch runs from ITCM.
     #[inline(never)]
     fn collect_phone_readings(&mut self) {
-        if let Some(reading) = self.chime.take_reading() {
+        if let Some((reading, clock_command)) = self.chime.take_reading() {
             self.phone = Some(reading);
-            self.phone_out = Some((reading, false));
+            self.phone_out = Some((reading, clock_command));
+            self.remote.clock_pending |= clock_command;
         }
-        if let Some(reading) = self.remote.take_reading() {
+        if let Some((reading, clock_command)) = self.remote.take_reading() {
             self.phone = Some(reading);
-            self.phone_out = Some((reading, self.clock_from_remote));
+            self.phone_out = Some((reading, clock_command || self.clock_from_remote));
+        }
+        if let Some(mode) = self.remote.take_mode() {
+            let mode = Mode::from(mode);
+            let result = if self.modes.contains(&mode) {
+                self.set_mode(mode);
+                RemoteResult::ModeSet(mode)
+            } else {
+                RemoteResult::ModeNotOffered(mode)
+            };
+            self.remote.report(result, self.samples);
         }
     }
 
@@ -1634,13 +1677,13 @@ impl<'a> BatApp<'a> {
                 self.guano = !self.guano;
                 return;
             }
-            SettingsPage::Record
-                if self.remote.available && layout::panel_switch_row(layout::RECORD_REMOTE).contains(p) =>
+            SettingsPage::Phone
+                if self.remote.available && layout::panel_switch_row(layout::PHONE_REMOTE).contains(p) =>
             {
                 self.remote.on = !self.remote.on;
                 return;
             }
-            SettingsPage::Tests if layout::TESTS_CHIME_TEST.contains(p) => {
+            SettingsPage::Phone if layout::PHONE_TIME.contains(p) => {
                 self.open_chime_test();
                 return;
             }
@@ -2396,12 +2439,13 @@ impl<'a> BatApp<'a> {
             let page_button = match self.settings_page() {
                 SettingsPage::Listen => false,
                 SettingsPage::Record => {
-                    (self.guano_available && layout::panel_switch_row(layout::RECORD_GUANO).contains(p))
-                        || (self.remote.available && layout::panel_switch_row(layout::RECORD_REMOTE).contains(p))
+                    self.guano_available && layout::panel_switch_row(layout::RECORD_GUANO).contains(p)
                 }
-                SettingsPage::Tests => {
-                    layout::TESTS_CHIME_TEST.contains(p) || (self.debug_available && layout::TESTS_CPU_TEST.contains(p))
+                SettingsPage::Phone => {
+                    (self.remote.available && layout::panel_switch_row(layout::PHONE_REMOTE).contains(p))
+                        || layout::PHONE_TIME.contains(p)
                 }
+                SettingsPage::Tests => self.debug_available && layout::TESTS_CPU_TEST.contains(p),
             };
             return page_button
                 || match layout::settings_hit(x, y, self.page_settings()) {

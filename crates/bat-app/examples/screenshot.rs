@@ -224,6 +224,7 @@ fn main() {
     if args.get(4).map(String::as_str) == Some("settings") {
         app.open_settings_page(match std::env::var("PAGE").as_deref() {
             Ok("record") => bat_app::SettingsPage::Record,
+            Ok("phone") => bat_app::SettingsPage::Phone,
             Ok("tests") => bat_app::SettingsPage::Tests,
             _ => bat_app::SettingsPage::Listen,
         });
@@ -234,6 +235,7 @@ fn main() {
             app.set_remote_on(true);
             app.open_settings_page(match std::env::var("PAGE").as_deref() {
                 Ok("record") => bat_app::SettingsPage::Record,
+                Ok("phone") => bat_app::SettingsPage::Phone,
                 _ => bat_app::SettingsPage::Tests,
             });
         }
@@ -243,10 +245,18 @@ fn main() {
                 run_cpu_test(&mut app, rows.parse().unwrap());
             }
         }
+        // RESULT picks another phone remote notice: clockset, aftertake, clockfailed, mode, nopitch.
         Some("unknown") => {
             app.set_remote_available(true);
             app.set_remote_on(true);
-            app.remote_result(bat_app::RemoteResult::Unknown);
+            app.remote_result(match std::env::var("RESULT").as_deref() {
+                Ok("clockset") => bat_app::RemoteResult::ClockSet,
+                Ok("aftertake") => bat_app::RemoteResult::ClockAfterTake,
+                Ok("clockfailed") => bat_app::RemoteResult::ClockFailed,
+                Ok("mode") => bat_app::RemoteResult::ModeSet(Mode::Comb),
+                Ok("nopitch") => bat_app::RemoteResult::ModeNotOffered(Mode::Pitch),
+                _ => bat_app::RemoteResult::Unknown,
+            });
         }
         Some("cpurun") => {
             app.set_remote_available(true);

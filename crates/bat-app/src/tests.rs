@@ -1524,12 +1524,15 @@ fn settings_tabs() {
     let mut app = BatApp::new(FS, &mut storage, buffers());
     app.open_settings();
     assert_eq!(app.settings_page(), SettingsPage::Listen);
-    assert_eq!(app.settings_pages().collect::<Vec<_>>(), [SettingsPage::Listen, SettingsPage::Tests]);
+    assert_eq!(
+        app.settings_pages().collect::<Vec<_>>(),
+        [SettingsPage::Listen, SettingsPage::Phone, SettingsPage::Tests]
+    );
     app.set_mix_file_available(true);
     app.set_debug_available(true);
-    assert_eq!(app.settings_pages().count(), 3);
+    assert_eq!(app.settings_pages().count(), 4);
     for (i, page) in SettingsPage::ALL.into_iter().enumerate() {
-        let tab = layout::tab(i, 3).center();
+        let tab = layout::tab(i, 4).center();
         assert!(app.is_tappable(tab.x, tab.y));
         app.touch(tab.x, tab.y);
         assert_eq!(app.settings_page(), page);
@@ -1627,4 +1630,25 @@ fn pause_switch_and_notice() {
         app.process(&[0.0; 1024], &[0.0; 1024], &mut l, &mut r);
     }
     assert!(!app.pause_refused_shown());
+}
+
+/// The QR code on the settings screen's Phone page reads back as the phone page's address, from the
+/// screen as drawn.
+#[test]
+fn the_phone_page_qr_code_reads_back() {
+    let mut storage = vec![0.0f32; 1024];
+    let mut app = BatApp::new(FS, &mut storage, buffers());
+    app.set_remote_available(true);
+    app.open_settings_page(SettingsPage::Phone);
+    let pixels = draw(&app);
+    let card = layout::QR_CARD;
+    let (x0, y0) = (card.top_left.x as usize, card.top_left.y as usize);
+    let mut image =
+        rqrr::PreparedImage::prepare_from_greyscale(card.size.width as usize, card.size.height as usize, |x, y| {
+            if pixels[(y0 + y) * WIDTH + x0 + x] == 0 { 0 } else { 255 }
+        });
+    let grids = image.detect_grids();
+    assert_eq!(grids.len(), 1);
+    let (_, content) = grids[0].decode().expect("a readable code");
+    assert_eq!(content, "HTTPS://REMOTE.OVERSAMPLE.COM/#x8");
 }

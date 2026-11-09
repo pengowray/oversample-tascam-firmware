@@ -3,7 +3,7 @@
 
 use core::mem::MaybeUninit;
 
-use chime::format::{LocalTime, TimeMessage};
+use chime::format::{LocalTime, RemoteCommand, TimeMessage};
 use chime::{Decoder, Event, UnreadableReason};
 
 use crate::phone_time::Reading;
@@ -55,6 +55,8 @@ pub(crate) struct ChimeTest {
     reading: Option<Reading>,
     /// `reading` has not been passed on yet.
     fresh: bool,
+    /// `reading` came with a phone remote clock command.
+    clock_command: bool,
     pub(crate) failure: Option<Failure>,
     /// The app's sample count just after the latest lost frames.
     last_jump: u64,
@@ -70,6 +72,7 @@ impl ChimeTest {
             channels: [NOTHING_YET; 2],
             reading: None,
             fresh: false,
+            clock_command: false,
             failure: None,
             last_jump: 0,
         }
@@ -133,7 +136,10 @@ impl ChimeTest {
                     // The same chime on the other input gives the same time: pass it on once.
                     let repeat = self.reading.is_some_and(|last| last.unix_time == message.unix_time);
                     self.reading = Some(Reading::new(&message, start_sample, now));
-                    self.fresh |= !repeat;
+                    if !repeat {
+                        self.fresh = true;
+                        self.clock_command = message.remote_command() == Some(RemoteCommand::SetClock);
+                    }
                 }
             }
             Event::Unreadable(unreadable) => {
@@ -144,9 +150,11 @@ impl ChimeTest {
         }
     }
 
-    /// The latest reading, once: the app passes it on to the host.
-    pub(crate) fn take_reading(&mut self) -> Option<Reading> {
-        core::mem::take(&mut self.fresh).then_some(self.reading).flatten()
+    /// The latest reading, once: the app passes it on to the host. With it, whether its chime was a
+    /// phone remote clock command.
+    pub(crate) fn take_reading(&mut self) -> Option<(Reading, bool)> {
+        let reading = core::mem::take(&mut self.fresh).then_some(self.reading).flatten()?;
+        Some((reading, core::mem::take(&mut self.clock_command)))
     }
 
     /// The time at sample `now`, if a chime has been read.

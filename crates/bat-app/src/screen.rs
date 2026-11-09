@@ -776,6 +776,7 @@ fn settings(app: &BatApp, fb: Fb) {
     match app.settings_page() {
         SettingsPage::Listen => listen_page(app, fb),
         SettingsPage::Record => pages::record(app, fb),
+        SettingsPage::Phone => pages::phone(app, fb),
         SettingsPage::Tests => pages::tests(app, fb),
     }
     text(fb, &SMALL, "These settings reset when the recorder is turned off.", 16, SETTINGS_NOTE, LEFT, TEXT_MUTED);

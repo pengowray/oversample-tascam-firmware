@@ -1,7 +1,7 @@
 use core::ptr;
 use core::sync::atomic::{AtomicU32, Ordering::Relaxed};
 
-use bat_app::{BatApp, RemoteCommand, RemoteResult};
+use bat_app::{BatApp, RecorderCommand, RemoteResult};
 
 use super::state::{BLOCKS, HEAR_MIX};
 use super::{blocks_per_second, read_byte, stock};
@@ -93,8 +93,8 @@ pub(super) fn run_remote(app: &mut BatApp<'static>) {
     let transport = read_byte(stock::TRANSPORT);
     if let Some(command) = app.take_remote_command() {
         let goal = match command {
-            RemoteCommand::Start => GOAL_RECORDING,
-            RemoteCommand::Stop => GOAL_STOPPED,
+            RecorderCommand::Start => GOAL_RECORDING,
+            RecorderCommand::Stop => GOAL_STOPPED,
         };
         GOAL.store(goal, Relaxed);
         GOAL_SINCE.store(now, Relaxed);
@@ -112,7 +112,7 @@ pub(super) fn run_remote(app: &mut BatApp<'static>) {
             RECORDING => finish(app, RemoteResult::Started, now),
             _ if waited >= GIVE_UP_S * blocks_per_second() => finish(app, RemoteResult::NoResponse, now),
             STOPPED | STANDBY | PAUSED | PAUSED_BY_EVENT if hold_on() => {
-                finish(app, RemoteResult::HoldOn(RemoteCommand::Start), now)
+                finish(app, RemoteResult::HoldOn(RecorderCommand::Start), now)
             }
             STOPPED if guide_on() => finish(app, RemoteResult::GuideOn, now),
             STOPPED if read_byte(stock::DSP_PAGE) != 0 => finish(app, RemoteResult::PageOpen, now),
@@ -133,7 +133,7 @@ pub(super) fn run_remote(app: &mut BatApp<'static>) {
             }
             _ if waited >= GIVE_UP_S * blocks_per_second() => finish(app, RemoteResult::NoResponse, now),
             RECORDING | PAUSED | PAUSED_BY_EVENT if hold_on() => {
-                finish(app, RemoteResult::HoldOn(RemoteCommand::Stop), now)
+                finish(app, RemoteResult::HoldOn(RecorderCommand::Stop), now)
             }
             RECORDING | PAUSED | PAUSED_BY_EVENT => press(stock::HOME, now),
             // Closing the file.

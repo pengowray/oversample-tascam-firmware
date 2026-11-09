@@ -40,10 +40,11 @@ update can leave the unit needing repair.
 - **Auto volume** for the headphones, with a Bats only choice that is silent between calls.
 - **GUANO metadata** in each WAV file: start time, length, recorder, and the phone's location when
   known.
-- **Phone remote** (experimental): chimes played by a phone start and stop recording and set the X8's
-  clock. The phone page that plays them is not published yet. The format is in
-  [docs/PHONE_REMOTE.md](docs/PHONE_REMOTE.md).
-- **Settings** in three tabs: Listen, Record and Tests, with a CPU test.
+- **Phone remote** (experimental): chimes played by a phone set the X8's clock, start and stop
+  recording, and change the listening mode. The phone page is
+  [remote.oversample.com](https://remote.oversample.com/#x8); the X8's SETTINGS, Phone tab shows a
+  QR code for it. The format is in [docs/PHONE_REMOTE.md](docs/PHONE_REMOTE.md).
+- **Settings** in four tabs: Listen, Record, Phone and Tests, with a CPU test.
 
 Screens from the emulator are in [docs/screens/](docs/screens/).
 

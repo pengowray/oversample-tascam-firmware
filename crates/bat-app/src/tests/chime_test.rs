@@ -73,10 +73,11 @@ fn the_screen_opens_from_settings_and_goes_back() {
     let mut storage = vec![0.0f32; 1024];
     let mut app = BatApp::new(FS, &mut storage, buffers());
     app.open_settings();
-    let tests = layout::tab(2, 3).center();
-    app.touch(tests.x, tests.y);
-    assert_eq!(app.settings_page(), SettingsPage::Tests);
-    let chime_test = layout::TESTS_CHIME_TEST.center();
+    // Listen, Phone and Tests: this host offers nothing for Record.
+    let phone = layout::tab(1, 3).center();
+    app.touch(phone.x, phone.y);
+    assert_eq!(app.settings_page(), SettingsPage::Phone);
+    let chime_test = layout::PHONE_TIME.center();
     assert!(app.is_tappable(chime_test.x, chime_test.y));
     app.touch(chime_test.x, chime_test.y);
     assert_eq!(app.screen(), Screen::ChimeTest);
@@ -97,7 +98,7 @@ fn the_screen_opens_from_settings_and_goes_back() {
     assert!(app.is_tappable(back.x, back.y));
     app.touch(back.x, back.y);
     assert_eq!(app.screen(), Screen::Settings);
-    assert_eq!(app.settings_page(), SettingsPage::Tests);
+    assert_eq!(app.settings_page(), SettingsPage::Phone);
     // Done still closes settings, and HOME closes the test.
     let done = layout::DONE.center();
     app.touch(done.x, done.y);
@@ -557,4 +558,22 @@ fn a_chime_gives_the_host_the_phone_time_and_the_button_asks_for_a_set() {
     assert_eq!(host - phone, -12);
     app.set_clock_state(ClockState::AfterTake);
     assert!(draw(&app).iter().any(|&p| p != 0));
+}
+
+/// The phone page's Set X8 clock chime, read on the phone time screen, asks the host to set its
+/// clock without a press of the screen's button, and beeps once the clock is set.
+#[test]
+fn a_clock_command_chime_sets_the_clock_from_the_phone_time_screen() {
+    let mut bytes = chime_gen::time_payload(UNIX, 660);
+    bytes.extend_from_slice(&chime::format::RemoteCommand::SetClock.deployment_id());
+    let render = chime_gen::render(FS as u32, &bytes, chime_gen::tune_for_payload(bytes.len()));
+    let chime: Vec<f32> = render.mix().iter().map(|&v| v as f32).collect();
+    let x = chime_in_silence(SECOND / 2, &chime, SECOND);
+    let mut storage = vec![0.0f32; 1024];
+    let mut app = BatApp::new(FS, &mut storage, buffers());
+    app.open_chime_test();
+    run_two(&mut app, &x, &x);
+    assert!(app.take_phone_time().expect("the chime's time").set_clock);
+    app.set_clock_state(ClockState::Set(0));
+    assert_eq!(app.remote.result_shown(app.samples), Some(crate::RemoteResult::ClockSet));
 }

@@ -15,6 +15,9 @@ libm = "0.2.16"
 [dev-dependencies]
 # The chime encoder, for the tests' chimes.
 chime = { workspace = true, features = ["std"] }
+# Check the phone page's QR code in `qr.rs` against a QR encoder, and read it back from the screen.
+qrcodegen = "1.8"
+rqrr = { version = "0.11", default-features = false }
 # For the examples only (screenshot.rs, calls.rs, library.rs, hop_compare.rs, auto_volume.rs, bench.rs).
 hound = "3.5"
 png = "0.17"

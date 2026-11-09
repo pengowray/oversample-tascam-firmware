@@ -1,11 +1,16 @@
 # Phone remote format
 
-A phone starts and stops recording on an X8 running the bat patch by playing a tone and then an
-AudioMoth chime. The chime's deployment ID holds the command. This page describes format version 1,
-which builds from B249 read. Builds B239 to B248 read an earlier layout, `BATXREC` followed by a
+A phone sets the clock, starts and stops recording, and changes the listening mode on an X8 running
+the bat patch by playing a tone and then an AudioMoth chime. The chime's deployment ID holds the
+command. The phone page is at [remote.oversample.com](https://remote.oversample.com/#x8) (source:
+[batchi-chime](https://github.com/pengowray/batchi-chime)). This page describes format version 1,
+which builds from B249 read. Start and stop are in every version 1 build; set clock and listening
+mode are in B257 and later. Builds B239 to B248 read an earlier layout, `BATXREC` followed by a
 command byte, which is no longer sent; they ignore version 1 commands.
 
-The X8 acts on these chimes only while Phone remote is on (SETTINGS, Record tab).
+The X8 acts on these chimes on its main screen only while Phone remote is on (SETTINGS, Phone tab;
+the Record tab before B257). Its PHONE TIME screen reads every chime and acts on a set clock
+command whether Phone remote is on or not.
 
 ## What the phone plays
 
@@ -19,7 +24,9 @@ The X8 acts on these chimes only while Phone remote is on (SETTINGS, Record tab)
    a whole second.
 3. **Chime.** An AudioMoth chime with the time, the UTC offset, optionally the location, and the
    deployment ID below.
-4. **Repeat.** The phone page plays the tone and the chime twice, in case the first is not heard.
+4. **Once.** The phone page plays each command once. Pages before 2026-11-10 played the tone and
+   the chime twice; a command read twice does no harm (see Rules), so a press that was not heard
+   can simply be repeated.
 
 A chime with no tone before it is read only on the PHONE TIME screen (SETTINGS, Tests tab,
 `Phone time`), where the decoders run all the time.
@@ -67,6 +74,8 @@ For example, Stop recording is sent as `42 41 54 58 01 02 00 00`.
 | 0 | none | | Never sent. |
 | 1 | Start recording | 0 | From stop or standby, presses REC until it records. If it is already recording, it beeps as if it had started. |
 | 2 | Stop recording | 0 | Ends the take. If it is already stopped, it beeps as if it had stopped. |
+| 3 | Set clock | 0 | Sets the clock to the chime's time, whatever the `Set X8 clock from chimes` setting. During a take, it sets the clock when the take ends. From B257. |
+| 4 | Listening mode | The mode: 1 HET, 2 COMB, 3 FD, 4 TE, 5 PITCH, 6 1:1 | Plays that mode in the headphones, as if its mode button had been pressed. A mode that the build hides, such as PITCH on the X8, gets one low note and changes nothing. From B257. |
 
 ## Rules
 
@@ -82,8 +91,10 @@ For example, Stop recording is sent as `42 41 54 58 01 02 00 00`.
   and does nothing else. So older firmware never acts on a command it does not understand, such as
   a future Start with a duration in its argument.
 - **Time and location.** The time, UTC offset and location in a remote chime are used as in any
-  other chime: the X8 can set its clock from them (`Set X8 clock from chimes`, Record tab) and puts
-  the location in the take's GUANO metadata. An unknown command's chime is still used this way.
+  other chime: the X8 can set its clock from them (`Set X8 clock from chimes`, Phone tab, for
+  commands other than set clock) and puts the location in the take's GUANO metadata. An unknown
+  command's chime is still used this way, so a B249 to B256 build that hears a set clock command
+  beeps "unknown" but still sets its clock if that setting is on.
 - **Other deployment IDs.** A deployment ID that does not start with `BATX` is an ordinary AudioMoth
   deployment ID, and the X8 ignores it. A random AudioMoth deployment ID starts with `BATX` once in
   about 4.3 billion.
@@ -91,14 +102,17 @@ For example, Stop recording is sent as `42 41 54 58 01 02 00 00`.
 ## What the X8 sends back
 
 Only sounds in the headphones and a notice on the main screen for 5 s: two rising notes when it
-started recording, two falling notes when it stopped, and one low note when it could not do what the
-chime asked, with the reason in the notice. The phone does not hear these.
+started recording, two falling notes when it stopped, one high note when it set its clock (or will
+set it after the take) or changed the listening mode, and one low note when it could not do what
+the chime asked, with the reason in the notice. The phone does not hear these.
 
 ## Limits
 
 - **No address.** Every X8 with Phone remote on that hears the chime acts on it.
 - **No authentication.** Anyone who can play the sound near the X8 can start or stop it.
 - **Little data.** Each chime carries one command and a 16-bit argument, and lasts up to 3.4 s.
+- **No answer.** The page cannot tell whether the X8 heard a command. The person listens for the
+  beeps.
 
 ## Code
 
@@ -107,5 +121,7 @@ chime asked, with the reason in the notice. The phone does not hear these.
 - The X8: [crates/bat-app/src/remote.rs](../crates/bat-app/src/remote.rs) reads the tone and the
   chime, and [crates/x8-patch/src/patch/remote.rs](../crates/x8-patch/src/patch/remote.rs) presses
   the buttons.
-- The phone page: `remoteDeploymentId` in `setup.js`, in the batchi-chime repository (not yet
-  published).
+- The phone page: `remoteDeploymentId` in `setup.js`, in the
+  [batchi-chime](https://github.com/pengowray/batchi-chime) repository, published at
+  [remote.oversample.com](https://remote.oversample.com/#x8). The X8's SETTINGS, Phone tab shows a
+  QR code for it.
