@@ -1,5 +1,9 @@
 # Portacapture X8 as a bat detector: feasibility
 
+> **Current reference:** [HARDWARE.md](HARDWARE.md) for the hardware and measured figures, and
+> [FIRMWARE.md](FIRMWARE.md) for the firmware and how the patch works. Where this study disagrees
+> with them, they are right.
+
 This is the original feasibility study, kept as written on 2 November 2026. Some
 of its open questions have since been answered, and some of its estimates have been
 replaced by measurements on a unit. For current results, see
