@@ -51,7 +51,7 @@ path of its ADC channel pair.
 
 | Input | Connector and rating | Power for mics | Words in the input frame (high gain, low gain) | Source |
 |---|---|---|---|---|
-| 1, 2 | 3.5 mm TRS mini jacks, unbalanced, 85 kΩ or higher, maximum +1 dBV, minimum −69.3 dBV. The included mic capsules connect here. | Plug-in power. The firmware seems to switch it from the jack detect; no user setting was found. | Input 1: 2, 1. Input 2: 5, 4. The firmware swaps inputs 1 and 2 when its DSP state byte at 0x2A2CE (in ITCM) is 1, probably for the capsule position. | Tascam spec, Firmware |
+| 1, 2 | 3.5 mm TRS mini jacks, unbalanced, 85 kΩ or higher, maximum +1 dBV, minimum −69.3 dBV. The included mic capsules connect here (INT MIC in the recordings' metadata). | Plug-in power. The firmware seems to switch it from the jack detect; no user setting was found. | Input 1: 2, 1. Input 2: 5, 4. The firmware swaps inputs 1 and 2 when its DSP state byte at 0x2A2CE (in ITCM) is 1, probably for the capsule position. | Tascam spec, Firmware |
 | 3 to 6 | XLR/TRS combo jacks, balanced. MIC: 2.2 kΩ or higher, maximum +2 dBu, minimum −75 dBu. LINE: 9 kΩ or higher, nominal +4 dBu, maximum +24 dBu. | Phantom power, 24 V or 48 V, XLR only. The firmware switches it per input, not per pair. | Input 3: 0, 3. Input 4: 6, 9. Input 5: 8, 7. Input 6: 11, 10. | Tascam spec, Firmware |
 | EXT IN | 3.5 mm stereo mini jack, line level, 8.5 kΩ or higher, nominal −10 dBV, maximum +10 dBV. Cannot be used at the same time as inputs 5 and 6. | None | Uses the words of inputs 5 and 6. One gain path only (Tascam: "does not have dual ADC"). | Tascam spec, Firmware |
 
@@ -98,8 +98,8 @@ channels from the owner's unit (Measured):
 - D is half the LEVEL setting in dB, within 0.05 dB in 67 of the 71 channels where both gain paths
   were used.
 - EXT IN has one path, so its samples are not merged.
-- The built-in mics' channels are not on the 2^−21 grid, probably because the firmware's EQ filter
-  for the built-in mics runs after the merge.
+- Channels from the included mic capsules (INT MIC) are not on the 2^−21 grid, probably because
+  the firmware's EQ filter for those capsules runs after the merge.
 
 Details: [Merge checked against recordings](HOMEBREW.md#firmware-map-v203-in-progress) in HOMEBREW.md.
 
@@ -176,7 +176,7 @@ region ends at 0x818FDA70.
 | Graphics | The stock UI is built with Qt for MCUs and draws through the PXP 2D engine. | Firmware |
 | Buttons | HOME, REC, PLAY and MARK are one byte read over LPSPI4, not processor GPIO pins. POWER and HOLD are bits in another register on the same bus. Button codes: MARK 0x2b, REC 0x07, HOME 0x06, PLAY 0x05, POWER 0x11, HOLD 0x0d. | Firmware |
 | Wheel | A signed 8-bit count in a register on the same bus. The polling task adds up the counts of 27 scans. | Firmware |
-| Polling | One RTOS task polls the buttons, the wheel and the touch controller every 3 kernel ticks (6 ms; the kernel tick is 2 ms). The touch controller is read every second scan. | Firmware |
+| Polling | One RTOS task polls the buttons, the wheel and the touch controller every 3 kernel ticks, 6 ms with the 2 ms tick given in `crates/x8-patch/src/patch/stock.rs` (HOMEBREW.md's button notes predate it and leave the tick open). The touch controller is read every second scan. | Firmware |
 | Touch coordinates | Touches from the poll are in screen pixels; taps on the bat screen land where the finger is (B226). | Measured |
 
 ## Storage, USB and Bluetooth
@@ -194,7 +194,7 @@ region ends at 0x818FDA70.
 |---|---|---|
 | Sources | 4 AA cells (alkaline, NiMH or lithium), USB bus power, or TASCAM's PS-P520U adapter. | Tascam spec |
 | Consumption | 7.5 W maximum. | Tascam spec |
-| Battery life | About 11 hours on alkaline cells with the included mics, 44.1 kHz, power save on; about 5.5 hours with phantom power on two inputs. Not measured at 192 kHz or with the bat screen open. | Tascam spec, Not confirmed (bat use) |
+| Battery life | About 11 hours on alkaline cells with the included mic capsules, 44.1 kHz, power save on; about 5.5 hours with phantom power on two inputs. Not measured at 192 kHz or with the bat screen open. | Tascam spec, Not confirmed (bat use) |
 | Phantom power switching | Per input (inputs 3 to 6). FPGA register 6 has one bit per input; register 3 turns on the shared supply, and registers 3 and 10 select 24 V or 48 V. The firmware mutes all inputs while the supply comes up. | Firmware |
 
 ## Physical
