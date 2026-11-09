@@ -328,8 +328,8 @@ fn fake_files<'a>(app: &mut BatApp<'a>, storage: &'a mut [FileEntry], which: &st
     player.set_storage(storage);
     player.scan_started();
     if which == "failed" {
-        player.scan_finished(false);
         app.open_files();
+        app.player_mut().scan_finished(false);
         return;
     }
     player.add_folder(0, b"SOUND");

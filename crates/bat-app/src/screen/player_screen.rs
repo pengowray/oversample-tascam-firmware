@@ -13,16 +13,17 @@ use crate::palette::*;
 use crate::player::{FileEntry, FileInfo, NotPlayable, Player, Scan, Transport};
 
 pub(crate) const TITLE: &str = "BAT PLAYBACK";
-pub(super) const NO_FILE: &str = "Tap here or press PLAY to choose a recording";
+pub(super) const NO_FILE: &str = "Choose a recording: tap here or press PLAY";
 pub(super) const BACK: &str = "Back";
 pub(super) const READING: &str = "Reading the card";
-pub(super) const READ_FAILED: &str = "Couldn't read the card";
-pub(super) const NO_FILES: &str = "No WAV files in SOUND or its folders";
+pub(super) const READ_FAILED: &str = "Couldn't read the SD card";
+pub(super) const READ_FAILED_HELP: &str = "Check the card, then tap Back and open this list again.";
+pub(super) const NO_FILES: &str = "No WAV files in SOUND or its subfolders";
 pub(super) const NEWEST_FIRST: &str = "newest first";
-pub(super) const NOT_PLAYABLE_NOT_WAV: &str = "Can't play: not a WAV file";
-pub(super) const NOT_PLAYABLE_UNSUPPORTED: &str = "Can't play: 8-bit, compressed or RF64";
+pub(super) const NOT_PLAYABLE_NOT_WAV: &str = "Can't play: named .wav but not a WAV file";
+pub(super) const NOT_PLAYABLE_UNSUPPORTED: &str = "Can't play: unsupported WAV (8-bit, compressed or RF64)";
 pub(super) const NOT_PLAYABLE_NO_AUDIO: &str = "Can't play: no audio in the file";
-pub(super) const NOT_PLAYABLE_UNREADABLE: &str = "Can't play: the file couldn't be read";
+pub(super) const NOT_PLAYABLE_UNREADABLE: &str = "Can't play: card read error, or header too long";
 
 const MONTHS: [&str; 12] = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
 
@@ -99,9 +100,11 @@ pub(super) fn files(app: &BatApp, fb: Fb) {
     match player.scan() {
         Scan::Failed => {
             text(fb, &BODY_BOLD, READ_FAILED, heading_x, LIST_HEADING_BASELINE, LEFT, TEXT);
+            text(fb, &SMALL, READ_FAILED_HELP, heading_x, LIST_HEADING_BASELINE + 16, LEFT, TEXT_MUTED);
         }
         Scan::Running | Scan::NotStarted => {
-            text(fb, &BODY_BOLD, format_args!("{READING}: {count}"), heading_x, LIST_HEADING_BASELINE, LEFT, TEXT);
+            let heading = format_args!("{READING}: {} so far", Recordings(count));
+            text(fb, &BODY_BOLD, heading, heading_x, LIST_HEADING_BASELINE, LEFT, TEXT);
         }
         Scan::Done if count == 0 => {
             text(fb, &BODY_BOLD, NO_FILES, heading_x, LIST_HEADING_BASELINE, LEFT, TEXT);
@@ -117,7 +120,10 @@ pub(super) fn files(app: &BatApp, fb: Fb) {
                 LEFT,
                 TEXT,
             );
-            text(fb, &BODY, format_args!(", {NEWEST_FIRST}"), x, LIST_HEADING_BASELINE, LEFT, TEXT_MUTED);
+            // "newest first" says nothing about one row.
+            if total > 1 {
+                text(fb, &BODY, format_args!(", {NEWEST_FIRST}"), x, LIST_HEADING_BASELINE, LEFT, TEXT_MUTED);
+            }
         }
     }
     let current = player.current().map(|e| e.id);

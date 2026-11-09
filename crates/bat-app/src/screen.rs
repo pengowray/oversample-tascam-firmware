@@ -248,7 +248,7 @@ fn status_bar(app: &BatApp, fb: Fb) {
 
 /// Over the waterfall while the input's sample rate is not 192 kHz: the app
 /// gets no sound then, so the waterfall would stay empty. For live input the
-/// fix is the record rate setting; for playback, a recording made at 192 kHz.
+/// fix is the record rate setting, in both apps: BAT PLAYBACK converts files of other rates.
 fn rate_warning(fb: Fb, rate_hz: u32, kind: InputKind) {
     let (x, y) = notice_panel(fb);
     let tenths = (rate_hz + 50) / 100;
@@ -337,11 +337,13 @@ const RATE_FIX_LIVE: [&str; 6] = [
     "5. Press HOME, then tap BAT DETECTOR.",
 ];
 
-const RATE_FIX_PLAYBACK: [&str; 4] = [
-    "BAT PLAYBACK needs a 192kHz recording.",
-    "1. Press HOME briefly to stop playback.",
-    "2. In MANUAL, choose a 192kHz recording.",
-    "3. Press PLAY to return to BAT PLAYBACK.",
+const RATE_FIX_PLAYBACK: [&str; 6] = [
+    "BAT PLAYBACK needs the X8 set to 192kHz.",
+    "1. Hold HOME to return to the LAUNCHER.",
+    "2. Tap GENERAL SETTINGS (bottom right).",
+    "3. Open the REC SETTINGS page.",
+    "4. In FILE FORMAT, set SAMPLE to 192kHz.",
+    "5. Press HOME, then tap BAT PLAYBACK.",
 ];
 
 fn meter_x(db: f32) -> i32 {
