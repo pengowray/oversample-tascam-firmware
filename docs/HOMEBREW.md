@@ -3021,6 +3021,52 @@ Reads during a take would compete with the recorder's writes.
 4-byte aligned goes through a 512-byte bounce buffer, a sector at a time. Buffers should be 32-byte aligned. The stock player
 reads 256 KB at a time on task 6.
 
+## BROWSE's order, its file menu and FILE INFORMATION (2026-11-10)
+
+Read in V2.03 with the Ghidra project, to answer three requests for BAT PLAYBACK: list files in BROWSE's order, open
+BROWSE's menu for a file, and show GUANO on FILE INFORMATION. "Read" means seen in decompiled code; "inferred" means worked
+out from callers, strings or the manual. Nothing here has been run on a unit.
+
+**Order (read; built in B257).** `FUN_80dd04c4` builds BROWSE's list from `C:\SOUND`, 2 folder levels deep, up to 5000
+entries, and sorts each folder's children with `FUN_80df469c` (introsort) at 0x80dd0832, 0x80dd0a8a and 0x80dd0c7a. The
+comparator at 0x80dd0d40 compares the type word (1 folder, 1000 file), then the long names with `FUN_80de2584`, a wcscmp
+on UTF-16 code units: case-sensitive, `0-9` < `A-Z` < `_` < `a-z`, no natural-number order. A new take is inserted and its
+folder sorted again (`FUN_80dd1ffc`, `FUN_80dd1d78`). Hidden and volume entries are skipped; only names of 5 or more
+characters ending `.wav`, `.WAV`, `.mp3` or `.MP3` are listed. `FUN_80dd6960` then groups adjacent `.wav` files that share
+the stem before the last `_` with suffixes `_1` to `_6`, `_1-2`, `_3-4`, `_5-6` or `_MIX` (`FUN_80dd829c`) into a project
+when `<stem>.bin` exists (table at 0x81cbf1b0, 0x2c bytes each, count at 0x81cbe7a4). Test on a unit: SOUND with `1.wav`,
+`B.wav`, `Z.wav`, `_x.wav`, `a.wav` and a folder `zz` should show zz, 1, B, Z, _x, a.
+
+**The file menu (hard).** Items: SELECT, PLAY, FILE INFORMATION, FILE DELETE, TRACK DELETE, CHANGE PROTECT, RENAME, MARK,
+DIVIDE, NORMALIZE (strings, matching the manual). `FUN_811d2bd8(list, kind)` fills it: kind 0x27 all ten, 0x28 all but
+TRACK DELETE, 0x29 also without RENAME, DIVIDE and NORMALIZE; 0x25 and 0x26 are folder menus. `FUN_812546f8(menu, kind,
+cursor, flag)` shows it (kind at menu+0x37a0, list at menu+0x118). Its slot `FUN_817f9445` is connected at 0x812554ba to a
+signal at object+0xa9c whose owner was not traced. The menu is compiled QML in BROWSE, so it cannot be drawn over the bat
+screen.
+
+The C core's list: header at 0x81911178 (+0x0a entries, +0x0e files, +0x78 current file); entries from 0x819b1a08, 0x278
+bytes each (+0 type, +0x56 UTF-16 name, +0x260 parent, +0x264 first child, +0x269 FAT attributes, +0x26a date, +0x26c time,
++0x270 size). `FUN_80dd0dcc(entry)` makes an entry current and changes the shared current folder through `FUN_80dd2bd8`
+(read). The `DR @` parser in `FUN_80d91138` turns an entry index into a pointer and posts it as a task-1 event with
+`FUN_80dc9308(code, &ptr)`; codes 0x3e, 0x42, 0x49, 0x43 and 0x44 were seen, but which is which action is not settled.
+BROWSE is opened by launcher handler 0x81733c28 (`FUN_80d68f18(bridge, 0x13)`, message 0xf73 value 3, stored as the screen
+byte at 0x2a2d1) and 0x81733c60 (`DR@A` command 0x10, the list refresh), inferred.
+
+A long press in BAT PLAYBACK could make the file current with `FUN_80dd0dcc`, open BROWSE, and come back when 0x2a2d1
+leaves 3; opening the menu itself would need the +0xa9c signal emitted on the Qt task. Risks: the next take would probably be
+saved in that file's folder; calling the tile handlers outside a tap may not switch the screen; the current-folder wrapper
+has no lock. Unit tests first: show 0x2a2d1 and settings+0x214 on the debug line while opening BROWSE and SD CARD READER;
+then call `FUN_80dd0dcc` from BAT PLAYBACK, open BROWSE, and check which row is highlighted and where the next take goes.
+
+**FILE INFORMATION (not practical).** XRI is text in the `bext` chunk's CodingHistory (+0x264 from the chunk ID), built by
+`FUN_80df6228` (`T=XRI hhhh;XRI VER=0002;MAKER=TASCAM;MODEL=X8;FW VER=...;SOURCE=...;INPUT GAIN=...`) when settings+0x1df
+is on, and written by `FUN_80df68f4`. On load `FUN_80df51cc` passes it to `FUN_80df5ddc` (fields at 0x81e9b708); the Qt
+bridge `FUN_80d8c488` passes the raw text to `FUN_80d4dacc`, which splits it into at most 9 lines, keeps only known keys,
+and fills fixed per-track records at `DAT_80d4e878` + track x 0x48. `FUN_80d4d0e4` formats the FILE page. FILE, TRACK and
+XRI are compiled QML (labels in a pool at 0x8161e95c, bound by `FUN_810fb534`, `FUN_810fb854`, `FUN_810fbc64`), with no page
+table and no free-text row, so a GUANO page needs new QML. A file information view in BAT PLAYBACK (format, length, XRI from
+`bext`, GUANO from `guan` with `crates/guano`) is the practical route.
+
 ## The logo screen (2026-11-10)
 
 **Result.** The screen with TASCAM's logo above "Portacapture X8" on white can be changed safely. It is a Qt screen in the
