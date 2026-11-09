@@ -22,6 +22,7 @@ use bat_dsp::time_expansion::{DEFAULT_POST_MS, DEFAULT_PRE_MS};
 mod chime_screen;
 mod cpu_test_screen;
 mod pages;
+mod player_screen;
 #[cfg(test)]
 pub(crate) use chime_screen::{
     CLOCK_Y, COLUMN_X, FAILURE_Y, ROW_H, ROW_Y, chime_text, columns as chime_columns,
@@ -47,6 +48,24 @@ const VALUE: FontRenderer = FontRenderer::new::<fonts::u8g2_font_helvB14_tf>();
 const BIG: FontRenderer = FontRenderer::new::<fonts::u8g2_font_helvB18_tf>();
 
 type Fb<'a, 'b> = &'a mut Rgb565Buffer<'b>;
+
+fn width(font: &FontRenderer, s: &str) -> i32 {
+    font.get_rendered_dimensions(s, Point::zero(), VerticalPosition::Baseline).map_or(0, |d| d.advance.x)
+}
+
+/// The longest start of `s` that fits in `max` pixels, and whether it was cut short (then it
+/// leaves room for "..." after it; the fonts have no ellipsis character).
+fn fit<'s>(font: &FontRenderer, s: &'s str, max: i32) -> (&'s str, bool) {
+    if width(font, s) <= max {
+        return (s, false);
+    }
+    let room = max - width(font, "...");
+    let mut end = s.len();
+    while end > 0 && (!s.is_char_boundary(end) || width(font, &s[..end]) > room) {
+        end -= 1;
+    }
+    (&s[..end], true)
+}
 
 /// Draw `content` with its baseline at `y`; returns the x where the next text
 /// would start (for left-aligned text).
@@ -104,21 +123,29 @@ pub fn draw(app: &BatApp, fb: Fb) {
         cpu_test_screen::draw(app, fb);
         return;
     }
+    if app.screen == Screen::Files {
+        title_bar(fb, player_screen::TITLE, false);
+        player_screen::files(app, fb);
+        return;
+    }
     let title = match app.input_kind() {
         InputKind::Live => "BAT DETECTOR",
-        InputKind::Playback => "BAT PLAYBACK",
+        InputKind::Playback => player_screen::title(app),
     };
     if app.cpu_test.running {
         let (at, count) = (app.cpu_test.at + 1, app.cpu_test.count);
         title_bar(fb, format_args!("{} row {at}/{count}", cpu_test_screen::TITLE), true);
     } else {
-        title_bar(fb, title, true);
+        title_bar_fitted(fb, title, true);
     }
     if app.remote_on() {
         let colour = if app.remote.listening(app.samples) { ACCENT } else { TEXT_MUTED };
         text(fb, &SMALL, pages::TITLE_LABEL, 284, 16, RIGHT, colour);
     }
-    status_bar(app, fb);
+    match app.input_kind() {
+        InputKind::Live => status_bar(app, fb),
+        InputKind::Playback => player_screen::bar(app, fb),
+    }
     meters(app, fb);
     waterfall(app, fb);
     if let Some(rate) = app.rate_warning() {
@@ -144,6 +171,22 @@ pub fn draw(app: &BatApp, fb: Fb) {
 fn title_bar(fb: Fb, title: impl u8g2_fonts::Content, menu: bool) {
     fill(fb, Rectangle::new(Point::zero(), Size::new(320, TITLE_H as u32)), TITLE);
     text(fb, &BODY_BOLD, title, 160, 17, CENTER, TEXT);
+    title_icons(fb, menu);
+}
+
+/// A title too long for the bar is cut short with "...", between the menu and the battery.
+fn title_bar_fitted(fb: Fb, title: &str, menu: bool) {
+    fill(fb, Rectangle::new(Point::zero(), Size::new(320, TITLE_H as u32)), TITLE);
+    let (shown, cut) = fit(&BODY_BOLD, title, TITLE_MIDDLE.size.width as i32);
+    if cut {
+        text(fb, &BODY_BOLD, format_args!("{shown}..."), 160, 17, CENTER, TEXT);
+    } else {
+        text(fb, &BODY_BOLD, shown, 160, 17, CENTER, TEXT);
+    }
+    title_icons(fb, menu);
+}
+
+fn title_icons(fb: Fb, menu: bool) {
     if menu {
         // Three lines, as the stock apps' Shortcut Menu button.
         for y in [7, 11, 15] {

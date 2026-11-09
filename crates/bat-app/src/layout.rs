@@ -14,6 +14,37 @@ pub const TITLE_H: i32 = 24;
 /// Status bar: recording state, recorded time and clock.
 pub const STATUS: Rectangle = Rectangle::new(Point::new(6, 28), Size::new(308, 32));
 
+/// BAT PLAYBACK's player, in the status bar's place: play or pause on the left, then the time
+/// played, the seek bar, and the file's length on the right. The seek bar takes touches over the
+/// whole height of the bar, 32 px.
+pub const PLAY_BUTTON: Rectangle = Rectangle::new(Point::new(6, 28), Size::new(40, 32));
+pub const POSITION_RIGHT: i32 = 92;
+pub const SEEK_X0: i32 = 100;
+pub const SEEK_X1: i32 = 254;
+pub const SEEK: Rectangle = Rectangle::new(Point::new(SEEK_X0 - 6, 28), Size::new((SEEK_X1 - SEEK_X0 + 12) as u32, 32));
+/// The title bar's middle: in BAT PLAYBACK it names the file, and a tap opens the list.
+pub const TITLE_MIDDLE: Rectangle = Rectangle::new(Point::new(44, 0), Size::new(232, TITLE_H as u32));
+
+/// BAT PLAYBACK's list of recordings: a line saying how many, then one row per file, two lines
+/// each, and Back at the bottom.
+pub const LIST_HEADING_BASELINE: i32 = 42;
+pub const LIST_TOP: i32 = 50;
+pub const LIST_ROW_H: i32 = 47;
+pub const LIST_ROWS: usize = 8;
+pub const LIST: Rectangle =
+    Rectangle::new(Point::new(0, LIST_TOP), Size::new(320, (LIST_ROW_H * LIST_ROWS as i32) as u32));
+pub const LIST_BACK: Rectangle = Rectangle::new(Point::new(6, BUTTONS_Y), Size::new(308, BUTTON_H as u32));
+
+/// The fraction of the file at screen position `x` on the seek bar.
+pub fn seek_fraction(x: i32) -> f32 {
+    ((x - SEEK_X0) as f32 / (SEEK_X1 - SEEK_X0) as f32).clamp(0.0, 1.0)
+}
+
+/// The list row at screen height `y`, counting from the first row shown.
+pub fn list_row_at(y: i32) -> Option<usize> {
+    (LIST_TOP..LIST_TOP + LIST_ROW_H * LIST_ROWS as i32).contains(&y).then(|| ((y - LIST_TOP) / LIST_ROW_H) as usize)
+}
+
 /// Meters for the two inputs, from -72 to 0 dBFS. The stock meters stop at
 /// -48 dBFS, but 32-bit float bat recordings often peak below that.
 pub const METER_X: i32 = 22;

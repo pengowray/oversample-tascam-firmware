@@ -16,6 +16,8 @@
 //! buttons, and the X8's recorder in that state at 1 min 15 s.
 //! `RATE=48000` shows the warning for an input at that rate.
 //! `PLAYBACK=1` shows the screen as BAT PLAYBACK shows it on the X8.
+//! `FILES=list|playing|paused|nofile|reading|empty|failed` adds made-up recordings to BAT PLAYBACK's
+//! player: `list` shows the list, the others the main screen or the list in that state.
 //! `BUILD=240` gives the app the X8 patch's build number, for the CPU test.
 //! `INPUTS=5,6` or `INPUTS=5` names the inputs for the meters and settings;
 //! `INPUTS=none` shows the notice for no input.
@@ -34,8 +36,8 @@
 //! screen; the default is both.
 
 use bat_app::{
-    AutoVolume, BatApp, Buffers, CallKind, Feed, HEIGHT, InputKind, InputName, MixSilence, Mode, MonitorSource,
-    Recorder, Rgb565Buffer, WIDTH,
+    AutoVolume, BatApp, Buffers, CallKind, Feed, FileEntry, HEIGHT, InputKind, InputName, MixSilence, Mode,
+    MonitorSource, Recorder, Rgb565Buffer, WIDTH,
 };
 use embedded_graphics::prelude::*;
 use embedded_graphics::primitives::Rectangle;
@@ -102,6 +104,7 @@ fn main() {
 
     let fs = spec.sample_rate as f32;
     let mut storage = vec![0.0f32; spec.sample_rate as usize];
+    let mut file_storage = vec![FileEntry::new(0, 0, b"", 0, 0, 0); 64];
     let mut buffers = Box::new(Buffers::new());
     let mut app = BatApp::new(fs, &mut storage, &mut buffers);
     app.set_mode(mode);
@@ -253,6 +256,11 @@ fn main() {
         }
         _ => {}
     }
+    if let Ok(files) = std::env::var("FILES") {
+        app.set_input_kind(InputKind::Playback);
+        app.set_inputs([Some(InputName { short: "L", long: "Left" }), Some(InputName { short: "R", long: "Right" })]);
+        fake_files(&mut app, &mut file_storage, &files);
+    }
     let mut pixels = vec![0u16; WIDTH * HEIGHT];
     let mut fb = Rgb565Buffer::new(&mut pixels, WIDTH, HEIGHT);
     app.render(&mut fb);
@@ -310,5 +318,95 @@ fn main() {
     enc.write_header().unwrap().write_image_data(&rgb).unwrap();
     if let Some(call) = app.last_call() {
         eprintln!("last call ({:?}): {call:?}", app.last_call_kind().unwrap());
+    }
+}
+
+/// Made-up recordings for BAT PLAYBACK's player, in the state `which` names (see the top of this file).
+fn fake_files<'a>(app: &mut BatApp<'a>, storage: &'a mut [FileEntry], which: &str) {
+    use bat_app::player::{Audio, FileInfo, NotPlayable};
+    let player = app.player_mut();
+    player.set_storage(storage);
+    player.scan_started();
+    if which == "failed" {
+        player.scan_finished(false);
+        app.open_files();
+        return;
+    }
+    player.add_folder(0, b"SOUND");
+    player.add_folder(1, b"FOLDER_0001");
+    player.add_folder(2, b"FOLDER_0002");
+    let date = |y: u16, m: u16, d: u16| ((y - 1980) << 9) | (m << 5) | d;
+    let time = |h: u16, m: u16| (h << 11) | (m << 5);
+    let x8 = |frames: u32, channels: u16| FileInfo::Playable(Audio { sample_rate: 192_000, channels, frames });
+    let files: [(&[u8], u8, u16, u16, FileInfo); 11] = [
+        (b"260315_0066_3-4.wav", 2, date(2026, 3, 15), time(21, 4), x8(192_000 * 754, 2)),
+        (b"260315_0065_3-4.wav", 2, date(2026, 3, 15), time(20, 51), x8(192_000 * 92, 2)),
+        (b"260315_0064.wav", 2, date(2026, 3, 15), time(20, 40), FileInfo::Unknown),
+        (b"260306_0061_3-4.wav", 1, date(2026, 3, 6), time(19, 12), x8(192_000 * 2792, 2)),
+        (b"260306_0062_3-4.wav", 1, date(2026, 3, 6), time(19, 59), x8(192_000 * 2792, 2)),
+        (b"260223_0048_3-4.wav", 1, date(2026, 2, 23), time(21, 47), x8(192_000 * 41, 1)),
+        (
+            b"20260131_210710.WAV",
+            0,
+            date(2026, 1, 31),
+            time(21, 7),
+            FileInfo::Playable(Audio { sample_rate: 384_000, channels: 1, frames: 384_000 * 10 }),
+        ),
+        (
+            b"20260131_210721.WAV",
+            0,
+            date(2026, 1, 31),
+            time(21, 7),
+            FileInfo::Playable(Audio { sample_rate: 384_000, channels: 1, frames: 384_000 * 10 }),
+        ),
+        (
+            b"XC809855 - Common Pipistrelle - Pipistrellus pipistrellus.wav",
+            0,
+            date(2025, 11, 2),
+            time(10, 30),
+            FileInfo::Playable(Audio { sample_rate: 250_000, channels: 1, frames: 250_000 * 8 }),
+        ),
+        (b"TEST_8BIT.WAV", 0, date(2025, 6, 1), time(9, 0), FileInfo::NotPlayable(NotPlayable::Unsupported)),
+        (b"BROKEN.WAV", 0, 0, 0, FileInfo::NotPlayable(NotPlayable::NoAudio)),
+    ];
+    if which != "empty" {
+        for (id, (name, folder, d, t, info)) in files.into_iter().enumerate() {
+            let mut e = FileEntry::new(id as u16, folder, name, d, t, 1_000_000);
+            e.info = info;
+            player.add_file(e);
+        }
+    }
+    if which == "reading" {
+        app.open_files();
+        return;
+    }
+    player.scan_finished(true);
+    match which {
+        "end" => {
+            app.open_files();
+            app.player_mut().move_highlight(10, 8);
+        }
+        "longplaying" => {
+            app.player_mut().choose(8);
+            app.player_mut().opened();
+        }
+        "list" | "empty" => {
+            if which == "list" {
+                app.player_mut().choose(1);
+                app.player_mut().opened();
+            }
+            app.open_files();
+            app.player_mut().move_highlight(3, 8);
+        }
+        "playing" | "paused" => {
+            let player = app.player_mut();
+            player.choose(1);
+            player.opened();
+            player.set_position(192_000 * 31);
+            if which == "paused" {
+                player.play_pause();
+            }
+        }
+        _ => {}
     }
 }

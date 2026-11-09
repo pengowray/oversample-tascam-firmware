@@ -23,6 +23,7 @@ mod layout;
 mod level;
 pub mod palette;
 mod phone_time;
+pub mod player;
 mod remote;
 mod screen;
 mod stages;
@@ -41,6 +42,7 @@ pub use fb::Rgb565Buffer;
 use layout::{SNAP_H, SNAP_W, WF_H, WF_W};
 pub use level::AutoVolume;
 pub use phone_time::{ClockState, PhoneTime};
+pub use player::{FileEntry, Player};
 pub use remote::{RemoteCommand, RemoteResult};
 pub use stages::Stage;
 
@@ -175,6 +177,21 @@ pub enum Screen {
     ChimeTest,
     /// The CPU test's results: see [`cpu_test`]. The test itself runs on the main screen.
     CpuTest,
+    /// BAT PLAYBACK's list of recordings on the card: see [`player`].
+    Files,
+}
+
+/// A finger on the screen that may move: see `BatApp::release`.
+#[derive(Clone, Copy, Debug)]
+struct Gesture {
+    down: Option<(i32, i32)>,
+    at: (i32, i32),
+    moved: bool,
+    top: usize,
+}
+
+impl Gesture {
+    const NONE: Self = Self { down: None, at: (0, 0), moved: false, top: 0 };
 }
 
 /// The pages of the settings screen, in the order of their tabs.
@@ -488,6 +505,10 @@ pub struct BatApp<'a> {
     chime: chime_test::ChimeTest,
     cpu_test: cpu_test::CpuTest,
     remote: remote::Remote,
+    player: player::Player<'a>,
+    /// A finger on the screen that may move: where it touched down, where it is now, whether it
+    /// has moved far enough to be a drag, and the list's first row when it touched down.
+    gesture: Gesture,
     skipped_chunks: u32,
     /// The next chunk does not follow on from the last one.
     input_gap: bool,
@@ -683,6 +704,8 @@ impl<'a> BatApp<'a> {
             field!((*this).chime).write(chime_test::ChimeTest::new());
             field!((*this).cpu_test).write(cpu_test::CpuTest::new());
             field!((*this).remote).write(remote::Remote::new());
+            field!((*this).player).write(player::Player::new());
+            field!((*this).gesture).write(Gesture::NONE);
             field!((*this).skipped_chunks).write(0);
             field!((*this).input_gap).write(false);
             field!((*this).lost_frames).write(0);
@@ -1428,7 +1451,8 @@ impl<'a> BatApp<'a> {
     /// A press of a hardware button.
     pub fn button(&mut self, button: Button) {
         match button {
-            Button::Rec if self.external_recorder.is_some() => {}
+            // BAT PLAYBACK reads the card, which a take would compete with: REC does nothing.
+            Button::Rec if self.external_recorder.is_some() || self.input_kind == InputKind::Playback => {}
             Button::Rec => {
                 self.recording = !self.recording;
                 if self.recording {
@@ -1442,13 +1466,27 @@ impl<'a> BatApp<'a> {
                 }
             }
             // HOME closes the settings screen; on the main screen it belongs to
-            // the X8's launcher.
+            // the X8's launcher, except in BAT PLAYBACK, where it opens the list.
             Button::Home => {
                 if self.cpu_test.running {
                     self.stop_cpu_test();
                 }
-                self.screen = Screen::Main;
+                if self.input_kind == InputKind::Playback && self.screen == Screen::Main {
+                    self.open_files();
+                } else {
+                    self.screen = Screen::Main;
+                }
             }
+            // In BAT PLAYBACK: plays the highlighted file on the list, or plays and pauses.
+            Button::Play if self.input_kind == InputKind::Playback => match self.screen {
+                Screen::Files => {
+                    if self.player.choose(self.player.highlight) {
+                        self.screen = Screen::Main;
+                    }
+                }
+                Screen::Main if !self.cpu_test.running => self.play_button(),
+                _ => {}
+            },
             Button::Play => {}
         }
     }
@@ -1461,6 +1499,10 @@ impl<'a> BatApp<'a> {
             if self.selected_setting().page() == self.settings_page() && self.setting_shown(self.setting) {
                 self.change_setting(self.selected_setting(), steps);
             }
+            return;
+        }
+        if self.screen == Screen::Files {
+            self.player.move_highlight(steps, layout::LIST_ROWS);
             return;
         }
         if matches!(self.screen, Screen::ChimeTest | Screen::CpuTest) || self.cpu_test.running {
@@ -1511,11 +1553,33 @@ impl<'a> BatApp<'a> {
                 }
                 return;
             }
+            Screen::Files => {
+                self.gesture = Gesture { down: Some((x, y)), at: (x, y), moved: false, top: self.player.top };
+                if layout::LIST_BACK.contains(p) {
+                    self.gesture = Gesture::NONE;
+                    self.screen = Screen::Main;
+                }
+                return;
+            }
             _ => {}
         }
         if self.screen == Screen::Settings {
             self.settings_touch(x, y);
             return;
+        }
+        if self.input_kind == InputKind::Playback {
+            if layout::TITLE_MIDDLE.contains(p) {
+                self.open_files();
+                return;
+            }
+            if layout::PLAY_BUTTON.contains(p) {
+                self.play_button();
+                return;
+            }
+            if layout::SEEK.contains(p) {
+                self.gesture = Gesture { down: Some((x, y)), at: (x, y), moved: true, top: 0 };
+                return;
+            }
         }
         if layout::MENU.contains(embedded_graphics::prelude::Point::new(x, y)) {
             self.screen = Screen::Settings;
@@ -1594,6 +1658,20 @@ impl<'a> BatApp<'a> {
     /// A finger moving after touching down at a point that was passed to
     /// [`touch`](Self::touch): on the waterfall, HET and COMB follow it.
     pub fn drag(&mut self, x: i32, y: i32) {
+        if let Some((_, y0)) = self.gesture.down {
+            self.gesture.at = (x, y);
+            if self.screen == Screen::Files {
+                // A list row is chosen when the finger lifts, unless it moved: then it scrolls.
+                if (y - y0).abs() > 8 {
+                    self.gesture.moved = true;
+                }
+                if self.gesture.moved {
+                    let rows = (y0 - y) as f32 / layout::LIST_ROW_H as f32;
+                    self.player.scroll_to(self.gesture.top as i32 + libm::roundf(rows) as i32, layout::LIST_ROWS);
+                }
+            }
+            return;
+        }
         if self.screen == Screen::Main
             && let Some(hz) = layout::waterfall_freq_at(x, y)
         {
@@ -1609,10 +1687,79 @@ impl<'a> BatApp<'a> {
 
     /// Whether a touch down at (x, y) starts a drag that tunes.
     pub fn is_draggable(&self, x: i32, y: i32) -> bool {
+        let p = embedded_graphics::prelude::Point::new(x, y);
+        if self.screen == Screen::Files {
+            return layout::LIST.contains(p);
+        }
+        if self.screen == Screen::Main && self.input_kind == InputKind::Playback && layout::SEEK.contains(p) {
+            return true;
+        }
         self.screen == Screen::Main
             && !self.cpu_test.running
             && matches!(self.mode, Mode::Het | Mode::Comb)
             && layout::waterfall_freq_at(x, y).is_some()
+    }
+
+    /// The finger has lifted after [`touch`](Self::touch). Choosing a list row and moving to a
+    /// new place in the file happen here, so a finger that moves can scroll the list or slide
+    /// along the seek bar first.
+    pub fn release(&mut self) {
+        let gesture = core::mem::replace(&mut self.gesture, Gesture::NONE);
+        let Some((_, y0)) = gesture.down else { return };
+        match self.screen {
+            Screen::Files if !gesture.moved => {
+                if let Some(row) = layout::list_row_at(y0)
+                    && self.player.choose(self.player.top + row)
+                {
+                    self.screen = Screen::Main;
+                }
+            }
+            Screen::Main if self.input_kind == InputKind::Playback => {
+                self.player.seek(layout::seek_fraction(gesture.at.0));
+            }
+            _ => {}
+        }
+    }
+
+    /// Where the seek bar's knob is drawn, as a fraction of the file: under the finger while it
+    /// slides along the bar, otherwise at the time played.
+    pub(crate) fn seek_shown(&self) -> Option<f32> {
+        if self.screen == Screen::Main && self.gesture.down.is_some() && self.gesture.moved {
+            return Some(layout::seek_fraction(self.gesture.at.0));
+        }
+        let audio = self.player.current_audio()?;
+        Some(if audio.frames == 0 { 0.0 } else { self.player.position() as f32 / audio.frames as f32 })
+    }
+
+    /// BAT PLAYBACK's player: the list of recordings and what plays. The host lists the card and
+    /// feeds the chosen file's audio; see [`player::Request`].
+    pub fn player(&self) -> &player::Player<'a> {
+        &self.player
+    }
+
+    pub fn player_mut(&mut self) -> &mut player::Player<'a> {
+        &mut self.player
+    }
+
+    /// Show the list of recordings, asking the host to read the card the first time.
+    pub fn open_files(&mut self) {
+        if self.player.scan() == player::Scan::NotStarted {
+            self.player.rescan();
+        }
+        if let Some(i) = self.player.current().and_then(|c| self.player.files().iter().position(|e| e.id == c.id)) {
+            self.player.highlight = i;
+            self.player.move_highlight(0, layout::LIST_ROWS);
+        }
+        self.screen = Screen::Files;
+    }
+
+    /// The play button and PLAY: with no file chosen, the list.
+    fn play_button(&mut self) {
+        if self.player.transport() == player::Transport::NoFile {
+            self.open_files();
+        } else {
+            self.player.play_pause();
+        }
     }
 
     fn tune_to(&mut self, hz: f32) {
