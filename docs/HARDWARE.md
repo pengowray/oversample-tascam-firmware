@@ -5,6 +5,9 @@ inputs, the sample rates, the display and controls, and what is still unknown. F
 how the patch changes it, see [FIRMWARE.md](FIRMWARE.md). The step-by-step findings behind most
 rows are in [HOMEBREW.md](HOMEBREW.md), mainly its [firmware map](HOMEBREW.md#firmware-map-v203-in-progress).
 
+Build numbers such as B224 are test builds of the patch; [FIRMWARE.md](FIRMWARE.md#terms) explains
+them and the listening mode names (HET, FD, PITCH and others).
+
 Written on 10 November 2026. The only unit tested shows `F/W: Version 2.03 Build 217` and
 `H/W: Version 1.00 Build 010` on GENERAL SETTINGS > SYSTEM > Information. Other hardware versions
 have not been seen.
@@ -32,8 +35,8 @@ Each fact has one source in the Source column:
 | Program flash | 32 MiB of FlexSPI NOR flash, one chip, part number not read. Erased and written in 64 KiB sectors. | Firmware, Teardown |
 | SDRAM | Two chips on the SEMC controller. The firmware uses addresses from 0x80000000 up to 0x87FFFFFF (the framebuffers are at 0x87E00000), which suggests 128 MiB. A controller window larger than the chips would also allow this, so 64 MiB is still possible. At least about 60 MB is real: the updater reads the whole 25.5 MB update file to 0x822F3AD8. | Teardown, Firmware, Not confirmed (size) |
 | FPGA | Lattice MachXO2, part LCMXO2-1200ZE-1MG132C: 1,280 LUTs, no hardware multipliers. The firmware's programming routine writes 2,164 configuration pages, which matches this part. | Teardown, Firmware |
-| FPGA's jobs | Read in the firmware: phantom power switches, the button latch and wheel counter (probably; "device 6" on LPSPI4), and the jack detect for inputs 1 and 2. Audio clocking and joining the converters' outputs into one stream are likely but not traced. | Firmware, Not confirmed (audio) |
-| ADCs | Two AKM AK5704 chips. Each has 4 channels, mic preamps and rates up to 192 kHz. The firmware talks to an AK5704 on LPI2C1 at address 0x10 and on LPI2C4 at address 0x11. | Teardown, Datasheet, Firmware |
+| FPGA's jobs | Read in the firmware: phantom power switches, the button latch and wheel counter (probably; the firmware calls it SPI device 6 on LPSPI4), and the jack detect for inputs 1 and 2. Audio clocking and joining the converters' outputs into one stream are likely but not traced. | Firmware, Not confirmed (audio) |
+| ADCs | Two AKM AK5704 chips. Each has 4 channels, mic preamps and rates up to 192 kHz. The firmware writes AK5704 registers at I2C address 0x10 on LPI2C1 and at 0x11 on LPI2C4, probably one chip on each bus. | Teardown, Datasheet, Firmware |
 | Analog stages | OPA1678 op-amps in the input stages. | Teardown |
 | DAC | TI PCM1754, for the headphone and line output. | Teardown |
 | Headphone amplifier | TI TPA4411. | Teardown |
@@ -48,7 +51,7 @@ path of its ADC channel pair.
 
 | Input | Connector and rating | Power for mics | Words in the input frame (high gain, low gain) | Source |
 |---|---|---|---|---|
-| 1, 2 | 3.5 mm TRS mini jacks, unbalanced, 85 kΩ or higher, maximum +1 dBV, minimum −69.3 dBV. The included mic capsules connect here. | Plug-in power. The firmware seems to switch it from the jack detect; no user setting was found. | Input 1: 2, 1. Input 2: 5, 4. The firmware swaps inputs 1 and 2 when the byte at 0x2a2ce is 1 (probably the capsule position). | Tascam spec, Firmware |
+| 1, 2 | 3.5 mm TRS mini jacks, unbalanced, 85 kΩ or higher, maximum +1 dBV, minimum −69.3 dBV. The included mic capsules connect here. | Plug-in power. The firmware seems to switch it from the jack detect; no user setting was found. | Input 1: 2, 1. Input 2: 5, 4. The firmware swaps inputs 1 and 2 when its DSP state byte at 0x2A2CE (in ITCM) is 1, probably for the capsule position. | Tascam spec, Firmware |
 | 3 to 6 | XLR/TRS combo jacks, balanced. MIC: 2.2 kΩ or higher, maximum +2 dBu, minimum −75 dBu. LINE: 9 kΩ or higher, nominal +4 dBu, maximum +24 dBu. | Phantom power, 24 V or 48 V, XLR only. The firmware switches it per input, not per pair. | Input 3: 0, 3. Input 4: 6, 9. Input 5: 8, 7. Input 6: 11, 10. | Tascam spec, Firmware |
 | EXT IN | 3.5 mm stereo mini jack, line level, 8.5 kΩ or higher, nominal −10 dBV, maximum +10 dBV. Cannot be used at the same time as inputs 5 and 6. | None | Uses the words of inputs 5 and 6. One gain path only (Tascam: "does not have dual ADC"). | Tascam spec, Firmware |
 
@@ -58,7 +61,8 @@ path of its ADC channel pair.
   channels, and TASCAM's block diagram marks inputs 1 to 6 as dual ADC. Two AK5704 chips have only 8
   channels. So inputs 1 and 2 probably use another converter that neither teardown named, and the
   firmware's two AK5704 addresses do not settle it (Not confirmed).
-- The bat patch reads the high-gain word of each input it listens to. Its default is inputs 3 and 4.
+- The bat patch reads the high-gain word of each input it listens to. With all six of MANUAL's
+  tracks on (MANUAL's default), it listens to inputs 3 and 4.
 
 ## Outputs
 
@@ -91,7 +95,8 @@ channels from the owner's unit (Measured):
   stays below −9 dBFS. At 192 kHz a fade takes about 10 ms.
 - Each 32-bit word carries 22 bits: the low 10 bits are always zero, so the step is 2^−21 of full
   scale.
-- D is half the LEVEL setting in dB, within 0.05 dB in 67 of 71 two-step channels.
+- D is half the LEVEL setting in dB, within 0.05 dB in 67 of the 71 channels where both gain paths
+  were used.
 - EXT IN has one path, so its samples are not merged.
 - The built-in mics' channels are not on the 2^−21 grid, probably because the firmware's EQ filter
   for the built-in mics runs after the merge.
@@ -116,7 +121,7 @@ Details: [Merge checked against recordings](HOMEBREW.md#firmware-map-v203-in-pro
 | Item | Details | Source |
 |---|---|---|
 | Serial audio | All audio runs through SAI1: 3 receive lines with 4 time slots each, so 12 words per input frame. Word w is line w % 3, slot w / 3. | Firmware |
-| Input DMA | eDMA channel 9 into three 384-byte blocks at 0x2000E340. A block holds 2 frames below 176.4 kHz and 4 frames at 176.4 and 192 kHz. | Firmware |
+| Input DMA | eDMA channel 9 into three 384-byte blocks at 0x2000E340. A block holds 2 frames (96 bytes) below 176.4 kHz and 4 frames (192 bytes) at 176.4 and 192 kHz; the rest of each block is unused. | Firmware |
 | Output DMA | eDMA channel 8 from three 64-byte blocks at 0x200104C0. A frame is 2 words, left then right. | Firmware |
 | Audio callback | Runs once per input block: 24,000 times a second at 48 kHz, and 48,000 times a second at 96 and 192 kHz. At 192 kHz a block lasts 20.8 µs, about 12,500 processor cycles. | Firmware |
 | Stock processing cost | The stock audio callback alone uses 32% of the processor's cycles at 192 kHz (B224). | Measured |
@@ -124,7 +129,8 @@ Details: [Merge checked against recordings](HOMEBREW.md#firmware-map-v203-in-pro
 ## Processing headroom (measured)
 
 These figures replace the estimates in [FEASIBILITY.md](FEASIBILITY.md). They come from the bat
-patch's CPU test on B251 (9 November 2026), with two inputs on and the MIX file off. `dsp` is the
+patch's CPU test on B251 (9 November 2026), with two inputs on, the MIX file off, and the test's
+synthetic bat calls on. `dsp` is the
 share of wall time that the patch's DSP task spent processing, in percent, with the highest
 one-second value in brackets.
 
@@ -137,8 +143,9 @@ one-second value in brackets.
 | PITCH stereo, Auto volume off | 87 (88) | about 0.3 million frames per 8 s | 87 (87) | about 0.6 million frames per 8 s |
 
 - HET, COMB, FD, TE and 1:1 keep up at 192 kHz while recording, with nothing lost.
-- PITCH's own cost (PITCH mono less 1:1 mono) is 41 to 49 points of `dsp`, measured with the
-  waterfall partly switched off, so the full cost is higher. FD's own cost is 13 points.
+- PITCH's own cost (PITCH mono less 1:1 mono) is 41 to 49 points of `dsp` across the full table,
+  measured with the waterfall partly switched off, so the full cost is higher. FD's own cost is 13
+  to 16 points.
   FEASIBILITY.md estimated 11 to 16% per channel for PITCH. PITCH is hidden on the X8 for this
   reason.
 - The patch's part of the audio interrupt costs about 8% of the processor.
@@ -152,10 +159,10 @@ Found by checking that no stock code refers to these ranges (Firmware). Sizes ar
 | Memory | Free range | Size | Speed | What the patch keeps there |
 |---|---|---|---|---|
 | ITCM | 0x00031B00 to 0x00047FFF | 89.2 KB | Single cycle | Hot code: DSP, FFT, the audio hook's copy |
-| DTCM | 0x20011D00 to 0x20037FFF | 152.8 KB | Single cycle | App state, input ring, DSP task stack |
+| DTCM | 0x20011D00 to 0x20037FFF | 152.8 KB | Single cycle | App state, input ring, the DSP task's and card reader task's stacks |
 | SDRAM after the stock application | 0x81830000 to 0x818FFFFF | 832 KB | Cached | The patch's code and data |
 | SDRAM gap between zeroed ranges | 0x865E1D88 to 0x865FFFFF | 120 KB | Cached | Output ring |
-| SDRAM after Qt's framebuffers | 0x87EA6004 to 0x87FFFFFF | about 1.4 MB | Uncached | Bat screen frame, TE storage, stacks, BAT PLAYBACK's read ring |
+| SDRAM after Qt's framebuffers | 0x87EA6004 to 0x87FFFFFF | about 1.4 MB | Uncached | The bat screen's display buffer, TE storage, task 1's patch stack, BAT PLAYBACK's read ring |
 
 At B256 the patch uses 76.4 KB of the ITCM range and 149.1 KB of the DTCM range, and its SDRAM
 region ends at 0x818FDA70.
@@ -168,7 +175,7 @@ region ends at 0x818FDA70.
 | Resolution and format | 320 × 480, portrait, RGB565, driven by the eLCDIF. Qt has two framebuffers at 0x87E00000 and 0x87E4B000. The bat screen draws at this size and format on the unit. | Firmware, Measured |
 | Graphics | The stock UI is built with Qt for MCUs and draws through the PXP 2D engine. | Firmware |
 | Buttons | HOME, REC, PLAY and MARK are one byte read over LPSPI4, not processor GPIO pins. POWER and HOLD are bits in another register on the same bus. Button codes: MARK 0x2b, REC 0x07, HOME 0x06, PLAY 0x05, POWER 0x11, HOLD 0x0d. | Firmware |
-| Wheel | A signed 8-bit count in a register on the same bus, summed over 27 scans. | Firmware |
+| Wheel | A signed 8-bit count in a register on the same bus. The polling task adds up the counts of 27 scans. | Firmware |
 | Polling | One RTOS task polls the buttons, the wheel and the touch controller every 3 kernel ticks (6 ms; the kernel tick is 2 ms). The touch controller is read every second scan. | Firmware |
 | Touch coordinates | Touches from the poll are in screen pixels; taps on the bat screen land where the finger is (B226). | Measured |
 
@@ -219,7 +226,7 @@ recovery](HOMEBREW.md#opening-the-unit-and-hardware-recovery) in HOMEBREW.md.
 | Which converter serves inputs 1 and 2 | Their response above 20 kHz may differ from inputs 3 to 6 | Open a unit and read the chip markings |
 | Analog response from 60 to 96 kHz | Sets the real upper limit for bat calls | Line-level sine sweep into input 3, recorded at 192 kHz |
 | SDRAM size, 64 or 128 MiB | Sets how much memory is free for longer buffers | Read the SDRAM chip markings |
-| Whether the steady lines near 37 and 72 kHz are the reported hum | They are heard through HET if they are | Record at 192 kHz with inputs 3 and 4 terminated, with and without a phone nearby |
+| Whether the steady lines near 37 and 72 kHz are the reported hum | A steady tone in that range is heard through HET | Record at 192 kHz with inputs 3 and 4 terminated, with and without a phone nearby |
 | The clock chip's part number, and whether its flag bit selects 12-hour mode | The patch sets the clock from phone chimes | Open a unit, or read the chip's register map once identified |
 | A hardware recovery path | Needed if an update is interrupted | Find SWD or BOOT_MODE on an opened unit |
 | Battery life at 192 kHz with the bat screen open | Field use | Time a full set of AA cells |

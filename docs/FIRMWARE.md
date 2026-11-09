@@ -21,7 +21,7 @@ The last build installed on the owner's unit is B254.
 | Drivers | NXP MCUXpresso SDK (`fsl_*.c`): SAI, eDMA, LPI2C, LPSPI, LPUART, USDHC, USB, eLCDIF, PXP, FlexSPI and others. |
 | RTOS | A μITRON-style kernel with a 2 ms tick. The patch calls its `cre_tsk`, `dly_tsk` and `snd_mbx`. Which kernel it is has not been identified. |
 | User interface | Qt for MCUs (Qt Quick Ultralite), compiled to C++. Screens, the LAUNCHER tiles and their texts are compiled code and bindings, not data files. |
-| Other libraries | Fraunhofer MP3 codec; TASCAM's "TCS" Bluetooth stack for the AK-BT1; Lattice's MachXO3 configuration routines for the FPGA. |
+| Other libraries | Fraunhofer MP3 codec; TASCAM's "TCS" Bluetooth stack for the AK-BT1; Lattice's MachXO3 configuration routines for the FPGA (the board's MachXO2 takes the same commands). |
 
 Tasks that matter to the patch (numbers are the RTOS's task ids):
 
@@ -53,7 +53,8 @@ big-endian.
   project found that the X8 uses the same one.
 - **Checksum.** The last 4 bytes of the flash image repeat sum32. There is no other checksum.
 - **No signature.** The boot header has no HAB signature (its CSF pointer is 0), and the updater
-  has no signature error. Every repacked file with recomputed sums has installed, from B218 on.
+  has no signature error. Every repacked test build that has been installed, from B218 on, was
+  accepted.
 - **Version check.** The function at 0x80E23DD0 refuses a file whose version is lower than the
   version compiled into the running image. It never compares the build number, which is only shown
   on the update screen. So any file with version 203 installs over V2.03, patched or not, and the
@@ -101,7 +102,7 @@ The boot header and bootloader are identical in V2.01 and V2.03.
    which holds the boot header and bootloader. It writes as many sectors as the file needs. A
    normal update never touches the FPGA.
 
-Because update mode is chosen in `main()` before the RTOS, the screens and audio start, a bug in the
+`main()` chooses update mode before it starts the RTOS, the screens or the audio. So a bug in the
 patch's audio or screen code cannot stop update mode from starting. The patch's hooks also check the
 system mode first (see [Safety](#safety-rules-and-the-checks-that-enforce-them)).
 
@@ -120,9 +121,9 @@ patched update file.
 |---|---|---|---|
 | Header, code, read-only data, data | SDRAM 0x81830000 onwards | Yes, at flash 0x1850000, right after the stock image | No stock code refers to SDRAM 0x81830000 to 0x818FFFFF. IAR's start-up starts filling SDRAM at 0x81900000. The MPU maps this range as cached and executable. |
 | `.bss` | Patch region | Yes, as zeros | |
-| `.noinit` | Patch region | No | Buffers the patch writes before it reads them: stacks, the app's large buffers, the off-screen frame. |
+| `.noinit` | Patch region | No | Buffers the patch writes before it reads them: the app's large buffers and the off-screen frame. |
 | `.itcm` | ITCM from 0x31B00 | Yes, at its load address in the patch region | Copied into ITCM by `load_itcm` the first time a bat screen opens. |
-| `.dtcm` | DTCM from 0x20011D00 | No | App state, the input ring, the DSP task's stack. |
+| `.dtcm` | DTCM from 0x20011D00 | No | App state, the input ring, the DSP task's stack (32 KB) and the card reader task's stack (10 KB). |
 | Fixed addresses (`spare.rs`) | SDRAM 0x865E2000 and 0x87EB0000 onwards | No | Output ring (cached), the display buffer, TE storage, task 1's patch stack and BAT PLAYBACK's read ring (uncached). |
 
 `crates/x8-patch/x8patch.ld` is the linker script; its comments give the reasons for each range. At
@@ -154,7 +155,8 @@ value it expects, and it refuses the build if any site differs.
 | Function entry | The first 4 bytes of a stock function become a `b.w` to a patch function that does the whole job. | The bridge's USER SETTINGS slot getter (0x80D6A238). The patch's `slot_hook` reports slots 2 and 3 as holding a MANUAL preset. |
 | Fact | A stock word the patch's constants depend on is checked and left alone. | The layout word for 8-bit alpha images, which the bat tiles' icons use. |
 
-At B256 there are 33 hook sites: 2 pointer words, 3 tail calls, 26 calls and 2 function entries.
+At B256 there are 33 hook sites: 2 pointer words, 3 tail calls, 26 calls and 2 function entries,
+plus 1 fact that is only checked.
 The patch also changes two things at run time, from inside its hooks:
 
 - The audio callback pointer in the eDMA channel 9 handle (RAM, 0x2001024C), replaced with
@@ -166,11 +168,13 @@ The patch also changes two things at run time, from inside its hooks:
 
 | Context | What runs there |
 |---|---|
-| Audio interrupt (48,000 times a second at 192 kHz) | `audio_hook`: calls the stock callback, copies the heard inputs into the input ring, and writes the bat app's output from the output ring into the output block. It must stay short: a block at 192 kHz is about 12,500 cycles, and the stock callback uses 32% of the processor. |
-| Task 1 (stock) | The key, touch and launcher hooks. They queue actions and return quickly. Opening the bat screen the first time builds the app on a separate 40 KB patch stack, because task 1's own stack is 6 KB. |
+| Audio interrupt (48,000 times a second at 192 kHz) | `audio_hook`: calls the stock callback, copies the inputs the bat app listens to into the input ring, and writes the bat app's output from the output ring into the output block. It must stay short: a block at 192 kHz is about 12,500 cycles, and the stock callback uses 32% of the processor. |
+| Task 1 (stock) | The key hooks. They queue actions for the DSP task and return quickly. Opening the bat screen the first time builds the app on a separate 40 KB patch stack, because task 1's own stack is 6 KB. |
+| Task 9 (stock) | The touch hook. |
+| Qt's task (stock) | The launcher hooks: the tile, text, icon, slot and delete-mode hooks. |
 | Task 4 (stock) | The GUANO hook and the location log, at the end of a take. |
 | DSP task (patch, priority 16) | Processes the input ring through the bat app, draws the screen about 10 times a second (5 while recording), and runs the clock, the phone remote and the BAT PLAYBACK player. Each pass stops after 30 ms and the task then sleeps 2 ms, so a mode that cannot keep up loses input instead of freezing the unit. 32 KB stack in DTCM. |
-| Card reader task (patch, priority 12) | BAT PLAYBACK's card access: lists folders and WAV files and streams the chosen file into a read ring. Runs only while BAT PLAYBACK is open. |
+| Card reader task (patch, priority 12) | BAT PLAYBACK's card access: lists folders and WAV files and streams the chosen file into a read ring. Created with the DSP task; it touches the card only while BAT PLAYBACK is open and sleeps otherwise. 10 KB stack in DTCM. |
 
 The patch creates its tasks with `cre_tsk`, trying ids that the stock firmware leaves unused at
 start-up (23, 14, 13, 8 and 3). Priority 16 is below task 1 and every audio and recording task and
@@ -188,10 +192,10 @@ Two rules keep this safe:
 - **Nothing in ITCM may run before `load_itcm`.** ITCM is empty until the first bat screen opens,
   but the stock firmware calls the patch's hooks from start-up. B241 to B250 put `memcpy` and
   `memset` in ITCM; the key hooks and `load_itcm` itself called them, and B250 hung as soon as a
-  bat screen opened. `load_itcm` now copies one word at a time with volatile reads and writes. And
+  bat screen opened (B241 to B249 were never installed). `load_itcm` now copies one word at a time with volatile reads and writes. And
   `x8patch.py` follows every call into ITCM back to where its chain of callers starts, and refuses
-  the patch unless each chain starts at the bat screen's start-up, the DSP task, the tick or code
-  already in ITCM. Calls through function pointers are not followed.
+  the patch unless each chain starts at the bat screen's start-up, the DSP task, the tick function
+  (`tick_work`, which returns at once until the bat screen is open) or code already in ITCM. Calls through function pointers are not followed.
 - **The ITCM copy is checked once a second.** If its checksum changes, the patch stops running it.
 
 The audio hook has two copies: the SDRAM one installed at start-up, and an ITCM one that the bat
@@ -219,7 +223,8 @@ Drawing uses `embedded-graphics` and `u8g2-fonts`.
 - `key_hook` wraps the shared key handler of the LAUNCHER and app screens. `rec_key_hook` wraps the
   recording screen's handler, which the firmware installs from record standby to the end of a take
   (literal 0x80DD3A24). While the bat screen is up, the hooks give the bat app the buttons it uses
-  (PLAY, MARK, the wheel) and swallow those events by rewriting the message. In BAT DETECTOR, REC
+  (PLAY, MARK, the wheel, and a short HOME press in BAT PLAYBACK) and swallow those events by
+  rewriting the message. During a take, MARK also goes on to the recorder. In BAT DETECTOR, REC
   goes on to the stock handler, so MANUAL records; in BAT PLAYBACK, REC is swallowed. Holding HOME
   goes on to the stock handler in both, which returns to the LAUNCHER. The full rules are in
   `crates/x8-patch/src/patch/keys.rs`.
@@ -230,14 +235,14 @@ Drawing uses `embedded-graphics` and `u8g2-fonts`.
 
 ### The bat tiles: BAT DETECTOR and BAT PLAYBACK
 
-The LAUNCHER's app tiles are compiled Qt code, so a ninth app tile would need new compiled code. The
+The LAUNCHER's app tiles are compiled Qt code, so a new app tile would need new compiled code. The
 three USER SETTINGS tiles already exist and are shown only while their slot holds a saved preset.
 The patch takes over the second and third:
 
 | What | Hook |
 |---|---|
 | Show the tiles | The slot getter (function entry, 0x80D6A238) reports slots 2 and 3 as holding a MANUAL preset, so the launcher always shows both tiles. |
-| Titles and descriptions | The launcher's title binding, its six description-line bindings and the delete-mode label binding are wrapped (calls). For the bat tiles they return the patch's texts; the title's y binding moves the title down to where an app tile's title is. |
+| Titles and descriptions | The launcher's title binding, its six description-line bindings and the delete-mode label binding are wrapped (calls). For the bat tiles they return the patch's texts. The title's y binding moves the title up by 75 pixels, to where an app tile's title is: the stock firmware places USER SETTINGS titles lower, since those tiles have no description. |
 | Icons | The icon image, height and width bindings are replaced for these two tiles (calls). The icons are 8-bit alpha masks made by `tools/make_glyph.py`: the Oversample bat and a play button. A hand-made image descriptor must set its colour and layout words, because the stock icons get theirs from static constructors; leaving them 0 hangs the unit on an assert. |
 | Opening | The tiles' tail calls to "load preset" go to `tile_hook`, which opens MANUAL through Qt's bridge (property 6 = 1), as the MANUAL tile does. When the app byte (0x81E8CA90) changes to MANUAL, task 1 opens the bat screen over it. No preset is loaded. |
 | Closing | The bat screen closes when the app byte changes, so holding HOME returns to the LAUNCHER as in the stock apps. |
@@ -260,7 +265,7 @@ and "Launcher icons" and "USER SETTINGS tiles" in the [firmware map](HOMEBREW.md
 | GUANO metadata | `guano_hook` replaces a call made right after the stock code rewrites a WAV header at the end of a take or a split. For a take from BAT DETECTOR with the GUANO switch on (the default), it appends a GUANO chunk after the audio, on task 4, if at least 2 KB of stack is free. See [GUANO metadata](HOMEBREW.md#guano-metadata-2026-11-08). |
 | Location log | The same hook appends the phone's location to `BAT_LOCATIONS.CSV` beside the takes, if 8 KB of stack is free. |
 | Pauses | REC is kept from pausing a bat take unless the app's switch allows it; pauses that do happen are counted for GUANO. |
-| Clock | The DSP task gives task 4 its own "read clock" and "set clock" commands (75 and 76), only while the recorder is stopped, and reads the clock back to check. See [Setting the clock](HOMEBREW.md#setting-the-clock-locations-and-pauses-2026-11-08). |
+| Clock | The DSP task gives task 4 the stock commands that read and set the clock (75 and 76), only while the recorder is stopped, and reads the clock back to check. See [Setting the clock](HOMEBREW.md#setting-the-clock-locations-and-pauses-2026-11-08). |
 | Card reads | BAT PLAYBACK's reader uses the file system's core calls with absolute UTF-16 paths, never changes folder, and keeps at most one folder and two files open. See [Reading files from the card](HOMEBREW.md#reading-files-from-the-card-2026-11-09). |
 
 The phone remote's chime format is in [PHONE_REMOTE.md](PHONE_REMOTE.md).
@@ -273,7 +278,7 @@ The rules come from [Keeping the bricking risk low](HOMEBREW.md#keeping-the-bric
 |---|---|
 | Leave the boot header, bootloader and start-up and update-mode code unchanged | Enforced by `x8fw.py pack --base`, which refuses changes to flash 0x0 to 0x1FFFF and to the known start-up and update-mode functions. The list is incomplete: it does not cover the SD card and file system code that update mode also uses. |
 | Never reach the settings sectors | Enforced by `pack`, which refuses an image long enough to reach sector 0x1FA. |
-| Do nothing in update mode | Every hook reads the system mode byte first and goes straight to the stock code unless the mode is 0 or 1. The two function-entry hooks give the stock result instead. |
+| Do nothing in update mode | Every hook reads the system mode byte first and goes straight to the stock code unless the mode is 0 or 1. The two function-entry hooks give the stock result instead. The power-off hook does not read the mode; it changes nothing unless a bat tile opened the current app, which cannot happen in update mode. |
 | Never write to flash from patch code | Followed. The power-off hook calls the stock settings save, which writes flash the same way as before. |
 | Check every hook site | `x8patch.py` checks the stock value at every site, that each target is a Thumb address inside the patch, that the base file is an unmodified official file, that the header version matches, and that every section is inside its region. |
 | Nothing in ITCM before `load_itcm` | Enforced by `x8patch.py` (see [Fast memory](#fast-memory-itcm-and-dtcm)). |
@@ -371,7 +376,8 @@ on this board. See [HARDWARE.md](HARDWARE.md#opening-the-unit-and-debug-access).
 
 - **One firmware build.** The patch works only on V2.03 build 217. A new TASCAM release needs every
   hook address found again and a new `BUILDS` entry in `x8patch.py`. If a unit has a newer version,
-  a patch built on V2.03 also needs a header version at least as high as the installed one.
+  a patch built on V2.03 also needs a version number in its update file header at least as high as
+  the installed one.
 - **192 kHz only for listening.** BAT DETECTOR needs the X8 set to 192 kHz and shows a notice at
   other rates. BAT PLAYBACK converts other rates to 192 kHz.
 - **PITCH is too slow** on the X8 and is hidden there (see
@@ -387,3 +393,25 @@ on this board. See [HARDWARE.md](HARDWARE.md#opening-the-unit-and-debug-access).
 - **The update-path protection list is incomplete** (see [Safety](#safety-rules-and-the-checks-that-enforce-them)).
 - **Warranty and licensing.** Changing the firmware voids the warranty. The project publishes only
   its own bytes; users patch their own copy of TASCAM's file.
+
+## Terms
+
+| Term | Meaning |
+|---|---|
+| B218, B256 and so on | Build numbers of this project's test builds. The packer writes the number into the update file header, and the update screen shows it. HOMEBREW.md has a section for each step. |
+| Bat screen | The patch's own screen, drawn over MANUAL when BAT DETECTOR or BAT PLAYBACK is opened from the LAUNCHER. |
+| HET | Heterodyne: the input is mixed with a tone so that calls near the tone's frequency become audible. |
+| COMB | Several heterodyne tones at once, mixed together. |
+| FD | Frequency division: a zero-crossing divider, as in older detectors. |
+| TE | Time expansion: a captured call, or in BAT PLAYBACK the whole file, played slower. |
+| 1:1 | The input played unchanged. |
+| PITCH | Pitch shift by phase vocoder. Hidden on the X8 because it is too slow there. |
+| Auto volume | The bat app's automatic headphone level. Its Bats only choice is silent between calls. |
+| MIX file | The stereo mix file MANUAL records beside its track files (TASCAM calls it the master). |
+| System mode | The byte at 0x81969DD9 that `main()` sets from the boot buttons: 0 or 1 for a normal start, 3 for update mode. |
+| App byte | The byte at 0x81E8CA90 where the firmware's C code keeps the open app: 0 for the LAUNCHER, 2 for MANUAL. |
+| Qt bridge | The firmware's link between the Qt screens and its C code. Setting bridge property 6 to 1 opens MANUAL. |
+| Input frame | The 12 words the processor receives from the converters for each sample period (see [HARDWARE.md](HARDWARE.md#audio-path-in-the-processor)). |
+| ITCM, DTCM | The Cortex-M7's tightly coupled memories for code and data: single-cycle, no cache. |
+
+Boot terms (FCFB, IVT, DCD, HAB, XIP, SEMC, SAI, eDMA) are explained in [HOMEBREW.md](HOMEBREW.md#terms).
