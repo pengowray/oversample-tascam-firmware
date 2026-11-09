@@ -164,8 +164,8 @@ Found by checking that no stock code refers to these ranges (Firmware). Sizes ar
 | SDRAM gap between zeroed ranges | 0x865E1D88 to 0x865FFFFF | 120 KB | Cached | Output ring |
 | SDRAM after Qt's framebuffers | 0x87EA6004 to 0x87FFFFFF | about 1.4 MB | Uncached | The bat screen's display buffer, TE storage, task 1's patch stack, BAT PLAYBACK's read ring |
 
-At B256 the patch uses 76.4 KB of the ITCM range and 149.1 KB of the DTCM range, and its SDRAM
-region ends at 0x818FDA70.
+At B257 the patch uses 76.7 KB of the ITCM range and 149.1 KB of the DTCM range, and its SDRAM
+region ends at 0x818FFCD0.
 
 ## Display and controls
 
