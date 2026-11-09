@@ -2970,6 +2970,115 @@ Reads during a take would compete with the recorder's writes.
 4-byte aligned goes through a 512-byte bounce buffer, a sector at a time. Buffers should be 32-byte aligned. The stock player
 reads 256 KB at a time on task 6.
 
+## The logo screen (2026-11-10)
+
+**Result.** The screen with TASCAM's logo above "Portacapture X8" on white can be changed safely. It is a Qt screen in the
+main application, and its two images are 8-bit alpha masks stored in the main application's data. `tools/x8patch.py` now
+writes the Oversample bat and "Oversample Edition" over those masks' pixels, at the same addresses and with the same sizes,
+so no code and no image descriptor changes. The bat can be at most 21 pixels high, the height of TASCAM's logo. The change is
+in the packer from 10 November 2026 and goes into the next numbered build. It has not been installed on a unit.
+
+![The logo screen after the change, drawn from a patched flash image](screens/logo.png)
+
+The same screen shows at start-up and at power-off, so both change. At power-off the screen adds the text POWER OFF, which
+stays as it is.
+
+### Two screens at start-up
+
+**The bootloader's screen: POWER ON, white on black. Not changed.** The bootloader draws it before the main application
+starts. It is a 1-bit bitmap of the whole 320 x 480 screen (19,200 bytes), stored in the bootloader's initialised data,
+which IAR's packbits format packs into 1,098 bytes at flash image offset 0xA3F4. The bootloader's start-up code unpacks that
+data into DTCM at 0x20000000 with the routine at 0x60009A5C: the bitmap is at 0x20000088 and its rectangle (x0, y0, x1, y1,
+16 bits each) at 0x2000513C. The function at 0x6000705E sets a 24-bit RGB frame buffer pixel to white (FF FF FF) for each set
+bit, most significant bit first. The two frame buffers are at 0x86600000 and 0x86670800 (0x70800 bytes each, pixel format
+`RG24`, set up from 0x60006F3C). All of this is in flash sector 0, which every update erases and rewrites first. A mistake
+there stops the unit before update mode can start, and only SWD or the processor's USB serial download mode could recover it
+(see [Opening the unit and hardware recovery](#opening-the-unit-and-hardware-recovery)). `x8fw.py pack --base` refuses any
+change to the first 128 KiB of flash, which holds the boot header and the bootloader.
+
+**The main application's logo screen: TASCAM and Portacapture X8, dark grey on white.** This is the screen that changes.
+Its constructor is `FUN_81259484`, called from the constructor of the Qt root item, `FUN_812368a0`. The root item is a
+static local of the Qt task's entry function at 0x8172CBD8 (that task's entry in the RTOS task table is the word at
+0x8131DC58), so it is built when the Qt task first runs, after `main()` has set the system mode, and not by a C++ static
+constructor. The Qt task also runs in update mode, so the logo screen probably shows at the start of update mode too (not
+checked).
+
+| Item | Stock content | Pixels: address (flash image offset) | Size | Position on the screen |
+|---|---|---|---|---|
+| Upper image | TASCAM | 0x8132EA64 (0x134EA64) | 124 x 21, 1 byte per pixel | x 98 (centred), y 190 |
+| Lower image, main tile | Portacapture X8 | 0x812F4F44 (0x1314F44) | 245 x 21, drawn 1 pixel left of and above the 243 x 24 image | image at x 39 (centred), y 254 |
+| Lower image, second tile | The descender of the p | 0x81766F5C (0x1786F5C) | 6 x 7, at 116, 18 in the image | |
+| Text | POWER OFF (string at 0x81259BF0) | | | Centred, its bottom 90 pixels above the bottom of the screen |
+
+- The constructor reads the two images' handles from the literals at 0x81259B80 and 0x81259B88. The handles are at
+  0x819A0448 and 0x819A040C, the image descriptors at 0x819A0434 and 0x819A03F8, and the tile descriptors at 0x819A0410
+  (upper) and 0x819A03B0 and 0x819A03D4 (lower), all in the SDRAM data that IAR's init table unpacks before `main()`. The
+  layout of descriptors is in [Launcher icons](#firmware-map-v203-in-progress) in the firmware map.
+- The static constructors 0x817E6CF8 (upper) and 0x817E0964 (lower) set each tile's layout to 0x1E498 (8-bit alpha) and
+  each image's colour to 0xFF3E3E3E, the dark grey both images are drawn in.
+- The items' sizes and y positions are constants in the constructor: 124, 21 and 190 for the upper image, 243, 24 and 254
+  for the lower one. The x bindings (0x81435249 and 0x8143532D) centre each image from its width.
+- The POWER OFF text's visibility binding (0x815A9FDD) shows the text only while one of the screen's properties is 1, so
+  the text is hidden at start-up. The constructor also sets 0xFF3E3E3E on the text item, probably as its colour.
+- Only these descriptors point at these pixels: each pixel address appears once in the SDRAM data. The pixels themselves
+  are in the main application, which the bootloader copies into SDRAM as it is, without unpacking.
+- The other POWER OFF string, at 0x81241C48, belongs to a different screen: `FUN_81241B98` chooses "Please wait.",
+  "POWER OFF" or "Please push ''MARK'' KEY" for it. Which screen that is was not traced.
+
+### The change
+
+`BUILDS` in `tools/x8patch.py` has a `pixels` list for V2.03 build 217: the three pixel addresses above, the SHA-256 of
+each stock run of bytes, and the new bytes. The packer refuses to build if the stock bytes differ, then overwrites them with
+the same number of bytes. The new bytes are in `tools/splash_pixels.py`, which `tools/make_splash.py` writes from the
+Oversample logo (`about-icon.png`) and the Open Sans Semibold font:
+
+- Upper image: the bat from the Oversample logo, the same drawing as BAT DETECTOR's launcher glyph, 24 x 21 pixels and
+  centred. Each pixel's alpha is the logo's opacity times its darkness, so the logo's black outlines and eyes are dark and
+  its ears are light.
+- Lower image: "Oversample Edition" in Open Sans Semibold at 20 pixels, 188 x 20 pixels of ink, kept inside the 243 x 24
+  image (columns 1 to 243 and rows 1 to 20 of the tile) and centred on it.
+- Second tile: all zero.
+
+`splash_pixels.py` is committed, so a build does not depend on the Pillow or FreeType version. To draw the logo screen from
+a flash image, use the image from `x8fw.py unpack`, or the `-image.bin` file that `x8patch.py` writes next to the update
+file:
+
+```bash
+python3 tools/make_splash.py --preview work/v203-patched.bin work/logo.png
+```
+
+### Risk
+
+- The change is data only: 7,791 bytes of alpha values, at the stock addresses and with the stock sizes. Every byte value
+  is a valid alpha value, and the firmware reads these bytes only while it draws the logo screen. No descriptor, size,
+  pointer or code changes, so a mistake can only make the logo look wrong. It cannot stop the unit starting or stop update
+  mode.
+- The bytes are in the main application, not in the bootloader's sector, and outside the start-up and update-mode code
+  that `x8fw.py pack --base` refuses to change. Every update rewrites them, so installing the official update file brings
+  back TASCAM's logo.
+- Tested: the packer applies the step to the official file and refuses an image whose pixels are not the stock ones;
+  `x8fw.py pack --base` reports changes only inside the three pixel runs and the existing hooks, and the header and trailer
+  checksums match. The picture above is drawn from that patched image. Not tested on a unit.
+
+### A bigger bat (not built)
+
+A bat taller than 21 pixels needs changes to code and descriptors:
+
+- New descriptors in the patch region, pointing at bigger masks. A hand-made descriptor must set its layout (0x1E498) and
+  colour itself, because only the stock static constructors set the stock ones; a missing layout hangs the Qt task on the
+  draw path's `textureLayout` assert (see Launcher icons in the firmware map).
+- Either the literal at 0x81259B80 pointing at the new handle, or a hook on the call in `FUN_81259484` that turns the
+  handle into an image, plus new values for the upper image's width, height and y, which are constants in that constructor.
+- A check of how the PXP path handles a large mask. For areas of 50 pixels or more the CPU copies the mask into a scratch
+  buffer at 0x20200000 that is 0x4C80 bytes long. The stock 245 x 21 tile (5,145 pixels) is drawn, so the copy probably
+  works in parts, but `FUN_80E03294` has not been read to confirm it. Splitting a big mask into tiles of at most 5,145
+  pixels, as the stock images do, avoids the question.
+
+The constructor runs at every start-up, and probably in update mode too. Because it runs after `main()` has set the system
+mode, a hook there can follow rule 2 of [Keeping the bricking risk low](#keeping-the-bricking-risk-low) and return the stock
+image in update mode. Even so, a mistake that hangs the Qt task in a normal start would need update mode to recover, which
+these notes expect to work but which this change would not have tested. That is more risk than the data-only change.
+
 ## Firmware map (V2.03, in progress)
 
 Found with `tools/x8ram.py` (unpacks the RAM runs) and a headless Ghidra 10.4

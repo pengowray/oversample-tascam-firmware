@@ -10,18 +10,21 @@ the patch at flash 0x1850000, straight after the stock image (which ends with
 its checksum at 0x184ffff), puts it at that address before the application
 starts. The tool then points the stock firmware's hook words, tail calls,
 calls and two function entries at the patch's entry points, all read from the
-patch's header (see BUILDS), and packs the result with `x8fw.py pack --base`,
+patch's header (see BUILDS), writes the bat and "Oversample Edition" over the
+logo screen's two images (tools/make_splash.py), and packs the result with `x8fw.py pack --base`,
 which refuses changes to the bootloader and the known start-up and update-mode
 code, and refuses an image long enough to reach the settings sectors.
 
 Only V2.03 build 217 is supported: the hook addresses are that build's.
 """
 import argparse
+import hashlib
 import os
 import struct
 import sys
 
 sys.path.insert(0, os.path.dirname(__file__))
+import splash_pixels  # noqa: E402
 import x8fw  # noqa: E402
 
 PATCH_BASE = 0x81830000
@@ -44,6 +47,8 @@ def flash(address):
 # entries: the first 4 bytes of a stock function (whole instructions, given as
 #   two halfwords), replaced by a `b.w` to a header field's function, which
 #   does the stock function's whole job.
+# pixels: stock image pixels, checked by the SHA-256 of the stock bytes and
+#   overwritten with the same number of bytes. Image descriptors are unchanged.
 BUILDS = {
     (203, 217): {
         "words": [
@@ -125,6 +130,17 @@ BUILDS = {
             # The bridge's first free slot (1 to 3, or 0 when all are in use),
             # read by the apps' save screens: `ldr.w ip,[pc,#0x2e4]`.
             ("first free slot", 0x80D6A252, (0xF8DF, 0xC2E4), "free_slot_hook"),
+        ],
+        "pixels": [
+            # The logo screen's 8-bit alpha masks, shown at start-up and at power-off
+            # (docs/HOMEBREW.md, "The logo screen"). Each is read only through its tile
+            # descriptor in the SDRAM data (0x819a0410, 0x819a03d4 and 0x819a03b0).
+            ("logo: TASCAM, 124 x 21", 0x8132EA64,
+             "125a9981cbf64976a86c729b1ceb789e7586a1cb2119781346284e9d4c3916d2", splash_pixels.UPPER),
+            ("logo: Portacapture X8, 245 x 21", 0x812F4F44,
+             "c2647a76e971f4e261f7f4ca2a494911317ff9a5e2fefaa13369ab8be85a054b", splash_pixels.LOWER),
+            ("logo: descender of the p, 6 x 7", 0x81766F5C,
+             "2feccdbb579fa6448d567c10338fea9add41e39778c893cdd496e8e187d89984", splash_pixels.DESCENDER),
         ],
     },
 }
@@ -213,6 +229,13 @@ def apply(image, patch, fields, build):
         put_half(address, hw1)
         put_half(address + 2, hw2)
         print(f"{name}: entry 0x{address:08x} -> b.w 0x{target & ~1:08x}")
+
+    for name, address, stock_sha256, pixels in build["pixels"]:
+        at = flash(address)
+        if hashlib.sha256(image[at:at + len(pixels)]).hexdigest() != stock_sha256:
+            return f"{name}: the {len(pixels)} bytes at 0x{address:08x} are not the stock pixels"
+        image[at:at + len(pixels)] = pixels
+        print(f"{name}: {len(pixels)} bytes at 0x{address:08x}")
     return None
 
 
