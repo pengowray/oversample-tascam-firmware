@@ -51,8 +51,6 @@ pub const RATE_CLASS: *const u8 = 0x0002_a2cb as *const u8;
 /// for the 0 to 10 dB output level setting (settings + 0x253). It falls
 /// towards 0 only while a sample rate change mutes the output.
 pub const OUTPUT_GAIN: *const f32 = 0x0002_9ed8 as *const f32;
-/// DSP state + 0x62d: 1 while the transport plays a file into the mix.
-pub const DSP_PLAYING: *const u8 = 0x0002_a2d9 as *const u8;
 
 /// Message fields (a copy on task 1's stack): +0 category (0 = input),
 /// +4 kind (0 button, 2 wheel, 9 swallowed), +8 button code or count.
@@ -138,8 +136,6 @@ pub const ALPHA8_LAYOUT: *const u8 = 0x0001_e498 as *const u8;
 pub const ICON_COLOUR: u32 = 0xffff_ffff;
 /// `FUN_80e05870(property, &value)`: sets a Qt property (Thumb address).
 pub const SET_PROPERTY: usize = 0x80e0_5871;
-/// The audio engine: 1 playing, 2 recording, 0 idle or paused.
-pub const ENGINE_STATE: *const u32 = 0x81cb_e780 as *const u32;
 /// The open app in the C core's numbering: 0 the LAUNCHER, 2 MANUAL.
 pub const APP: *const u8 = 0x81e8_ca90 as *const u8;
 pub const C_LAUNCHER: u8 = 0;
@@ -243,3 +239,28 @@ pub const CLOCK_RECORD: *const [u8; 10] = 0x81e9_adc8 as *const [u8; 10];
 /// modes "w+", "r+" and "r".
 pub const FILE_OPEN: usize = 0x80de_7367;
 pub const FILE_CLOSE: usize = 0x80de_744d;
+/// The core file system's calls that BAT PLAYBACK's reader uses (Thumb addresses; see
+/// docs/HOMEBREW.md, "Reading files from the card"). They take absolute paths in UTF-16 and use no
+/// current folder or shared path buffer, unlike `FILE_OPEN`, which task 4 also uses.
+/// `FUN_80dfee00(path, mode)` opens a file and returns its handle, or 0. `FUN_80de74c0(buffer,
+/// count, file)` reads and returns the bytes read, 0 at the end or on an error.
+pub const CORE_OPEN: usize = 0x80df_ee01;
+pub const FILE_READ: usize = 0x80de_74c1;
+/// `FUN_80e0d95c(path)` opens a folder and returns its handle, or 0; only 2 can be open in the
+/// whole system. `FUN_80de7732(folder)` returns the next entry, or 0 at the end, and
+/// `FUN_80de772e(folder)` closes the folder.
+pub const FOLDER_OPEN: usize = 0x80e0_d95d;
+pub const FOLDER_NEXT: usize = 0x80de_7733;
+pub const FOLDER_CLOSE: usize = 0x80de_772f;
+/// A folder entry E: E + 0 points to a 32-byte FAT directory entry, and the long name is at
+/// E + 0x4e in UTF-16, ending in a 0 unit. On exFAT the entry is in one static buffer, so the
+/// next call changes it.
+pub const ENTRY_NAME: usize = 0x4e;
+/// In the 32-byte directory entry: the attributes, then FAT's packed time and date, and the size.
+pub const DIR_ATTRIBUTES: usize = 0x0b;
+pub const DIR_TIME: usize = 0x0e;
+pub const DIR_DATE: usize = 0x10;
+pub const DIR_SIZE: usize = 0x1c;
+pub const ATTR_HIDDEN: u8 = 0x02;
+pub const ATTR_VOLUME: u8 = 0x08;
+pub const ATTR_FOLDER: u8 = 0x10;

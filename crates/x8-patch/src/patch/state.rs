@@ -35,13 +35,15 @@ pub(super) static ACTIONS: [AtomicU32; 32] = [const { AtomicU32::new(0) }; 32];
 pub(super) static ACTIONS_WRITE: AtomicU32 = AtomicU32::new(0);
 pub(super) static ACTIONS_READ: AtomicU32 = AtomicU32::new(0);
 pub(super) const ACTION_MARK: u32 = 1;
+pub(super) const ACTION_PLAY: u32 = 2;
+pub(super) const ACTION_HOME: u32 = 3;
 pub(super) const ACTION_WHEEL: u32 = 4;
 /// Set when a bat tile was tapped: the bat screen opens once the C core has
 /// switched to the app the tile asked for.
 pub(super) static LAUNCHING: AtomicBool = AtomicBool::new(false);
-/// The last bat tile tapped was BAT PLAYBACK: the app hears the X8's
-/// playback (the stock output) instead of the inputs turned on in MANUAL, and
-/// PLAY and a short HOME press go on to MANUAL's player.
+/// The last bat tile tapped was BAT PLAYBACK: the app hears the file it plays
+/// from the card (playback.rs) instead of the inputs turned on in MANUAL, and
+/// PLAY, a short HOME press and REC go to the app, not to MANUAL.
 pub(super) static PLAYBACK: AtomicBool = AtomicBool::new(false);
 pub(super) static LAUNCH_FROM: AtomicU32 = AtomicU32::new(0);
 pub(super) static LAUNCH_AT: AtomicU32 = AtomicU32::new(0);
@@ -98,7 +100,7 @@ pub(super) static BACKLOG_DROPPED: AtomicU32 = AtomicU32::new(0); // DSP task
 /// redraw: the interrupt raises them, the drawing context reads and clears.
 pub(super) static WORD_PEAKS: [AtomicU32; 12] = [const { AtomicU32::new(0) }; 12];
 /// The same for the stock output, unscaled, whichever side is louder, when the
-/// app hears MANUAL's mix or a file playing.
+/// app hears MANUAL's mix; in BAT PLAYBACK, for the file playing.
 pub(super) static SOURCE_PEAK: AtomicU32 = AtomicU32::new(0);
 /// The words of an input frame the interrupt passes to the app, first | second
 /// << 8, or `NO_INPUT_WORDS` to pass silence. Inputs 3 and 4 until
@@ -171,13 +173,7 @@ pub(super) static DSP_STACK: Slot<DspStack> = Slot(UnsafeCell::new(MaybeUninit::
 /// at offsets 0x0, 0x10 and 0x4c of what it takes for the LCDIF registers).
 pub(super) static DUMMY_LCDIF: Slot<[u32; 32]> = Slot(UnsafeCell::new(MaybeUninit::zeroed()));
 
-/// The stack task 1 runs the patch's heavy work on (its own is 6 KB): building
-/// the app, and processing when there is no DSP task.
-pub(super) const STACK_WORDS: usize = 10 * 1024;
-#[repr(C, align(8))]
-pub(super) struct Stack([u32; STACK_WORDS]);
-#[unsafe(link_section = ".noinit")]
-pub(super) static STACK: Slot<Stack> = Slot(UnsafeCell::new(MaybeUninit::uninit()));
+// The stack task 1 runs the patch's heavy work on is `spare::PATCH_STACK`.
 
 /// Touches for the app, from task 9: pressed << 31 | x << 16 | y.
 pub(super) static TOUCHES: [AtomicU32; 16] = [const { AtomicU32::new(0) }; 16];

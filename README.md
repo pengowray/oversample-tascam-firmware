@@ -15,7 +15,7 @@ firmware is not included: the patcher changes your own copy of the official upda
 
 Experimental. Earlier builds have run on one X8 (F/W Version 2.03 Build 217, H/W Version 1.00
 Build 010, as GENERAL SETTINGS > SYSTEM > Information shows them). Other hardware versions are
-untested. The current build is B253. The optional AK-BT1 Bluetooth adapter
+untested. The current build is B254. The optional AK-BT1 Bluetooth adapter
 has not been tried with the patch. [docs/HOMEBREW.md](docs/HOMEBREW.md) lists what each build changed
 and what to check.
 
@@ -26,8 +26,11 @@ update can leave the unit needing repair.
 
 ## What it adds
 
-- **BAT DETECTOR and BAT PLAYBACK** tiles on the LAUNCHER, in place of USER SETTINGS 2 and 3. They
-  open MANUAL with the bat screen on top, so REC records as MANUAL does.
+- **BAT DETECTOR and BAT PLAYBACK** tiles on the LAUNCHER, in place of USER SETTINGS 2 and 3. BAT
+  DETECTOR opens MANUAL with the bat screen on top, so REC records as MANUAL does. BAT PLAYBACK lists
+  the WAV files in the card's SOUND folder and its subfolders, newest first, and plays them through
+  the listening modes, converting other sample rates to 192 kHz (from B254, not yet tried on a
+  unit).
 - **Listening modes:** heterodyne (HET), comb, frequency division (FD), time expansion (TE) and 1:1,
   in stereo for HET, COMB and 1:1.
 - **A waterfall** from 0 to about 96 kHz, with bat calls, steady tones, audible sounds and clicks
@@ -50,7 +53,7 @@ rustup use Rust 1.99.1 with the `thumbv7em-none-eabihf` target.
 
 ```bash
 tools/build.sh
-python3 tools/x8patch.py "#PortaX8_0217.203" target/thumbv7em-none-eabihf/release/x8-patch "#PortaX8_0253.203" --build 253
+python3 tools/x8patch.py "#PortaX8_0217.203" target/thumbv7em-none-eabihf/release/x8-patch "#PortaX8_0254.203" --build 254
 ```
 
 `tools/build.sh` runs `cargo build` for the X8 and removes Cargo's home folder from the source

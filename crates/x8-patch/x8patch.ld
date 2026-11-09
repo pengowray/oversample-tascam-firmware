@@ -23,6 +23,18 @@ SECTIONS
 {
   .header : { KEEP(*(.header)) } > PATCH
 
+  /* Code from the DSP library that BAT PLAYBACK's card reader calls, kept out of ITCM:
+     reading a WAV header and setting the resampler's rates. The reader is its own task,
+     which tools/x8patch.py's check does not count as running only after load_itcm. A
+     section is placed by the first pattern that matches it, so this comes before .itcm. */
+  .text.cold_dsp :
+  {
+    *(.text.*bat_dsp3wav5parse*)
+    *(.text.*bat_dsp3wav8read_fmt*)
+    *(.text.*bat_dsp3wav6Format*)
+    *(.text.*9Resampler9set_rates*)
+  } > PATCH
+
   /* Run from ITCM: the app's processing, including the closures of its analysis
      that the compiler does not inline, its meters, Auto volume (module level, also
      inlined at present), the DSP library it inlines from, the FFT, libm, the snapshot

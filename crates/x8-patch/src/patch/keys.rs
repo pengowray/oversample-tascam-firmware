@@ -6,9 +6,9 @@ use bat_app::{BatApp, Button};
 use super::audio::install_audio_hook;
 use super::screen::{draw_status_strip, enter_work, follow_app, leave_bat_screen, request_enter};
 use super::state::{
-    ACTION_MARK, ACTION_WHEEL, ACTIONS, ACTIONS_READ, ACTIONS_WRITE, AUDIO_INSTALLED, AUDIO_NOT_TRIED, AUDIO_STATE,
-    BAT_ACTIVE, BLOCKS, CALLS, CALLS_AT_SECOND, CALLS_PER_S, DRAGGING, LAST_EVENT, LAST_SECOND, PENDING, PLAYBACK,
-    QT_PRESSED, SCREEN_APP, TOUCH_DOWN, TOUCH_READ, TOUCH_WRITE, TOUCHES, WORK_ENTER,
+    ACTION_HOME, ACTION_MARK, ACTION_PLAY, ACTION_WHEEL, ACTIONS, ACTIONS_READ, ACTIONS_WRITE, AUDIO_INSTALLED,
+    AUDIO_NOT_TRIED, AUDIO_STATE, BAT_ACTIVE, BLOCKS, CALLS, CALLS_AT_SECOND, CALLS_PER_S, DRAGGING, LAST_EVENT,
+    LAST_SECOND, PENDING, PLAYBACK, QT_PRESSED, SCREEN_APP, TOUCH_DOWN, TOUCH_READ, TOUCH_WRITE, TOUCHES, WORK_ENTER,
 };
 use super::task::{on_patch_stack, task_running, tick_work};
 use super::{Handler, app_byte, blocks_per_second, read_byte, stock, system_mode};
@@ -72,7 +72,10 @@ pub(super) fn apply_touches(app: &mut BatApp<'static>) {
         let event = TOUCHES[read as usize % TOUCHES.len()].load(Relaxed);
         let (x, y) = ((event >> 16 & 0x7fff) as i32, (event & 0xffff) as i32);
         if event >> 31 == 0 {
-            TOUCH_DOWN.store(false, Relaxed);
+            // The finger lifted: a list row is chosen, or the seek bar moves, only now.
+            if TOUCH_DOWN.swap(false, Relaxed) {
+                app.release();
+            }
         } else if !TOUCH_DOWN.load(Relaxed) {
             TOUCH_DOWN.store(true, Relaxed);
             DRAGGING.store(app.is_draggable(x, y), Relaxed);
@@ -158,25 +161,29 @@ unsafe fn handle_message(msg: usize, via: Via) {
                 swallow_button();
             }
         }
+        // BAT PLAYBACK plays files itself, and reads the card while it does, so MANUAL must
+        // not record: REC is kept from it.
+        (stock::KIND_BUTTON, stock::REC) if PLAYBACK.load(Relaxed) && SCREEN_APP.load(Relaxed) == app_byte() as u32 => {
+            swallow_button();
+        }
         (stock::KIND_BUTTON, stock::PLAY) if SCREEN_APP.load(Relaxed) == app_byte() as u32 => {
-            if PLAYBACK.load(Relaxed) {
-                // BAT PLAYBACK: PLAY goes on to MANUAL's player (play or pause
-                // the current file) and brings the bat screen back if MANUAL's
-                // own screen is showing.
-                if !active {
-                    request_enter();
-                }
+            swallow_button();
+            if PLAYBACK.load(Relaxed) && active {
+                // BAT PLAYBACK: plays and pauses, or plays the file chosen on the list.
+                queue_action(ACTION_PLAY, 0);
+            } else if PLAYBACK.load(Relaxed) {
+                request_enter();
             } else {
                 // BAT DETECTOR: PLAY swaps between the bat screen and the
                 // app's own screen; the app's own playback is not used there.
-                swallow_button();
                 if active { leave_bat_screen() } else { request_enter() }
             }
         }
         (stock::KIND_BUTTON, stock::HOME) if active && PLAYBACK.load(Relaxed) && app_byte() != 0 => {
-            // BAT PLAYBACK: a short press goes on (it stops playback) and shows
-            // MANUAL's own screen, where another file can be chosen.
-            leave_bat_screen();
+            // BAT PLAYBACK: a short press opens the list of files. Holding HOME
+            // sends another code, which still returns to the LAUNCHER.
+            swallow_button();
+            queue_action(ACTION_HOME, 0);
         }
         (stock::KIND_BUTTON, stock::HOME) if active && app_byte() == 0 => {
             // On the LAUNCHER, where holding HOME does nothing. In an app a
@@ -211,6 +218,8 @@ pub(super) fn apply_actions(app: &mut BatApp<'static>) {
         let value = ((a << 8) as i32) >> 8;
         match a >> 24 {
             ACTION_MARK => app.button(Button::Mark),
+            ACTION_PLAY => app.button(Button::Play),
+            ACTION_HOME => app.button(Button::Home),
             ACTION_WHEEL => app.wheel(value),
             _ => {}
         }

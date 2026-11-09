@@ -7,14 +7,13 @@ use super::state::{
     AUDIO_INSTALLED, AUDIO_SLOT_UNEXPECTED, AUDIO_STATE, BAT_ACTIVE, BLOCKS, BLOCKS_AT_SECOND, CYCLE_COUNTER_ON,
     CYCLES_AT_SECOND, CYCLES_PER_S, DEBUG_SHOWN, HEAR_MIX, HEARD_WORDS, HOOK_CYCLES, HOOK_CYCLES_PER_S, HOOK_IN_ITCM,
     IN_DROPPED, IN_DROPPED_SEEN, IN_HOLE_AT, IN_READ, IN_RING, IN_WAITING_MOST, IN_WRITE, NO_INPUT_WORDS, OUT_FADE_IN,
-    OUT_LAST, OUT_READ, OUT_WRITE, PLAYBACK, PRIMED, SOURCE_PEAK, STOCK_CYCLES, STOCK_CYCLES_PER_S, UNDERRUNS,
-    WORD_PEAKS,
+    OUT_LAST, OUT_READ, OUT_WRITE, PRIMED, SOURCE_PEAK, STOCK_CYCLES, STOCK_CYCLES_PER_S, UNDERRUNS, WORD_PEAKS,
 };
 use super::{Handler, blocks_per_second, rate_class, spare, stock};
 
 /// Output frames buffered before the headphones start playing the bat app's
 /// output (43 ms at 192 kHz), so the DSP task's passes do not run dry.
-const PRIME_FRAMES: u32 = 8_192;
+pub(super) const PRIME_FRAMES: u32 = 8_192;
 /// When the output ring runs dry there are no frames left to fade, so each ear
 /// falls away from its last sample by this factor per frame: 60 dB in 95 frames
 /// (0.5 ms at 192 kHz). A step to zero would be a click on top of the gap.
@@ -245,15 +244,12 @@ unsafe fn hook_body<const ITCM: bool>(a: usize, b: usize, c: usize, d: usize) ->
 
     // SAFETY: the stock output gain, an f32 in ITCM.
     let stock_gain = unsafe { ptr::read_volatile(stock::OUTPUT_GAIN) };
-    let playback = PLAYBACK.load(Relaxed);
     // The block's 4 frames into the input ring: the two inputs chosen by
     // `selected_inputs`, or MANUAL's mix, which is the stock output (left,
     // right) that the stock callback has just written as clamp(mix) x
-    // (2^31 - 1) x the output gain. Until a file plays, that mix is the live
-    // inputs, so BAT PLAYBACK hears silence then.
-    let from_output = playback || HEAR_MIX.load(Relaxed);
-    // SAFETY: a byte in the stock DSP state.
-    let output_usable = !playback || unsafe { ptr::read_volatile(stock::DSP_PLAYING) } == 1;
+    // (2^31 - 1) x the output gain. BAT PLAYBACK plays files itself
+    // (playback.rs) and drops this input.
+    let from_output = HEAR_MIX.load(Relaxed);
     let words = HEARD_WORDS.load(Relaxed);
     let (first_word, second_word) = ((words & 0xff) as usize, (words >> 8 & 0xff) as usize);
     let no_input = words == NO_INPUT_WORDS;
@@ -270,7 +266,7 @@ unsafe fn hook_body<const ITCM: bool>(a: usize, b: usize, c: usize, d: usize) ->
                         ptr::read_volatile(input.add(12 * k + first_word)),
                         ptr::read_volatile(input.add(12 * k + second_word)),
                     ]
-                } else if from_output && output_usable && gain != 0.0 {
+                } else if from_output && gain != 0.0 {
                     let unscale = |word: i32| (word as f32 / gain) as i32;
                     [unscale(ptr::read_volatile(output.add(2 * k))), unscale(ptr::read_volatile(output.add(2 * k + 1)))]
                 } else {

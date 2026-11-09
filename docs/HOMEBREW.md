@@ -11,8 +11,8 @@ says "installed" if its build ran on the unit, and "never installed" if a later
 build replaced it first. B250 hung as soon as a bat screen opened (Step 28 says
 why). The last build installed is B251 (Step 28), and its bat screens open. GUANO
 metadata, setting the clock from phone chimes and the location log have not been
-checked on a unit yet. The current build is B253 (Step 30), which has not been
-installed.
+checked on a unit yet. The current build is B254 (Step 31, the new BAT PLAYBACK),
+which has not been installed.
 
 **Hardware tested.** One X8. Its Information screen (GENERAL SETTINGS > SYSTEM >
 Information) shows `F/W: Version 2.03 Build 217` and `H/W: Version 1.00 Build 010`.
@@ -2357,7 +2357,75 @@ B241 or an earlier build. All the checks in `tools/x8patch.py` pass on this file
 1. **Start and stop.** With Phone remote on and the phone page reloaded, do `Start recording` and `Stop recording` work as before?
 2. **Old phone page.** If a phone still has the old page cached, its commands should do nothing at all. Reload the page.
 
-## Step 30 test file: PITCH about 40% cheaper (built 2026-11-09, not yet installed)
+## Step 31 test file: BAT PLAYBACK plays files from the card itself (built 2026-11-09, not yet installed)
+
+`work/patch30/#PortaX8_0254.203` (B254, SHA-256 `b721bb30…ef148b028`). Includes steps 11 to 30. Install this file in place of
+any earlier build. All the checks in `tools/x8patch.py` pass on this file. No new stock hook site (header version 18).
+
+BAT PLAYBACK no longer uses MANUAL's player. It lists the recordings on the card, reads the chosen WAV file in its own task, and
+plays it through the bat screen's modes. The owner chose: replace the old BAT PLAYBACK; convert other sample rates to 192 kHz so
+files play at their real speed; list `C:\SOUND` and its folders; a short HOME press opens the list; REC does nothing in BAT
+PLAYBACK; a file stops at its end.
+
+**On screen.**
+
+- **The list** (a short HOME press, PLAY with no file chosen, or a tap on the title, which ends in a small downward arrow): one
+  row per WAV file, newest first, with the name and length, then the date and time, the folder, the sample rate and mono or
+  stereo. Tap a row or press PLAY on the highlighted row (the wheel moves the highlight) to play it. Drag to scroll; a row is
+  chosen when the finger lifts without moving. Rows that can't be played are dimmer, with "Can't play:" and a reason. Back
+  returns to the player.
+- **The player bar**, in the status bar's place: play or pause, the time played, a seek bar (tap or slide; the file moves when the
+  finger lifts) and the length. The title is the file's name.
+- **The rate warning** now asks for the X8 itself to be set to 192kHz, with the same steps as BAT DETECTOR.
+- Opening BAT PLAYBACK again reads the card again, so takes recorded since appear; the chosen file keeps its place if it is
+  still there.
+
+**How it works.** `crates/x8-patch/src/patch/reader.rs` and `playback.rs`; the list and transport are in
+`crates/bat-app/src/player.rs`; WAV parsing and the resampler are `bat_dsp::wav` and `bat_dsp::resample`.
+
+- **The reader task** (priority 12, between the stock file tasks 6 and 20 at 8 and 10 and the DSP task at 16) does all card
+  access, only while BAT PLAYBACK is open, with the core open and folder functions and absolute UTF-16 paths ("Reading files
+  from the card"). It lists `C:\SOUND` and two levels of folders, one folder handle at a time, then reads each file's header
+  (8 KB, or 32 KB if the audio starts later), then streams the chosen file into a 416 KB ring in 32 KB reads. It checks for a
+  new command before every read.
+- **The DSP task** drains the input ring, passes the app's requests to the reader and the reader's results to the app, and
+  while playing copies bytes from the ring, decodes them, converts the rate (`Resampler`, 32 to 64 taps), and runs the app on
+  the 192 kHz result. While paused it keeps the output topped up with silence.
+- **Leaving** the bat screen waits up to 200 ms for the reader to close the file, so the stock firmware never uses the card
+  while the reader is mid-read. A wait that runs out is counted on the debug line (`wait`).
+- **Memory.** The new tables and buffers are in uncached SDRAM from 0x87f60000 (list 48 KB, the reader's file table 52 KB,
+  events 24 KB, header 32 KB, read ring 416 KB); the reader's stack (10 KB) is in DTCM. To make room in the patch region, task
+  1's patch stack (40 KB) moved to that uncached SDRAM too. The MPU table at 0x80e01404 maps 0x80000000 to 0x88000000 as
+  Normal, non-cacheable memory (region 4: TEX 1, C 0, B 0), so unaligned accesses there are allowed; regions 5 to 9 make the
+  lower parts cacheable. The resampler's kernel tables use 64 points per frame instead of 128 (10.5 KB instead of 21 KB; the
+  measured worst residual stays about 74 dB down).
+- The old BAT PLAYBACK code (reading the stock player's output block in the audio hook, PLAY and HOME passed to MANUAL's
+  player) is removed.
+
+| Item | B253 | B254 | Limit |
+|---|---|---|---|
+| ITCM | 80.8 KB | 81.9 KB | 89.2 KB |
+| DTCM | 135.1 KB | 148.1 KB | 152.8 KB |
+| `.noinit`, the end of the patch's memory | ends at 0x818f99e8 | ends at 0x818fd060 | 0x81900000 |
+
+**Not known until it runs on the unit:** the CPU cost of converting rates (estimated 10 to 15% of the core for 96 kHz files and
+20 to 25% for 384 kHz; none for 192 kHz), whether the card keeps up (watch `dry` on the debug line), the reader's stack use
+(`stack`), and whether the folder entries hold the dates and names where Ghidra says. Files with names that are not plain
+ASCII are left out of the list.
+
+**What to check.**
+
+1. **BAT PLAYBACK opens on the list**, which fills with the card's recordings, newest first, with lengths and rates.
+2. **Play a 192 kHz take** through HET: sound, waterfall, the time moving. PLAY pauses and plays; the seek bar moves to a new
+   place.
+3. **Play a file at another rate** if there is one (for example 384 kHz from an AudioMoth): does it sound at its real speed?
+   Note `dsp` and `dry` on the debug line.
+4. **Leave and come back**: hold HOME, open BAT PLAYBACK again. Is the file still chosen, at the same place? Record a take in
+   BAT DETECTOR, then open BAT PLAYBACK: is the new take at the top?
+5. **REC in BAT PLAYBACK** does nothing. **BAT DETECTOR** still works as on B251, including recording.
+6. Steps 29 and 30 (COMB drag, PITCH in the CPU test) and the GUANO name fix, since B252 and B253 were not installed.
+
+## Step 30 test file: PITCH about 40% cheaper (built 2026-11-09, never installed: superseded by B254)
 
 `work/patch29/#PortaX8_0253.203` (B253, SHA-256 `43fb4e73…43db4ca76`). Includes steps 11 to 29. Install this file in place of
 any earlier build. All the checks in `tools/x8patch.py` pass on this file. No new stock hook site (header version 18).

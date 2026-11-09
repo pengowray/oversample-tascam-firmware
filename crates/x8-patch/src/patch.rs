@@ -27,6 +27,10 @@ mod mix_file;
 mod pauses;
 /// BAT PLAYBACK's launcher glyph.
 mod play_glyph;
+/// BAT PLAYBACK's player, in the DSP task: passes requests to the card reader and plays the file.
+mod playback;
+/// BAT PLAYBACK's card reader task: lists the WAV files, reads their headers and the file playing.
+mod reader;
 /// Carries out the phone remote's commands by posting button presses to task 1.
 mod remote;
 /// Opening and closing the bat screen, and drawing it with the debug strips.

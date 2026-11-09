@@ -96,8 +96,12 @@ pub(super) extern "C" fn enter_work() {
         app.set_auto_level_target(AUTO_LEVEL_OUTPUT / OUTPUT_GAIN);
         app.set_mix_available(true);
         app.set_feed(Feed::Mix);
+        super::playback::init(app);
         APP_READY.store(true, Relaxed);
         start_task();
+        // After the DSP task, which takes the first free task id. The reader runs at once, finds
+        // the bat screen not open yet, and sleeps.
+        super::reader::start_reader();
     }
     SESSION.store(SESSION.load(Relaxed).wrapping_add(1), Release);
     SCREEN_APP.store(app_byte() as u32, Relaxed);
@@ -137,9 +141,11 @@ pub(super) extern "C" fn enter_work() {
     unsafe { ptr::write_volatile(stock::LCDIF_NEXT_BUF, spare::DISPLAY) };
 }
 
-/// Give the display back to Qt and stop feeding the app.
+/// Give the display back to Qt and stop feeding the app. In BAT PLAYBACK, wait (briefly) for
+/// the card reader to close its files first, so MANUAL has the card to itself.
 pub(super) fn leave_bat_screen() {
     BAT_ACTIVE.store(false, Release);
+    super::reader::wait_until_closed();
     // ITCM is checked only while the bat screen is up.
     use_itcm_hook(false);
     // SAFETY: as in enter_work.
@@ -354,10 +360,29 @@ fn draw_debug(fb: &mut Rgb565Buffer<'_>, app: &BatApp<'static>) {
     let mut line = Line::new();
     let source = db_below_full_scale(SOURCE_PEAK.swap(0, Relaxed));
     if PLAYBACK.load(Relaxed) {
-        // SAFETY: words in the stock audio engine and DSP blocks.
-        let (engine, playing) =
-            unsafe { (ptr::read_volatile(stock::ENGINE_STATE), ptr::read_volatile(stock::DSP_PLAYING)) };
-        let _ = write!(line, "engine {engine} play {playing} | file -{source} dB");
+        // The card reader: what it is doing, the file waiting in its ring, card errors, waits for
+        // it on closing that gave up, and its stack's most use.
+        use super::reader::{ERRORS, LEAVE_TIMEOUTS, READER_TASK, STATE, stack_used};
+        let reader = match STATE.load(Relaxed) {
+            super::reader::IDLE => "idle",
+            super::reader::LISTING => "listing",
+            super::reader::HEADERS => "headers",
+            super::reader::OPENING => "opening",
+            super::reader::READING => "reading",
+            _ => "away",
+        };
+        let task = READER_TASK.load(Relaxed) as i32;
+        if task <= 0 {
+            let _ = write!(line, "no reader {task} | ");
+        }
+        let _ = write!(
+            line,
+            "card {reader} ring {} KB err {} wait {} stack {} | file -{source} dB",
+            super::playback::ring_bytes() / 1024,
+            ERRORS.load(Relaxed),
+            LEAVE_TIMEOUTS.load(Relaxed),
+            stack_used(),
+        );
     } else {
         if app.feed() == Feed::Mix {
             let _ = write!(line, "on {:02x} mix -{source} dB:", tracks_on());
@@ -396,21 +421,10 @@ fn update_status(app: &mut BatApp<'static>) {
         if matches!(transport, 3..=6) && rate != 0 { (frames / rate) as u64 } else { 0 }
     };
     app.set_recorder(state, seconds);
+    // In BAT PLAYBACK too: the output runs at MANUAL's rate, whatever the file's (playback.rs
+    // resamples it to 192 kHz).
     // SAFETY: as above.
-    let rate = unsafe {
-        if !PLAYBACK.load(Relaxed) {
-            ptr::read_volatile(stock::RECORD_RATE)
-        } else if ptr::read_volatile(stock::DSP_PLAYING) == 1 {
-            // The converters run at the file's rate while a file plays or is
-            // paused (the DSP play byte stays 1 then), so BAT PLAYBACK checks
-            // that rate.
-            ptr::read_volatile(stock::CONVERTER_RATE)
-        } else {
-            // No file is playing, so there is no rate to warn about.
-            SAMPLE_RATE as u32
-        }
-    };
-    app.set_input_rate(rate);
+    app.set_input_rate(unsafe { ptr::read_volatile(stock::RECORD_RATE) });
     // The audio blocks, as the clock for the CPU test's Stages table.
     app.set_stage_clock(&BLOCKS, blocks_per_second());
     if PLAYBACK.load(Relaxed) {

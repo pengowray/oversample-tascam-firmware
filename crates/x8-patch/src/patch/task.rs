@@ -6,13 +6,13 @@ use super::audio::{ANALYSIS_OFF_ABOVE, process_input, use_itcm_hook};
 use super::clock::run_clock;
 use super::itcm::itcm_still_ok;
 use super::keys::{apply_actions, apply_touches};
+use super::playback::{play, start_session};
 use super::remote::run_remote;
 use super::screen::{draw_frame, hide_for_popup, render, show_frame};
 use super::state::{
     ACTIONS_READ, ACTIONS_WRITE, APP, BACKLOG_DROPPED, BAT_ACTIVE, BLOCKS, COPY_BLOCKS, COPY_PERMILLE, DRAW_BLOCKS,
     DRAW_PERMILLE, DSP_BLOCKS, DSP_PERMILLE, DSP_STACK, DSP_STACK_BYTES, IN_READ, IN_WRITE, LAST_RENDER, LOAD_SECOND,
-    LOAD_WINDOW_START, OUT_READ, OUT_WRITE, SESSION, SESSION_SEEN, STACK, Stack, TASK, TOUCH_DOWN, TOUCH_READ,
-    TOUCH_WRITE,
+    LOAD_WINDOW_START, OUT_READ, OUT_WRITE, PLAYBACK, SESSION, SESSION_SEEN, TASK, TOUCH_DOWN, TOUCH_READ, TOUCH_WRITE,
 };
 use super::{blocks_per_second, read_byte, spare, stock, system_state};
 
@@ -77,11 +77,11 @@ const BACKLOG_FRAMES: u32 = 6_144;
 const MOST_HELD_FRAMES: u32 = 14_336;
 const SLEEP_MS: u32 = 2;
 
-/// The DSP task: unused ids at start-up (the table at 0x8131dac4 uses 1, 2,
-/// 4 to 7, 9 to 12 and 15 to 22), tried in turn. Priority 16 is below task 1
-/// (15) and every audio and recording task, equal to the settings save task,
-/// and above task 21 (17), which has a 1 MB stack and is probably Qt.
-const TASK_IDS: [i32; 5] = [23, 14, 13, 8, 3];
+/// Ids unused at start-up (the table at 0x8131dac4 uses 1, 2, 4 to 7, 9 to 12 and 15 to 22),
+/// tried in turn: the DSP task takes the first free one, and BAT PLAYBACK's reader the next.
+pub(super) const TASK_IDS: [i32; 5] = [23, 14, 13, 8, 3];
+/// The DSP task's priority, 16, is below task 1 (15) and every audio and recording task, equal
+/// to the settings save task, and above task 21 (17), which has a 1 MB stack and is probably Qt.
 const TASK_PRIORITY: u32 = 16;
 const TA_ACT: u32 = 0x02;
 const E_OBJ: i32 = -41;
@@ -100,7 +100,7 @@ struct CreateTask {
 /// 0x3023c) only saves and restores the stack pointer, so a task may run on
 /// any stack.
 pub(super) unsafe fn on_patch_stack(work: extern "C" fn()) {
-    let top = (STACK.0.get() as usize + core::mem::size_of::<Stack>()) & !7;
+    let top = (spare::PATCH_STACK + spare::PATCH_STACK_BYTES) & !7;
     // SAFETY: r4 keeps the task's stack pointer across the call; the work
     // function follows the C ABI, so it may change r0 to r3, r12, lr and
     // s0 to s15 (this FPU has no d16 to d31) and keeps the rest.
@@ -181,6 +181,18 @@ fn new_session(app: &mut BatApp<'static>) {
         TOUCH_READ.store(TOUCH_WRITE.load(Acquire), Release);
         TOUCH_DOWN.store(false, Relaxed);
         app.input_lost(0);
+        start_session(app);
+    }
+}
+
+/// Feed the app for up to `time_blocks` of wall time: in BAT PLAYBACK from the file playing,
+/// otherwise from the input ring, dropping input left waiting if the app cannot keep up.
+fn feed(app: &mut BatApp<'static>, budget: u32, time_blocks: u32) {
+    if PLAYBACK.load(Relaxed) {
+        play(app, time_blocks);
+    } else {
+        process_input(app, budget, time_blocks);
+        drop_backlog(app);
     }
 }
 
@@ -197,20 +209,26 @@ pub(super) unsafe fn app() -> &'static mut BatApp<'static> {
 
 /// Create the DSP task, trying each free id in turn.
 pub(super) fn start_task() {
+    let result = create_task(dsp_task, TASK_PRIORITY, DSP_STACK.0.get().cast(), DSP_STACK_BYTES, &TASK_IDS);
+    TASK.store(result as u32, Relaxed);
+}
+
+/// Create and start a task (from task 1), trying each of `ids` until one is free. Returns the id,
+/// or the error cre_tsk returned. The task starts at once, and runs before this returns if its
+/// priority is above task 1's.
+pub(super) fn create_task(
+    entry: extern "C" fn(isize),
+    priority: u32,
+    stack: *mut u8,
+    bytes: usize,
+    ids: &[i32],
+) -> i32 {
     // SAFETY: the RTOS's cre_tsk, from task 1.
     let create: unsafe extern "C" fn(i32, *const CreateTask) -> i32 = unsafe { core::mem::transmute(stock::CRE_TSK) };
-    let pk = CreateTask {
-        attributes: TA_ACT,
-        extended_info: 0,
-        entry: dsp_task,
-        priority: TASK_PRIORITY,
-        stack_size: DSP_STACK_BYTES,
-        stack: DSP_STACK.0.get().cast(),
-    };
+    let pk = CreateTask { attributes: TA_ACT, extended_info: 0, entry, priority, stack_size: bytes, stack };
     let mut result = E_OBJ;
-    for id in TASK_IDS {
-        // SAFETY: as above; pk lives until cre_tsk returns, and the stack for
-        // as long as the patch.
+    for &id in ids {
+        // SAFETY: as above; pk lives until cre_tsk returns, and the stack for as long as the patch.
         result = unsafe { create(id, &pk) };
         if result != E_OBJ {
             if result == 0 {
@@ -219,11 +237,12 @@ pub(super) fn start_task() {
             break;
         }
     }
-    TASK.store(result as u32, Relaxed);
+    result
 }
 
-fn sleep_ms(ms: u32) {
-    // SAFETY: the RTOS's dly_tsk, from the DSP task.
+/// Sleep the calling task (the RTOS's dly_tsk; the kernel tick is 2 ms).
+pub(super) fn sleep_ms(ms: u32) {
+    // SAFETY: the RTOS's dly_tsk, from a task.
     let delay: unsafe extern "C" fn(u32) -> i32 = unsafe { core::mem::transmute(stock::DLY_TSK) };
     unsafe { delay(ms) };
 }
@@ -254,8 +273,7 @@ extern "C" fn dsp_task(_: isize) {
         run_clock(app);
         run_remote(app);
         let start = BLOCKS.load(Relaxed);
-        process_input(app, u32::MAX, PASS_BLOCKS);
-        drop_backlog(app);
+        feed(app, u32::MAX, PASS_BLOCKS);
         let processed = BLOCKS.load(Relaxed);
         DSP_BLOCKS.store(DSP_BLOCKS.load(Relaxed).wrapping_add(processed.wrapping_sub(start)), Relaxed);
         if render_due(processed) {
@@ -268,8 +286,7 @@ extern "C" fn dsp_task(_: isize) {
             // and 40% of a frame's time: the input ring held 1,900 frames when
             // the debug lines were drawn, just before the copy, and would hold
             // 3,300 by the end.
-            process_input(app, u32::MAX, CATCH_UP_BLOCKS);
-            drop_backlog(app);
+            feed(app, u32::MAX, CATCH_UP_BLOCKS);
             let caught_up = BLOCKS.load(Relaxed);
             DSP_BLOCKS.store(DSP_BLOCKS.load(Relaxed).wrapping_add(caught_up.wrapping_sub(drawn)), Relaxed);
             show_frame();
@@ -305,7 +322,11 @@ pub(super) extern "C" fn tick_work() {
     apply_touches(app);
     run_clock(app);
     run_remote(app);
-    process_input(app, MAX_FRAMES_PER_CALL, PASS_BLOCKS);
+    if PLAYBACK.load(Relaxed) {
+        play(app, PASS_BLOCKS);
+    } else {
+        process_input(app, MAX_FRAMES_PER_CALL, PASS_BLOCKS);
+    }
     let now = BLOCKS.load(Relaxed);
     if render_due(now) {
         LAST_RENDER.store(now, Relaxed);

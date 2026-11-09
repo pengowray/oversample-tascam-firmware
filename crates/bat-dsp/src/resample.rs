@@ -43,9 +43,11 @@
 //! Equal rates pass the samples through unchanged, with no delay.
 
 /// Kernel table points per frame of the lower rate. Interpolating linearly
-/// between them makes errors at most 83 dB below the signal. The three tables
-/// take 21 KB; 64 points would halve that, with errors up to 71 dB below.
-pub const PHASES: usize = 128;
+/// between them makes errors at most 71 dB below the signal (128 points gave
+/// 83 dB, but the tables then take 21 KB, and the X8 patch's memory is full);
+/// in the measured figures the worst residual stays about 74 dB down either way.
+/// The three tables take 10.5 KB.
+pub const PHASES: usize = 64;
 
 /// Most taps per output sample per channel.
 pub const MAX_TAPS: usize = 64;
@@ -755,7 +757,7 @@ mod tests {
         assert_eq!(
             [44_100, 96_000, 192_000, 250_000, 256_000, 300_000, 384_000, 441_000, 500_000, 768_000, 1_000_000]
                 .map(taps),
-            [32, 32, 0, 42, 44, 50, 64, 56, 64, 64, 64]
+            [32, 32, 0, 42, 44, 50, 64, 56, 62, 64, 64]
         );
         assert!(core::mem::size_of::<Resampler>() <= 2_200, "{}", core::mem::size_of::<Resampler>());
         let banked = |r| resampler(r, OUT).banked();

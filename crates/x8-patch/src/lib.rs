@@ -3,7 +3,9 @@
 
 #![cfg_attr(not(test), no_std)]
 
+pub mod card;
 pub mod clock_record;
 pub mod file_mask;
+pub mod handoff;
 pub mod take_guano;
 pub mod wide;
