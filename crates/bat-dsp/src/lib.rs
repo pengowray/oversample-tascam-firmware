@@ -15,6 +15,11 @@
 //!
 //! The output sample rate is the input sample rate, because the X8's headphone
 //! DAC runs at the recording rate.
+//!
+//! Two modules are for playing files rather than processing a stream:
+//! [`wav`] reads a WAV file's header and decodes its samples, and
+//! [`resample`] converts a file's sample rate to the output rate, so its
+//! `process` takes and gives different numbers of samples.
 
 #![no_std]
 
@@ -28,8 +33,10 @@ pub mod freq_div;
 pub mod heterodyne;
 pub mod osc;
 pub mod pitch_shift;
+pub mod resample;
 pub mod spectrum;
 pub mod time_expansion;
+pub mod wav;
 
 #[cfg(test)]
 pub(crate) mod test_util;
