@@ -51,7 +51,7 @@ path of its ADC channel pair.
 
 | Input | Connector and rating | Power for mics | Words in the input frame (high gain, low gain) | Source |
 |---|---|---|---|---|
-| 1, 2 | 3.5 mm TRS mini jacks, unbalanced, 85 kΩ or higher, maximum +1 dBV, minimum −69.3 dBV. The included mic capsules connect here (INT MIC in the recordings' metadata). | Plug-in power. The firmware seems to switch it from the jack detect; no user setting was found. | Input 1: 2, 1. Input 2: 5, 4. The firmware swaps inputs 1 and 2 when its DSP state byte at 0x2A2CE (in ITCM) is 1, probably for the capsule position. | Tascam spec, Firmware |
+| 1, 2 | 3.5 mm TRS mini jacks, unbalanced, 85 kΩ or higher, maximum +1 dBV, minimum −69.3 dBV. The included mic capsules connect here (INT MIC in HOMEBREW.md's recording measurements). | Plug-in power. The firmware seems to switch it from the jack detect; no user setting was found. | Input 1: 2, 1. Input 2: 5, 4. The firmware swaps inputs 1 and 2 when its DSP state byte at 0x2A2CE (in ITCM) is 1, probably for the capsule position. | Tascam spec, Firmware |
 | 3 to 6 | XLR/TRS combo jacks, balanced. MIC: 2.2 kΩ or higher, maximum +2 dBu, minimum −75 dBu. LINE: 9 kΩ or higher, nominal +4 dBu, maximum +24 dBu. | Phantom power, 24 V or 48 V, XLR only. The firmware switches it per input, not per pair. | Input 3: 0, 3. Input 4: 6, 9. Input 5: 8, 7. Input 6: 11, 10. | Tascam spec, Firmware |
 | EXT IN | 3.5 mm stereo mini jack, line level, 8.5 kΩ or higher, nominal −10 dBV, maximum +10 dBV. Cannot be used at the same time as inputs 5 and 6. | None | Uses the words of inputs 5 and 6. One gain path only (Tascam: "does not have dual ADC"). | Tascam spec, Firmware |
 
