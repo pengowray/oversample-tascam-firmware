@@ -2358,6 +2358,41 @@ B241 or an earlier build. All the checks in `tools/x8patch.py` pass on this file
 1. **Start and stop.** With Phone remote on and the phone page reloaded, do `Start recording` and `Stop recording` work as before?
 2. **Old phone page.** If a phone still has the old page cached, its commands should do nothing at all. Reload the page.
 
+## Step 37 test file: the patch built for size, to measure its processor cost (built 2026-11-10, not yet installed)
+
+`work/patch36/#PortaX8_0260.203` (B260, SHA-256 `028d18fa…136d5613`). The same source as B259 (steps 11 to 36, including
+B259's logo screen), built with `opt-level = "s"` instead of 3:
+
+```bash
+CARGO_TARGET_DIR=work/target-s tools/build.sh --config 'profile.release.opt-level="s"'
+```
+
+`Cargo.toml` still says 3, so this is a test build: it is not on the patcher page. All the checks in `tools/x8patch.py`
+pass on this file.
+
+**Why.** The patch region had 1.8 KB left at B259. Built for size, the patch's code outside ITCM is 138.8 KB instead of
+211.6 KB and its code in ITCM 46.1 KB instead of 78.7 KB (see "Ways to make more room" in
+[FIRMWARE.md](FIRMWARE.md#where-the-patch-lives)). The hot code is still in ITCM: the only function that ITCM code calls in
+SDRAM and B259 does not is `BatApp::playback_slowing`. What the DSP code built for size costs in processor time can only be
+measured on the unit.
+
+| Item | B259 | B260 | Limit |
+|---|---|---|---|
+| ITCM | 76.8 KB | 45.0 KB | 89.2 KB |
+| DTCM | 149.2 KB | 149.2 KB | 152.8 KB |
+| `.noinit`, the end of the patch's memory | ends at 0x818ff8b8 | ends at 0x818e5e60 | 0x81900000 |
+
+The patch region has 106.9 KB left.
+
+**What to check.**
+
+1. If B259 has not been installed yet, check the logo screen as in Step 36 first: if the unit does not reach the LAUNCHER,
+   the logo change is the cause, not the build setting.
+2. Run the CPU test twice, as on B258: recording with the synthetic calls off, and in record standby with them on. Photograph
+   the Totals and Stages views. B258's results are in
+   [Processing headroom](HARDWARE.md#processing-headroom-measured).
+3. Use BAT DETECTOR and BAT PLAYBACK for a minute each: does the screen still draw smoothly?
+
 ## Step 36 test file: TASCAM's logo screen back, with a bigger bat and "Oversample Edition" below (built 2026-11-10, not yet installed)
 
 `work/patch35/#PortaX8_0259.203` (B259, SHA-256 `6162c7a6…10b4e188`). Includes steps 11 to 35. Install this file in place of
