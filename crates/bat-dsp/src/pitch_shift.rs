@@ -291,7 +291,7 @@ static DROOP: [f32; OUT_BINS] = {
     g
 };
 
-const _: () = assert!(fft::INV == OUT_BINS && HOP % DECIMATION == 0);
+const _: () = assert!(fft::INV == OUT_BINS && HOP.is_multiple_of(DECIMATION));
 
 impl Stft {
     const fn new() -> Self {
@@ -1012,7 +1012,7 @@ mod measurements {
         let fwd = best(|| {
             for f in 0..frames {
                 // Only `start` matters for the time.
-                st.start = (f * HOP) % FRAME_LEN & !1;
+                st.start = ((f * HOP) % FRAME_LEN) & !1;
                 fft::windowed_rfft_1024(&st.input, st.start, &mut st.spectrum);
                 std::hint::black_box(&st.spectrum);
             }

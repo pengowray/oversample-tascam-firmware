@@ -66,7 +66,7 @@ const M: usize = N / 2;
 /// The window is applied in the spectrum: a periodic Hann window multiplies
 /// each bin by 1/2 and subtracts 1/4 of each neighbour.
 pub(super) fn windowed_rfft_1024(input: &[f32; N], start: usize, out: &mut [Complex32; M]) {
-    debug_assert!(start % 2 == 0);
+    debug_assert!(start.is_multiple_of(2));
     // Even samples as real parts, odd as imaginary: z[n] = x[2n] + i x[2n+1].
     // The first radix-2 stage pairs z[r] with z[r + M/2], and its outputs go to
     // bit-reversed positions 2m and 2m + 1, where r is m bit-reversed.
@@ -123,7 +123,7 @@ pub(super) fn windowed_rfft_1024(input: &[f32; N], start: usize, out: &mut [Comp
 /// `2Q` apart.
 #[inline(always)]
 fn dit_pass<const Q: usize, const B: usize, const L: usize>(x: &mut [Complex32; L]) {
-    const { assert!(B == 4 * Q && L % B == 0) };
+    const { assert!(B == 4 * Q && L.is_multiple_of(B)) };
     let blocks = x.as_chunks_mut::<B>().0;
     let stride = PHASOR_STEPS / B;
     for j in 0..Q {
@@ -149,7 +149,7 @@ fn dit_pass<const Q: usize, const B: usize, const L: usize>(x: &mut [Complex32; 
 /// values `Q` apart.
 #[inline(always)]
 fn dif_pass<const Q: usize, const B: usize, const L: usize>(x: &mut [Complex32; L]) {
-    const { assert!(B == 4 * Q && L % B == 0) };
+    const { assert!(B == 4 * Q && L.is_multiple_of(B)) };
     let blocks = x.as_chunks_mut::<B>().0;
     let stride = PHASOR_STEPS / B;
     for j in 0..Q {
