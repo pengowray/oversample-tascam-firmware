@@ -63,8 +63,10 @@ use fft::{PHASOR_STEPS, PHASORS};
 pub const FRAME_LEN: usize = 1024;
 /// Samples between frames. 288 costs 11% less than 256 (a quarter frame)
 /// with the same figures for steady tones in `measurements`; at 320 their
-/// median tone to residual falls from 49 to 41 dB. A multiple of
-/// [`DECIMATION`].
+/// median tone to residual falls from 49 to 41 dB. Unlike 256, 288 does not
+/// divide the frame, so noise comes out with its level rising and falling
+/// once a hop: 0.6 dB from top to bottom at factor 4, 0.25 dB at factor 10
+/// (0.05 dB, the measuring limit, at 256). A multiple of [`DECIMATION`].
 pub const HOP: usize = 288;
 
 pub const DEFAULT_FACTOR: f32 = 10.0;
@@ -517,6 +519,7 @@ impl Track {
 /// Offset in bins (-0.5 to 0.5) of a tone from the centre of its peak bin,
 /// from the powers of the peak bin and its two neighbours. Exact for a single
 /// tone under a Hann window (Grandke, 1983).
+#[allow(clippy::manual_clamp)] // `clamp` would keep a NaN.
 fn peak_offset(left: f32, centre: f32, right: f32) -> f32 {
     if centre <= 0.0 {
         return 0.0;
@@ -527,7 +530,9 @@ fn peak_offset(left: f32, centre: f32, right: f32) -> f32 {
     // (2g - centre) / (g + centre) for g = sqrt(side × centre), which takes
     // one division instead of two.
     let g = sqrt(side * centre);
-    sign * ((2.0 * g - centre) / (g + centre)).clamp(0.0, 0.5)
+    // `max` before `min` turns a NaN (from an overflowing product) into 0, so
+    // the peak's bins always land inside [`Shifted`].
+    sign * ((2.0 * g - centre) / (g + centre)).max(0.0).min(0.5)
 }
 
 /// Square root, within 5 parts in a million, for numbers from 1e-30 to 1e30:
@@ -779,6 +784,21 @@ mod tests {
         assert!(y.iter().all(|v| v.is_finite()));
         assert!(peak < 3.0, "peak {peak}");
         assert!(rms(&y[FRAME_LEN..]) > 0.05, "output almost silent");
+    }
+
+    #[test]
+    fn huge_nan_and_infinite_input_does_not_panic() {
+        // Powers this large overflow when multiplied in `peak_offset`.
+        let huge = sine(FS, 50_000.0, 1e7, 20_000);
+        let y = shift(&huge, 10.0, true);
+        assert!(y[4 * FRAME_LEN..].iter().any(|v| v.is_finite() && v.abs() > 1e6));
+        let mut x = sine(FS, 50_000.0, 0.5, 40_000);
+        x[10_000] = f32::NAN;
+        x[20_000] = f32::INFINITY;
+        x[20_001] = f32::NEG_INFINITY;
+        let y = shift(&x, 7.0, true);
+        // The shifter recovers once the bad samples have left its frames.
+        assert!(y[30_000..].iter().all(|v| v.is_finite()));
     }
 
     /// Average power at `freqs` over 2048-sample Hann-windowed segments, half
