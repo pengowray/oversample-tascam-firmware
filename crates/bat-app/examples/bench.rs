@@ -13,8 +13,9 @@
 //! Without IN.wav it plays noise with ten 5 ms calls a second. `HOPS=128,192`
 //! chooses the FFT hops for the stage table. The stereo table has the app with one
 //! chain against two, on two different signals: the file's first two channels, or the
-//! noise and the same noise backwards. The last table has the chime test, on those
-//! signals, with no chime in them. The stages that the app does not
+//! noise and the same noise backwards. The next tables have the chime test and the
+//! phone remote, on those signals, with no chime in them. The last table has the remote's
+//! decoders on their own, listening and then reading a chime. The stages that the app does not
 //! make public (the waterfall and snapshot writes, the meters) are copied here,
 //! so keep them in step with `BatApp::analyse`. The stages add up to about the
 //! whole app's analysis, as the two tables show.
@@ -478,5 +479,76 @@ fn main() {
             assert_eq!(app.remote_counts().0, 0, "the bench input woke the decoders");
         }
         println!();
+    }
+
+    remote_reading(&first, &second);
+}
+
+/// The chunk size the X8's DSP task gets, and the ring that holds the input while it is busy.
+const X8_CHUNK: usize = 1024;
+const RING_FRAMES: usize = 8192;
+
+/// The chime the phone page plays for Stop recording, at the page's full volume times `gain`.
+fn stop_chime(gain: f32) -> Vec<f32> {
+    let mut bytes = chime::encode::time_payload(1_793_000_000, 600);
+    bytes.extend_from_slice(b"BATX\x01\x02\x00\x00");
+    let render = chime::encode::render(FS as u32, &bytes, chime::encode::tune_for_payload(bytes.len()));
+    render.mix().iter().map(|&v| v as f32 * gain).collect()
+}
+
+/// The phone remote's two decoders, one per input, on their own: listening to the bench input,
+/// and reading a chime in it. The CPU test's decoder rows only measure them listening, and the
+/// tables above have no chime. Also the slowest stretch of `RING_FRAMES`, because on the X8 a
+/// burst of work longer than the input ring loses input.
+fn remote_reading(first: &[f32], second: &[f32]) {
+    let chime = stop_chime(0.5);
+    let chime_len = chime.len();
+    // Bench input before the chime, the chime added to it, and some after.
+    let before = FS as usize / 2;
+    let len = before + chime_len + FS as usize / 2;
+    let input = |signal: &[f32], with_chime: bool| -> Vec<f32> {
+        let mut x: Vec<f32> = signal.iter().cycle().take(len).copied().collect();
+        if with_chime {
+            for (a, b) in x[before..].iter_mut().zip(&chime) {
+                *a += *b;
+            }
+        }
+        x
+    };
+    let span = before / X8_CHUNK..(before + chime_len).div_ceil(X8_CHUNK);
+    let span_s = (span.len() * X8_CHUNK) as f64 / FS as f64;
+    let ring_s = RING_FRAMES as f64 / FS as f64;
+
+    println!();
+    println!(
+        "Phone remote's two decoders on their own, during a {:.1} s Stop recording chime, in ms per second \
+         of audio. Worst: the slowest {RING_FRAMES} frames, the X8's input ring:",
+        chime_len as f64 / FS as f64
+    );
+    println!("{:<20}{:>10}{:>10}", "", "average", "worst");
+    for with_chime in [false, true] {
+        let inputs = [input(first, with_chime), input(second, with_chime)];
+        let mut best = vec![f64::MAX; len.div_ceil(X8_CHUNK)];
+        let mut read = 0;
+        for _ in 0..STEREO_RUNS {
+            let mut decoders = [chime::Decoder::new(FS as u32).unwrap(), chime::Decoder::new(FS as u32).unwrap()];
+            read = 0;
+            for (i, (a, b)) in inputs[0].chunks(X8_CHUNK).zip(inputs[1].chunks(X8_CHUNK)).enumerate() {
+                let start = Instant::now();
+                for (decoder, block) in decoders.iter_mut().zip([a, b]) {
+                    decoder.push_block(block, |_, event| read += matches!(event, chime::Event::Chime(_)) as u32);
+                }
+                best[i] = best[i].min(start.elapsed().as_secs_f64());
+            }
+        }
+        assert_eq!(read, if with_chime { 2 } else { 0 }, "chimes read by the two decoders");
+        let during = &best[span.clone()];
+        let worst = during.windows(RING_FRAMES / X8_CHUNK).map(|w| w.iter().sum::<f64>()).fold(0.0, f64::max);
+        println!(
+            "{:<20}{:>10.2}{:>10.2}",
+            if with_chime { "reading the chime" } else { "listening" },
+            during.iter().sum::<f64>() * 1000.0 / span_s,
+            worst * 1000.0 / ring_s
+        );
     }
 }

@@ -2022,6 +2022,12 @@ falling for stopped, one low note when it could not. A notice shows for 5 s in t
   keeps them awake, so the page's second play still works if its first chime fails. While awake they cost what the chime test's
   decoders cost (about 1.9 ms a second each on the PC, that is about 5 to 6 `dsp` points each on the unit by the usual scaling, not
   measured). The CPU test's two decoder rows measure it on the unit.
+- **Reading a chime (2026-11-11).** The CPU test's decoder rows have no chime in them, so they measure the decoders listening.
+  `bench`'s last table times the two decoders on their own during a 1.7 s Stop recording chime. On the PC without
+  auto-vectorisation they cost 3.1 ms a second while reading, against 1.2 ms listening: 2.5 times as much. The slowest 8,192 frames
+  (the X8's input ring) cost 3.4 ms a second, so the reading comes in no burst that the ring can't absorb. On B251 the decoders
+  added up to 15 `dsp` points to FD while recording (66 against 51, with Auto volume on in the decoder row only), so reading may
+  add up to about 2.5 times that for the 2 s of the chime. Not measured on the unit.
 - **Range.** In the tests, with noise of -94 dBFS in the chime's 2 kHz band (what the unit showed in Step 17), the tone woke the
   decoders and the command was read every time down to a carrier of -88 dBFS, and half the time at -91 dBFS. So the tone check is no
   less sensitive than the decoder. In 17 minutes of recordings from 6 and 7 November and the owner's other bat recordings, nothing woke the
