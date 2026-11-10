@@ -33,7 +33,7 @@ pub(super) const PAUSE_STATE: [&str; 2] =
     ["REC is ignored during a take, so takes have no gaps", "REC pauses and resumes a take, with a MARK per pause"];
 pub(super) const MUTE_NAME: &str = "Mute while recording";
 pub(super) const MUTE_STATE: [&str; 2] =
-    ["Headphones play the listening mode during a take", "Headphones are silent during a take. Uses less CPU"];
+    ["Headphones keep playing during a take", "Headphones are silent during a take. Uses less CPU"];
 /// In the recording bar while Mute while recording silences the headphones.
 pub(super) const MUTED_LABEL: &str = "MUTED";
 /// On the main screen when REC was kept from pausing a take.
