@@ -18,8 +18,8 @@ use x8_patch::card::{header_info, heard_frame, pack_root};
 
 use super::audio::PRIME_FRAMES;
 use super::reader::{
-    CLOSE, Event, FILE_COMMANDS, FOLDER_REQUESTS, OPEN, RING_FAILED, RING_TAKEN, RING_WRITTEN, SCAN_COMMANDS, events,
-    running,
+    CLOSE, DETAILS_COMMANDS, Event, FILE_COMMANDS, FOLDER_REQUESTS, OPEN, RING_FAILED, RING_TAKEN, RING_WRITTEN,
+    SCAN_COMMANDS, events, running,
 };
 use super::state::{
     BLOCKS, IN_DROPPED, IN_DROPPED_SEEN, IN_READ, IN_WRITE, OUT_READ, OUT_WRITE, PLAYBACK, SOURCE_PEAK,
@@ -51,11 +51,13 @@ const ANALYSIS_ON_ABOVE: u32 = 8_192;
 /// The player's state, in DTCM: the resampler's history is read for every output sample.
 struct Play {
     resampler: Resampler,
-    /// The scan the app's list comes from, the latest file command posted, and the latest
-    /// request to list the folders at the top of the card.
+    /// The scan the app's list comes from, the latest file command posted, the latest request to
+    /// list the folders at the top of the card, and the latest file to read for the information
+    /// view.
     scan: u32,
     command: u32,
     folders: u32,
+    details: u32,
     /// The reader has opened the file of `command` and is filling the ring.
     ready: bool,
     format: Option<Format>,
@@ -96,6 +98,10 @@ pub(super) fn init(app: &mut BatApp<'static>) {
     }
     // SAFETY: just written, and used only by the app from now on.
     app.player_mut().set_storage(unsafe { core::slice::from_raw_parts_mut(list, spare::LIST_FILES) });
+    // SAFETY: the app's range for the information view's texts in `spare`, used only by the app.
+    app.player_mut().set_details_storage(unsafe {
+        core::slice::from_raw_parts_mut(spare::APP_DETAILS as *mut u8, spare::DETAILS_BYTES)
+    });
 }
 const _: () = assert!(core::mem::size_of::<FileEntry>() * spare::LIST_FILES <= spare::FILE_LIST_BYTES);
 
@@ -176,6 +182,12 @@ fn pass_requests(app: &mut BatApp<'static>) {
                 p.feeding = false;
                 p.command = FILE_COMMANDS.post([CLOSE, 0, 0]);
             }
+            Request::Details { id } => {
+                p.details = DETAILS_COMMANDS.post([id.into()]);
+                if !running() {
+                    app.player_mut().details_read(id, None);
+                }
+            }
         }
     }
 }
@@ -219,6 +231,15 @@ fn take_events(app: &mut BatApp<'static>) {
                     player.set_info(id, header_info(Ok(format)));
                 }
                 player.opened();
+            }
+            Event::Details { command, id, ok, encoding, xri, guano } if command == p.details => {
+                // SAFETY: what the reader wrote before posting this event; it writes there again
+                // only for a later request, which this task has not posted yet.
+                let found =
+                    unsafe { core::slice::from_raw_parts(spare::DETAILS_FOUND as *const u8, spare::DETAILS_BYTES) };
+                let (xri, guano) = (usize::from(xri), usize::from(guano));
+                let texts = (xri + guano <= found.len()).then(|| (&found[..xri], &found[xri..xri + guano]));
+                player.details_read(id, ok.then_some(()).and(texts).map(|(x, g)| (encoding, x, g)));
             }
             Event::OpenFailed { command, id, why } if command == p.command => {
                 let current = player.current().is_some_and(|e| e.id == id);

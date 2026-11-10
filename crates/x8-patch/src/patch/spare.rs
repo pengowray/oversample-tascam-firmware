@@ -51,10 +51,21 @@ const _: () = assert!(EVENTS >= CARD_FOLDERS + CARD_FOLDERS_BYTES);
 pub const HEADER: usize = 0x87f8_a000;
 pub const HEADER_BYTES: usize = 32 * 1024;
 const _: () = assert!(HEADER >= EVENTS + EVENTS_BYTES);
+/// The information view's reads: the bytes after a file's audio, where a GUANO chunk may be
+/// (the reader's), then the XRI and GUANO texts the reader found, for the DSP task to copy, then
+/// the app's own copy of them (see `bat_app::player::Player::set_details_storage`).
+pub const DETAILS_TAIL: usize = 0x87f9_2000;
+pub const DETAILS_TAIL_BYTES: usize = x8_patch::card::TAIL_BYTES as usize;
+const _: () = assert!(DETAILS_TAIL >= HEADER + HEADER_BYTES);
+pub const DETAILS_FOUND: usize = 0x87f9_6000;
+pub const DETAILS_BYTES: usize = bat_app::player::DETAILS_BYTES;
+const _: () = assert!(DETAILS_FOUND >= DETAILS_TAIL + DETAILS_TAIL_BYTES);
+pub const APP_DETAILS: usize = 0x87f9_7000;
+const _: () = assert!(APP_DETAILS >= DETAILS_FOUND + DETAILS_BYTES);
 /// The audio of the file playing, as read from the card, for the DSP task: 13 reads of 32 KB,
-/// 0.37 s of 192 kHz 24-bit stereo, to the end of SDRAM. 0x87f92000 to 0x87f97fff is free.
+/// 0.37 s of 192 kHz 24-bit stereo, to the end of SDRAM.
 pub const READ_RING: usize = 0x87f9_8000;
 pub const READ_RING_BYTES: u32 = 13 * 32 * 1024;
-const _: () = assert!(READ_RING >= HEADER + HEADER_BYTES);
+const _: () = assert!(READ_RING >= APP_DETAILS + DETAILS_BYTES);
 const _: () = assert!(READ_RING + READ_RING_BYTES as usize == 0x8800_0000);
-const _: () = assert!(READ_RING.is_multiple_of(32) && HEADER.is_multiple_of(32));
+const _: () = assert!(READ_RING.is_multiple_of(32) && HEADER.is_multiple_of(32) && DETAILS_TAIL.is_multiple_of(32));

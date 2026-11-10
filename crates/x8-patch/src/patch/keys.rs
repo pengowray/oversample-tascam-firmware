@@ -8,7 +8,8 @@ use super::screen::{draw_status_strip, enter_work, follow_app, leave_bat_screen,
 use super::state::{
     ACTION_HOME, ACTION_MARK, ACTION_PLAY, ACTION_WHEEL, ACTIONS, ACTIONS_READ, ACTIONS_WRITE, AUDIO_INSTALLED,
     AUDIO_NOT_TRIED, AUDIO_STATE, BAT_ACTIVE, BLOCKS, CALLS, CALLS_AT_SECOND, CALLS_PER_S, DRAGGING, LAST_EVENT,
-    LAST_SECOND, PENDING, PLAYBACK, QT_PRESSED, SCREEN_APP, TOUCH_DOWN, TOUCH_READ, TOUCH_WRITE, TOUCHES, WORK_ENTER,
+    LAST_SECOND, PENDING, PLAYBACK, QT_PRESSED, SCREEN_APP, TOUCH_DOWN, TOUCH_DOWN_AT, TOUCH_HELD, TOUCH_READ,
+    TOUCH_WRITE, TOUCHES, WORK_ENTER,
 };
 use super::task::{on_patch_stack, task_running, tick_work};
 use super::{Handler, app_byte, blocks_per_second, read_byte, stock, system_mode};
@@ -65,7 +66,8 @@ pub(super) unsafe extern "C" fn touch_hook(x: usize, y: usize, pressed: usize, d
 }
 
 /// Apply the queued touches (the context running the app): a touch down is a
-/// tap; moves while down on the waterfall tune HET and COMB.
+/// tap; moves while down on the waterfall tune HET and COMB; a finger still down
+/// after `bat_app::LONG_PRESS_MS` is a long press.
 pub(super) fn apply_touches(app: &mut BatApp<'static>) {
     let mut read = TOUCH_READ.load(Relaxed);
     while read != TOUCH_WRITE.load(Acquire) {
@@ -78,6 +80,8 @@ pub(super) fn apply_touches(app: &mut BatApp<'static>) {
             }
         } else if !TOUCH_DOWN.load(Relaxed) {
             TOUCH_DOWN.store(true, Relaxed);
+            TOUCH_DOWN_AT.store(BLOCKS.load(Relaxed), Relaxed);
+            TOUCH_HELD.store(false, Relaxed);
             DRAGGING.store(app.is_draggable(x, y), Relaxed);
             app.touch(x, y);
         } else if DRAGGING.load(Relaxed) {
@@ -85,6 +89,15 @@ pub(super) fn apply_touches(app: &mut BatApp<'static>) {
         }
         read = read.wrapping_add(1);
         TOUCH_READ.store(read, Release);
+    }
+    // The touch poll reports only changes, so the time held is checked on every pass.
+    let held = BLOCKS.load(Relaxed).wrapping_sub(TOUCH_DOWN_AT.load(Relaxed));
+    if TOUCH_DOWN.load(Relaxed)
+        && !TOUCH_HELD.load(Relaxed)
+        && held >= blocks_per_second() / 1000 * bat_app::LONG_PRESS_MS
+    {
+        TOUCH_HELD.store(true, Relaxed);
+        app.hold();
     }
 }
 

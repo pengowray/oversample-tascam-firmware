@@ -185,6 +185,10 @@ pub(super) static QT_PRESSED: AtomicBool = AtomicBool::new(false);
 /// drag tunes.
 pub(super) static TOUCH_DOWN: AtomicBool = AtomicBool::new(false);
 pub(super) static DRAGGING: AtomicBool = AtomicBool::new(false);
+/// The context running the app: BLOCKS when the finger went down, and whether the app has been
+/// told it is a long press (`bat_app::LONG_PRESS_MS`).
+pub(super) static TOUCH_DOWN_AT: AtomicU32 = AtomicU32::new(0);
+pub(super) static TOUCH_HELD: AtomicBool = AtomicBool::new(false);
 /// The app's MIX file switch is off, while BAT DETECTOR is open. The context running
 /// the app sets it; `mix_file::open_take_hook` reads it when a take starts.
 pub(super) static MIX_FILE_OFF: AtomicBool = AtomicBool::new(false);

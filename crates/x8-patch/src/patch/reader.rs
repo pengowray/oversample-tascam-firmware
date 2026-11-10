@@ -8,8 +8,9 @@
 //! folder and two files open: the file playing, and one whose header it is reading.
 //!
 //! **Commands** come from the DSP task only: [`FILE_COMMANDS`] holds the latest Open or Close,
-//! [`SCAN_COMMANDS`] the latest folder to list, and [`FOLDER_REQUESTS`] counts requests to list
-//! the folders at the top of the card. **Results** go back in a ring of
+//! [`DETAILS_COMMANDS`] the latest file to read for the information view, [`SCAN_COMMANDS`] the
+//! latest folder to list, and [`FOLDER_REQUESTS`] counts requests to list the folders at the top
+//! of the card. **Results** go back in a ring of
 //! [`Event`]s, each tagged with the command or scan it answers, so the DSP task can ignore the
 //! answer to a command it has since replaced. **Audio** goes into `spare::READ_RING`, counted in
 //! bytes by [`RING_WRITTEN`] (the reader) and [`RING_TAKEN`] (the DSP task); both start again at
@@ -27,8 +28,11 @@ use core::sync::atomic::{
 };
 
 use bat_app::player::{FOLDER_NAME_BYTES, FileEntry, FileInfo, NotPlayable, TOP_NAME_BYTES};
-use bat_dsp::wav::{self, Format, WavError};
-use x8_patch::card::{Path, ROOT_WORDS, checked, header_info, is_listed_folder, is_wav_name, read_start, unpack_root};
+use bat_dsp::wav::{self, Encoding, Format, WavError};
+use x8_patch::card::{
+    Path, ROOT_WORDS, TAIL_BYTES, checked, details_texts, header_info, is_listed_folder, is_wav_name, read_start,
+    tail_read, unpack_root,
+};
 use x8_patch::handoff::{Mailbox, Ring};
 
 use super::state::{BAT_ACTIVE, BLOCKS, PLAYBACK};
@@ -145,6 +149,17 @@ pub(super) enum Event {
         id: u16,
         why: NotPlayable,
     },
+    /// For details command `command`: file `id`'s sample format if it can be played, and the
+    /// lengths of its XRI and GUANO texts in `spare::DETAILS_FOUND`; or `ok` false if it could not
+    /// be read.
+    Details {
+        command: u32,
+        id: u16,
+        ok: bool,
+        encoding: Option<Encoding>,
+        xri: u16,
+        guano: u16,
+    },
 }
 pub(super) const EVENT_SLOTS: u32 = 256;
 const _: () = assert!(core::mem::size_of::<Event>() * EVENT_SLOTS as usize <= spare::EVENTS_BYTES);
@@ -154,6 +169,8 @@ const _: () = assert!(core::mem::align_of::<Event>() <= 32);
 pub(super) static FILE_COMMANDS: Mailbox<3> = Mailbox::new();
 pub(super) const OPEN: u32 = 1;
 pub(super) const CLOSE: u32 = 2;
+/// Requests to read a file for the information view: [file id].
+pub(super) static DETAILS_COMMANDS: Mailbox<1> = Mailbox::new();
 /// Requests to list the WAV files in a folder at the top of the card: the folder's name, as
 /// `x8_patch::card::pack_root` gives it.
 pub(super) static SCAN_COMMANDS: Mailbox<ROOT_WORDS> = Mailbox::new();
@@ -322,21 +339,57 @@ fn header(bytes: u32) -> &'static [u8] {
 /// Read and check a header, from the start of `file`, whose size is `size`. A read that fails
 /// gives `HeaderTooLong`, which the list shows as unreadable.
 fn read_header(file: usize, size: u32) -> Result<Format, WavError> {
+    read_header_bytes(file, size).0
+}
+
+/// The same, and how many bytes of the header buffer were read: 0 if a read failed.
+fn read_header_bytes(file: usize, size: u32) -> (Result<Format, WavError>, u32) {
     let first = size.min(FIRST_HEADER);
     if !read(spare::HEADER, first, file) {
         count_error();
-        return Err(WavError::HeaderTooLong);
+        return (Err(WavError::HeaderTooLong), 0);
     }
     let parsed = wav::parse(header(first), size);
     if parsed != Err(WavError::HeaderTooLong) || size <= first {
-        return checked(parsed);
+        return (checked(parsed), first);
     }
     let all = size.min(spare::HEADER_BYTES as u32);
     if !read(spare::HEADER + first as usize, all - first, file) {
         count_error();
-        return Err(WavError::HeaderTooLong);
+        return (Err(WavError::HeaderTooLong), 0);
     }
-    checked(wav::parse(header(all), size))
+    (checked(wav::parse(header(all), size)), all)
+}
+
+/// Read what the information view shows from `file`, from its start: its sample format if it can
+/// be played, and its XRI and GUANO texts, written to `spare::DETAILS_FOUND`, with their lengths.
+/// None if a read failed.
+fn read_details(file: usize) -> Option<(Option<Encoding>, usize, usize)> {
+    let size = file_size(file);
+    if !seek(file, 0) {
+        count_error();
+        return None;
+    }
+    let (parsed, bytes) = read_header_bytes(file, size);
+    if bytes == 0 {
+        return None;
+    }
+    let mut tail = None;
+    if let Some((base, at)) = tail_read(header(bytes), size) {
+        let tail_bytes = (size - base).min(TAIL_BYTES);
+        if !seek(file, base) || !read(spare::DETAILS_TAIL, tail_bytes, file) {
+            count_error();
+            return None;
+        }
+        // SAFETY: the tail range in `spare`, used only by the reader, just read.
+        tail =
+            Some((unsafe { core::slice::from_raw_parts(spare::DETAILS_TAIL as *const u8, tail_bytes as usize) }, at));
+    }
+    // SAFETY: the range in `spare` for what the reader found, which the DSP task reads only after
+    // the Details event for it, and before asking for another.
+    let out = unsafe { core::slice::from_raw_parts_mut(spare::DETAILS_FOUND as *mut u8, spare::DETAILS_BYTES) };
+    let (xri, guano) = details_texts(header(bytes), tail, out);
+    Some((parsed.ok().map(|format| format.encoding), xri, guano))
 }
 
 /// The name in a folder entry, as ASCII, or None if it is longer than `out` or not printable
@@ -387,6 +440,7 @@ enum Scanning {
 struct Reader {
     /// The latest file command and scan request handled.
     command_seen: u32,
+    details_seen: u32,
     scan_seen: u32,
     folders_seen: u32,
     /// The scan in progress, and how far it has got.
@@ -407,6 +461,7 @@ impl Reader {
     fn new() -> Self {
         Self {
             command_seen: 0,
+            details_seen: 0,
             scan_seen: 0,
             folders_seen: 0,
             scan: 0,
@@ -442,6 +497,7 @@ impl Reader {
         self.close();
         self.scanning = Scanning::No;
         self.command_seen = FILE_COMMANDS.latest();
+        self.details_seen = DETAILS_COMMANDS.latest();
         self.scan_seen = SCAN_COMMANDS.latest();
         self.folders_seen = FOLDER_REQUESTS.load(Acquire);
         STATE.store(AWAY, Relaxed);
@@ -463,6 +519,11 @@ impl Reader {
                 OPEN => self.open(number, id as u16, frame),
                 _ => self.close(),
             }
+            return true;
+        }
+        if let Some((number, [id])) = DETAILS_COMMANDS.read(self.details_seen) {
+            self.details_seen = number;
+            self.details(number, id as u16);
             return true;
         }
         // Listing the folders is quick, so a scan in progress carries on after it.
@@ -763,6 +824,35 @@ impl Reader {
         }
         add(name);
         self.post(Event::Folder { scan: self.scan, index: index as u8, name: shown, len: len as u8 });
+    }
+
+    /// Read file `id` for the information view, and tell the DSP task. The file playing is read
+    /// with its own handle, which then goes back to where the reads into the ring had got to.
+    fn details(&mut self, command: u32, id: u16) {
+        STATE.store(HEADERS, Relaxed);
+        let mut found = None;
+        if let Some(path) = self.file_path(id as usize) {
+            let playing = self.file != 0 && path == self.path;
+            let file = if playing { self.file } else { open_file(&path) };
+            if file == 0 {
+                count_error();
+            } else {
+                found = read_details(file);
+                if !playing {
+                    close_file(file);
+                } else if !seek(file, self.next) {
+                    count_error();
+                    RING_FAILED.store(true, Release);
+                }
+            }
+        }
+        let event = match found {
+            Some((encoding, xri, guano)) => {
+                Event::Details { command, id, ok: true, encoding, xri: xri as u16, guano: guano as u16 }
+            }
+            None => Event::Details { command, id, ok: false, encoding: None, xri: 0, guano: 0 },
+        };
+        self.post(event);
     }
 
     /// What file `id`'s header says.

@@ -2,7 +2,7 @@
 //! paths the file functions take, what a file's header says, and where in a file to start
 //! reading. See src/patch/reader.rs.
 
-use bat_app::player::{Audio, FileInfo, NotPlayable, TOP_NAME_BYTES};
+use bat_app::player::{Audio, FileInfo, NotPlayable, TOP_NAME_BYTES, XRI_BYTES};
 use bat_dsp::wav::{Format, WavError};
 
 /// The card, as the core file functions name it.
@@ -147,6 +147,47 @@ pub fn heard_frame(start: u32, out_done: u64, queued: u32, in_rate: u32, out_rat
     (u64::from(start) + frames).min(u64::from(u32::MAX)) as u32
 }
 
+/// Bytes read after a file's audio, for a GUANO chunk there. The X8 patch's own chunk is under
+/// 1 KB; other recorders may put other chunks first.
+pub const TAIL_BYTES: u32 = 16 * 1024;
+
+/// Where to read a file's tail, for the information view: the file offset of the sector holding
+/// the first byte after the audio, and that byte's place in what is read. None if nothing
+/// follows the audio, or the header does not say where the audio ends.
+pub fn tail_read(header: &[u8], file_len: u32) -> Option<(u32, usize)> {
+    let end = guano::read_header(header)?.data_end()?;
+    // Chunks start on even offsets.
+    let next = end.checked_add(end & 1)?;
+    if next.checked_add(8)? > file_len {
+        return None;
+    }
+    let base = next - next % SECTOR;
+    Some((base, (next - base) as usize))
+}
+
+/// The information view's texts, written into `out`: the XRI text from the header's `bext`
+/// chunk first, at most [`XRI_BYTES`], then the text of a `guan` chunk from the header or, if
+/// there is none, from `tail` (the bytes read after the audio, and where the first chunk starts
+/// in them). Returns the two lengths; texts that do not fit are cut, GUANO at its last line.
+pub fn details_texts(header: &[u8], tail: Option<(&[u8], usize)>, out: &mut [u8]) -> (usize, usize) {
+    let xri = guano::coding_history(header).unwrap_or(&[]);
+    let xri = &xri[..xri.len().min(XRI_BYTES).min(out.len())];
+    out[..xri.len()].copy_from_slice(xri);
+    let text = match guano::guano_in_header(header) {
+        Some(body) => &header[body],
+        None => tail.and_then(|(bytes, at)| Some(&bytes[guano::find_chunk(bytes, at, b"guan")?])).unwrap_or(&[]),
+    };
+    let room = out.len() - xri.len();
+    let text = if text.len() <= room {
+        text
+    } else {
+        let cut = &text[..room];
+        &cut[..cut.iter().rposition(|&b| b == b'\n').map_or(0, |i| i + 1)]
+    };
+    out[xri.len()..xri.len() + text.len()].copy_from_slice(text);
+    (xri.len(), text.len())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -253,5 +294,93 @@ mod tests {
         assert_eq!(heard_frame(1_000, 400, 0, 48_000, 192_000), 1_100);
         assert_eq!(heard_frame(1_000, 400, 200, 48_000, 192_000), 1_050);
         assert_eq!(heard_frame(1_000, 100, 200, 48_000, 192_000), 1_000);
+    }
+
+    /// A file as the X8 writes one, with `frames` of 24-bit mono (an odd count makes the audio
+    /// end on an odd offset), the X8's XRI text, and the bat patch's GUANO chunk after the audio
+    /// with the RIFF size counting it, as `guano_hook` leaves it.
+    fn x8_file(frames: u32, with_guano: bool) -> Vec<u8> {
+        const XRI: &[u8] = b"T=XRI 008a;XRI VER=0002;MAKER=TASCAM;MODEL=X8;FW VER=2.03;SOURCE=5:MIC;";
+        let data = frames * 3;
+        let mut f = Vec::new();
+        f.extend_from_slice(b"RIFF\0\0\0\0WAVEbext");
+        f.extend_from_slice(&1116u32.to_le_bytes());
+        let mut bext = [0u8; 1116];
+        bext[602..602 + XRI.len()].copy_from_slice(XRI);
+        f.extend_from_slice(&bext);
+        f.extend_from_slice(b"JUNK");
+        f.extend_from_slice(&4372u32.to_le_bytes());
+        f.extend_from_slice(&[0; 4372]);
+        f.extend_from_slice(b"fmt \x10\0\0\0\x01\0\x01\0");
+        f.extend_from_slice(&192_000u32.to_le_bytes());
+        f.extend_from_slice(&(192_000u32 * 3).to_le_bytes());
+        f.extend_from_slice(b"\x03\0\x18\0data");
+        f.extend_from_slice(&data.to_le_bytes());
+        assert_eq!(f.len(), 5548);
+        f.resize(5548 + data as usize, 0x55);
+        if with_guano {
+            let header = guano::read_header(&f[..5548]).unwrap();
+            let recorder = crate::take_guano::Recorder {
+                firmware: "V2.03",
+                patch_build: 258,
+                file_name: Some("260315_0065.wav"),
+                phone_now: None,
+                utc_offset_minutes: None,
+                location_e6: Some((-36_123_456, 146_000_007)),
+                pauses: None,
+            };
+            let mut chunk = [0u8; 1024];
+            let n = crate::take_guano::write_chunk(&header, &recorder, &mut chunk).unwrap();
+            f.extend_from_slice(&chunk[..n]);
+        }
+        let riff = (f.len() - 8) as u32;
+        f[4..8].copy_from_slice(&riff.to_le_bytes());
+        f
+    }
+
+    /// What the reader does: the first 8 KB, then the tail from its sector.
+    fn read_details(file: &[u8], out: &mut [u8]) -> (usize, usize) {
+        let header = &file[..file.len().min(8192)];
+        let tail = tail_read(header, file.len() as u32).map(|(base, at)| {
+            let end = file.len().min(base as usize + TAIL_BYTES as usize);
+            (&file[base as usize..end], at)
+        });
+        details_texts(header, tail, out)
+    }
+
+    #[test]
+    fn details_of_an_x8_take_with_guano_after_the_audio() {
+        for frames in [192_000, 192_001] {
+            let file = x8_file(frames, true);
+            let mut out = [0u8; 4096];
+            let (xri, guano) = read_details(&file, &mut out);
+            assert!(out[..xri].starts_with(b"T=XRI 008a;") && out[..xri].ends_with(b"SOURCE=5:MIC;"));
+            let text = core::str::from_utf8(&out[xri..xri + guano]).unwrap();
+            assert!(text.starts_with("GUANO|Version: 1.0\n"), "{frames} frames: {text:?}");
+            assert!(text.contains("Loc Position: -36.123456 146.000007\n"), "{text}");
+        }
+    }
+
+    #[test]
+    fn details_of_a_take_without_guano_and_texts_cut_to_fit() {
+        let file = x8_file(192_000, false);
+        assert_eq!(tail_read(&file[..8192], file.len() as u32), None);
+        let mut out = [0u8; 4096];
+        let (xri, guano) = read_details(&file, &mut out);
+        assert_eq!((xri > 0, guano), (true, 0));
+        // A small buffer: GUANO stops at the end of a line.
+        let file = x8_file(192_000, true);
+        let mut out = [0u8; 160];
+        let (xri, guano) = read_details(&file, &mut out);
+        assert!(guano > 0 && out[xri + guano - 1] == b'\n' && xri + guano <= 160);
+    }
+
+    #[test]
+    fn guano_before_the_audio_is_found_in_the_header() {
+        let mut file = Vec::from(*b"RIFF\0\0\0\0WAVEguan\x0c\0\0\0Make: Elekonfmt ");
+        file.extend_from_slice(b"\x10\0\0\0\x01\0\x01\0\0\xee\x02\0\0\xdc\x05\0\x02\0\x10\0data\x04\0\0\0\0\0\0\0");
+        let mut out = [0u8; 256];
+        let (xri, guano) = read_details(&file, &mut out);
+        assert_eq!((xri, &out[..guano]), (0, &b"Make: Elekon"[..]));
     }
 }
