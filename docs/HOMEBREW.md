@@ -11,8 +11,8 @@ says "installed" if its build ran on the unit, and "never installed" if a later
 build replaced it first. B250 hung as soon as a bat screen opened (Step 28 says
 why). The last build installed is B254 (Step 31), whose BAT PLAYBACK plays files
 from the card. GUANO metadata, setting the clock from phone chimes and the location
-log have not been checked on a unit yet. The current build is B256 (Step 33, TE in BAT PLAYBACK
-slows the whole file), which has not been installed.
+log have not been checked on a unit yet. The current build is B258 (Step 35, file information in
+BAT PLAYBACK), which has not been installed, nor have B255 to B257.
 
 **Hardware tested.** One X8. Its Information screen (GENERAL SETTINGS > SYSTEM >
 Information) shows `F/W: Version 2.03 Build 217` and `H/W: Version 1.00 Build 010`.
@@ -2356,6 +2356,65 @@ B241 or an earlier build. All the checks in `tools/x8patch.py` pass on this file
 
 1. **Start and stop.** With Phone remote on and the phone page reloaded, do `Start recording` and `Stop recording` work as before?
 2. **Old phone page.** If a phone still has the old page cached, its commands should do nothing at all. Reload the page.
+
+## Step 35 test file: file information in BAT PLAYBACK (built 2026-11-10, not yet installed)
+
+`work/patch34/#PortaX8_0258.203` (B258, SHA-256 `19928c6b…e05bad7`). Includes steps 11 to 34. Install this file in place of
+any earlier build. All the checks in `tools/x8patch.py` pass on this file. No new stock hook site (header version 18).
+
+The owner asked whether BAT PLAYBACK could open BROWSE's file menu on a long press, and whether FILE INFORMATION could get a
+GUANO page. Both were read in V2.03 and found impractical ([BROWSE's order, its file menu and FILE
+INFORMATION](#browses-order-its-file-menu-and-file-information-2026-11-10)), so the bat player has its own view.
+
+**On screen.** Hold a row of the list for 0.6 s, or tap the circled **i** in the title bar for the file playing, to open
+FILE INFORMATION:
+
+- the name (up to 3 lines), folder, date, size, length, sample rate, channels and bit depth;
+- **XRI**: the fields the X8 writes into the `bext` chunk's CodingHistory (maker, model, firmware, source, input gain, level,
+  auto level), one row per input;
+- **GUANO**: the fields of a `guan` chunk before or after the audio (all but `GUANO|Version`), with long values on further
+  rows.
+
+A file with neither says "No XRI in this file" and "No GUANO in this file". Drag or turn the wheel to scroll. Back (or HOME)
+returns to the list or the player. From the list, **Play** (or PLAY) plays the file from the start, as a tap on its row does.
+Lifting the finger after a long press does not also choose the row. Files that can't be played open too, with the reason.
+
+![FILE INFORMATION for an X8 take, with made-up XRI and GUANO](screens/file-info.png)
+
+**How it works.**
+
+- The app asks with `Request::Details`. The DSP task posts it on `DETAILS_COMMANDS`; the reader opens the file (or uses the
+  playing file's handle, then seeks it back to where its reads had got to), reads the header as for the list, and 16 KB from
+  the sector where the audio ends. `card::details_texts` copies the CodingHistory (up to 512 bytes) and the `guan` text,
+  cut at a line end to fit 4 KB, to `spare::DETAILS_FOUND`, and the reader posts `Event::Details` with the two lengths. The DSP
+  task copies them into the app's own 4 KB. The view parses the texts as it draws (`player::xri_fields`, `guano::fields`).
+- The long press is timed in `apply_touches`: the touch poll reports only changes, so on every pass a finger that has been
+  down for `bat_app::LONG_PRESS_MS` without moving more than 8 px calls `BatApp::hold`, once.
+- **Memory.** The patch region had 0.8 KB left. Every `{:.1}`-style float format on screen pulled in the core library's float
+  printing (about 19 KB of code); `screen::Fixed` now writes those numbers from integers, which gave back 25 KB. The three
+  new buffers (tail 16 KB, found 4 KB, the app's copy 4 KB) fill the free uncached SDRAM at 0x87f92000 to 0x87f97fff. DTCM
+  grew by 32 bytes.
+
+| Item | B257 | B258 | Limit |
+|---|---|---|---|
+| ITCM | 76.7 KB | 76.8 KB | 89.2 KB |
+| DTCM | 149.1 KB | 149.2 KB | 152.8 KB |
+| `.noinit`, the end of the patch's memory | ends at 0x818ffcd0 | ends at 0x818fe0b8 | 0x81900000 |
+
+The patch region has 7.8 KB left.
+
+**Not known until it runs on the unit:** whether the file system lets a file be read for the view while the reader streams
+it (the view uses the same handle, so it should), and whether 0.6 s feels right.
+
+**What to check.**
+
+1. BAT PLAYBACK: hold a row of the list. Does FILE INFORMATION open, and does lifting the finger leave the file unplayed?
+2. For an X8 take, are the XRI rows right (compare with BROWSE's FILE INFORMATION, XRI page)? For a take recorded in BAT
+   DETECTOR with GUANO on, are its GUANO fields listed?
+3. For a file from another recorder (an AudioMoth or a Xeno-canto download), are its GUANO fields listed, or "No GUANO in
+   this file"?
+4. While a file plays, tap the **i**: does it keep playing without a gap, and does Back return to the player?
+5. Drag the list without holding still: it scrolls and opens nothing.
 
 ## Step 34 test file: phone commands for the clock and listening mode, a Phone tab with a QR code, BROWSE's order, the logo screen (built 2026-11-10, not yet installed)
 

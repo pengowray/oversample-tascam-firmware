@@ -7,7 +7,7 @@ chips, inputs and rates, see [HARDWARE.md](HARDWARE.md). The full address tables
 every test build are in [HOMEBREW.md](HOMEBREW.md); this page explains each mechanism once and links
 there for the details.
 
-Written on 10 November 2026. The current build is B257 (built 10 November 2026, not yet installed).
+Written on 10 November 2026. The current build is B258 (built 10 November 2026, not yet installed).
 The last build installed on the owner's unit is B254.
 
 ## Stock firmware
@@ -127,10 +127,11 @@ patched update file.
 | Fixed addresses (`spare.rs`) | SDRAM 0x865E2000 and 0x87EB0000 onwards | No | Output ring (cached), the display buffer, TE storage, task 1's patch stack and BAT PLAYBACK's read ring (uncached). |
 
 `crates/x8-patch/x8patch.ld` is the linker script; its comments give the reasons for each range. At
-B257 the patched update file is 25,860,948 bytes, 367,412 bytes longer than the official one.
-Free space at B257: ITCM 76.7 of 89.2 KB used, DTCM 149.1 of 152.8 KB used, and the patch region
-ends at 0x818FFCD0 of 0x81900000, 0.8 KB short of the end. DTCM and the patch region are nearly
-full.
+B258 the patched update file is 25,854,540 bytes, 361,004 bytes longer than the official one.
+Free space at B258: ITCM 76.8 of 89.2 KB used, DTCM 149.2 of 152.8 KB used, and the patch region
+ends at 0x818FE0B8 of 0x81900000, 7.8 KB short of the end. DTCM is nearly full. Formatting a
+float with `{:.1}` and the like pulls about 19 KB of the core library's float printing into the
+patch region; the app writes numbers with `screen::Fixed` instead.
 
 The memory ranges and their sizes are in [HARDWARE.md](HARDWARE.md#memory-free-for-the-patch).
 
@@ -275,7 +276,7 @@ The phone remote's chime format is in [PHONE_REMOTE.md](PHONE_REMOTE.md).
 
 The rules come from [Keeping the bricking risk low](HOMEBREW.md#keeping-the-bricking-risk-low).
 
-| Rule | Status at B257 |
+| Rule | Status at B258 |
 |---|---|
 | Leave the boot header, bootloader and start-up and update-mode code unchanged | Enforced by `x8fw.py pack --base`, which refuses changes to flash 0x0 to 0x1FFFF and to the known start-up and update-mode functions. The list is incomplete: it does not cover the SD card and file system code that update mode also uses. |
 | Never reach the settings sectors | Enforced by `pack`, which refuses an image long enough to reach sector 0x1FA. |
@@ -383,8 +384,8 @@ on this board. See [HARDWARE.md](HARDWARE.md#opening-the-unit-and-debug-access).
   other rates. BAT PLAYBACK converts other rates to 192 kHz.
 - **PITCH is too slow** on the X8 and is hidden there (see
   [HARDWARE.md](HARDWARE.md#processing-headroom-measured)).
-- **Memory is nearly full.** DTCM has about 3.7 KB left at B257, and the patch region 0.8 KB.
-- **Not tested on a unit:** B255 to B257, going back to stock, a take started or stopped by the
+- **Memory is nearly full.** DTCM has about 3.6 KB left at B258, and the patch region 7.8 KB.
+- **Not tested on a unit:** B255 to B258, going back to stock, a take started or stopped by the
   phone remote, and the AK-BT1 adapter. HOMEBREW.md's status line lists what was last checked.
 - **Bat app settings are not saved in the X8's settings record,** since the patch never writes
   flash itself.
