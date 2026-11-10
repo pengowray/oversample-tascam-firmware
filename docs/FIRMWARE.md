@@ -133,6 +133,32 @@ ends at 0x818FF8B8 of 0x81900000, 1.8 KB short of the end. DTCM is nearly full. 
 float with `{:.1}` and the like pulls about 19 KB of the core library's float printing into the
 patch region; the app writes numbers with `screen::Fixed` instead.
 
+**Ways to make more room in the patch region (looked into at B259, not done).**
+
+- *Optimise for size.* The patch is built with `opt-level = 3` and fat LTO. Built the same way at
+  other levels, the code outside ITCM (`.text`) and the code in ITCM measure:
+
+  | `opt-level` | `.text` | `.itcm` |
+  |---|---|---|
+  | 3 (now) | 211.6 KB | 78.7 KB |
+  | 2 | 185.1 KB | 71.5 KB |
+  | `"s"` | 138.8 KB | 46.1 KB |
+  | `"z"` | 120.7 KB | 42.7 KB |
+
+  `"s"` gives 73 KB of the patch region back and 33 KB of ITCM. The cost in processor time is not
+  known: the DSP code in ITCM would be built at `"s"` too, and only a CPU test on the unit shows it.
+  Per-crate overrides (`[profile.release.package.*]`) save little, because fat LTO optimises
+  everything again at the root crate's level: all dependencies at `"s"` saved 9 KB of `.text`.
+  `tools/build.sh --config 'profile.release.opt-level="s"'` builds a test file at `"s"`.
+- *Move the off-screen frame (300 KB) out of the patch region.* It needs cached memory, and the
+  only free SDRAM is uncached. The room could come from TE storage (375 KB at 0x87F00000), which
+  only BAT DETECTOR uses, sharing addresses with BAT PLAYBACK's read ring, which only BAT
+  PLAYBACK uses. The patch would then add an MPU region (the RT1062's Cortex-M7 has 16; the stock
+  firmware sets 0 to 9) making 0x87F00000 to 0x87F4FFFF cached, as a 256 KB region and a 64 KB
+  region, and put the frame there. Before that: check that BAT PLAYBACK never writes TE storage,
+  and that the card reader's DMA into the read ring has stopped before BAT DETECTOR can open,
+  including when `leave_bat_screen`'s 200 ms wait runs out.
+
 The memory ranges and their sizes are in [HARDWARE.md](HARDWARE.md#memory-free-for-the-patch).
 
 ### The patch header
