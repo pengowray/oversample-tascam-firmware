@@ -38,6 +38,7 @@ Each fact has one source in the Source column:
 | FPGA's jobs | Read in the firmware: phantom power switches, the button latch and wheel counter (probably; the firmware calls it SPI device 6 on LPSPI4), and the jack detect for inputs 1 and 2. Audio clocking and joining the converters' outputs into one stream are likely but not traced. | Firmware, Not confirmed (audio) |
 | ADCs | Two AKM AK5704 chips. Each has 4 channels, mic preamps and rates up to 192 kHz. The firmware writes AK5704 registers at I2C address 0x10 on LPI2C1 and at 0x11 on LPI2C4, probably one chip on each bus. | Teardown, Datasheet, Firmware |
 | Analog stages | OPA1678 op-amps in the input stages. | Teardown |
+| Electronic volume | Two JRC (New Japan Radio) NJW1195A chips, seen in the What Dennis Does video; the second line of the marking reads MM039C or similar. Each chip has 4 analog volume channels, +31.5 to −95 dB in 0.5 dB steps with mute, a 4-in 2-out stereo selector, and a 3-wire serial control bus shared by up to 4 chips. What the 8 channels control in the X8 is not known. | Teardown, Datasheet, Not confirmed (role) |
 | DAC | TI PCM1754, for the headphone and line output. | Teardown |
 | Headphone amplifier | TI TPA4411. | Teardown |
 | Real-time clock | A separate clock chip on I2C bus 2, read and set in BCD (date at register 0x32, time at 0x33). The processor's own SNVS clock is not used. Part number not known. | Firmware |
@@ -226,6 +227,7 @@ recovery](HOMEBREW.md#opening-the-unit-and-hardware-recovery) in HOMEBREW.md.
 | Which converter serves inputs 1 and 2 | Their response above 20 kHz may differ from inputs 3 to 6 | Open a unit and read the chip markings |
 | Analog response from 60 to 96 kHz | Sets the real upper limit for bat calls | Line-level sine sweep into input 3, recorded at 192 kHz |
 | SDRAM size, 64 or 128 MiB | Sets how much memory is free for longer buffers | Read the SDRAM chip markings |
+| What the two NJW1195A volume chips control | The firmware applies the headphone volume as a gain in the processor, so these chips are probably in the input path, where they would set the analog level before the ADCs | Trace the chips' pins on an opened unit, or find the firmware code that writes their 3-wire bus |
 | Whether the steady lines near 37 and 72 kHz are the reported hum | A steady tone in that range is heard through HET | Record at 192 kHz with inputs 3 and 4 terminated, with and without a phone nearby |
 | The clock chip's part number, and whether its flag bit selects 12-hour mode | The patch sets the clock from phone chimes | Open a unit, or read the chip's register map once identified |
 | A hardware recovery path | Needed if an update is interrupted | Find SWD or BOOT_MODE on an opened unit |
