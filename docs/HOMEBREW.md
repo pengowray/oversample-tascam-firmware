@@ -2391,6 +2391,10 @@ The patch region has 1.8 KB left.
 
 ## Step 35 test file: file information in BAT PLAYBACK (built 2026-11-10, installed)
 
+**Result.** Installed. The CPU test on B258 is in [Processing headroom](HARDWARE.md#processing-headroom-measured): every mode
+but PITCH keeps up while recording, and PITCH mono now skips 4 to 7% of its input while recording. The logo screen showed the
+bat and "Oversample Edition" (see [Step 36](#step-36-test-file-tascams-logo-screen-back-with-a-bigger-bat-and-oversample-edition-below-built-2026-11-10-not-yet-installed)).
+
 `work/patch34/#PortaX8_0258.203` (B258, SHA-256 `723ac97a…765f26c9`). Includes steps 11 to 34. Install this file in place of
 any earlier build. All the checks in `tools/x8patch.py` pass on this file. No new stock hook site (header version 18).
 

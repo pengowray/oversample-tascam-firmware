@@ -156,6 +156,31 @@ one-second value in brackets.
 
 Full tables: Steps 21 and 27 in [HOMEBREW.md](HOMEBREW.md#step-27-test-file-pitch-in-the-cpu-test-in-stereo-too-built-2026-11-08-installed-2026-11-08-hangs-when-a-bat-screen-opens-fixed-in-b251).
 
+**B258 (10 November 2026).** The CPU test was run twice: recording, with the synthetic calls off, and
+in record standby, with the synthetic calls on, both with the MIX file off. Only the standby
+run is comparable with B251's.
+
+| Listening mode | Standby, calls on: `dsp` | Recording, calls off: `dsp` | Recording: input skipped |
+|---|---|---|---|
+| 1:1 mono, Auto volume off | 27 (27) | 32 (33) | 0% |
+| FD, Auto volume off | 38 (38) | 44 (45) | 0% |
+| FD, Auto volume on, chime decoders running | 48 (48) | 59 (60) | 0% |
+| COMB stereo, Auto volume on, chime decoders running | 45 (45) | 57 (58) | 0% |
+| PITCH mono, Auto volume off | 61 (62) | 76 (78) | 4% |
+| PITCH mono, Auto volume on | 65 (66) | 79 (81) | 7% |
+| PITCH stereo, Auto volume off | 83 (84) | 87 (88) | 82% |
+
+- HET, COMB, FD, TE and 1:1 still keep up while recording, with nothing lost. The highest `dsp` is
+  59 (60), FD with Auto volume and the chime decoders.
+- PITCH mono now skips some input while recording (its input ring reaches 7,744 of 8,192), but no
+  frames are lost. PITCH stereo loses about 0.1 to 0.2 million frames.
+- The stages view (recording, calls off) shows where the time goes, in percent of the processor:
+  the analysis for the waterfall and detector (`ana`) is 24 to 27 in every mode except PITCH
+  stereo; the input (`in`) is 4 to 5; Auto volume (`vol`) is 4 to 7; the chime decoders (`dec`)
+  are 8 to 9. The mode itself (`mode`) is 0 for TE and 1:1, 2 to 8 for HET and COMB, 12 to 13 for
+  FD, 43 for PITCH mono and 77 to 82 for PITCH stereo. Drawing a frame is 6 to 7 and copying it
+  to the screen 4.
+
 ## Memory free for the patch
 
 Found by checking that no stock code refers to these ranges (Firmware). Sizes are for V2.03 build 217.
