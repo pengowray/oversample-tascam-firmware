@@ -2358,6 +2358,52 @@ B241 or an earlier build. All the checks in `tools/x8patch.py` pass on this file
 1. **Start and stop.** With Phone remote on and the phone page reloaded, do `Start recording` and `Stop recording` work as before?
 2. **Old phone page.** If a phone still has the old page cached, its commands should do nothing at all. Reload the page.
 
+## Step 38 test file: PITCH cheaper again, and Mute while recording (built 2026-11-10, not yet installed)
+
+`work/patch37/#PortaX8_0261.203` (B261, SHA-256 `f5abf66d…b39a755f6b`). Includes steps 11 to 36 (not Step 37's build
+setting: B261 is built at `opt-level = 3`). Install this file in place of any earlier build. All the checks in
+`tools/x8patch.py` pass on this file. No new stock hook site (header version 19).
+
+**Mute while recording.** A new switch on the Record page, off by default: "Mute while recording". When it is on, the
+headphones fade out over 20 ms when a take starts recording and fade back in when it stops or pauses. Record standby and a
+paused take are heard as before. While the headphones are silent, the listening mode, TE and Auto volume do not run, which
+saves their CPU (PITCH's too), and phone remote beeps are silent. The red recording bar shows MUTED. BAT DETECTOR only. The CPU
+test plays every mode whatever the switch says.
+
+**PITCH cheaper.** The pitch shifter (`bat_dsp::pitch_shift`) has its own radix-4 FFTs that read the input in the order the
+transform needs, applies the Hann window in the spectrum, finds peaks without branches, takes one square root per peak instead
+of calling `libm`'s software `sqrtf` and `floorf`, and analyses a frame every 288 samples instead of 256 (11% fewer frames).
+
+| On a PC, ms per second of 192 kHz audio, no SIMD | B259 | B261 |
+|---|---|---|
+| Pitch shifter, white noise | 10.3 | 6.1 |
+| FD, for comparison | 4.1 | 4.1 |
+
+About 18 of the 41 points saved on the PC come from removing branches and divisions, which cost a PC much more than the X8's
+in-order core, so the X8 should gain less. Estimate: PITCH mono's own cost from 34 to about 20 to 26 points in record standby,
+and from 44 to about 26 to 34 while recording. The hop of 288 does not divide the 1,024-sample frame, so the level of noise
+rises and falls 667 times a second, by 0.25 dB at factor 10 (0.6 dB at factor 4); tones are not affected. In
+`pitch_shift::measurements`, steady tones measure the same or slightly better; the chirps' level changes by up to 0.5 dB and
+their ripple by up to 2 dB, some up and some down; 200 FM calls at factor 10 come out 0.1 dB quieter on average. PITCH stays hidden on the mode buttons until the CPU test shows it keeps up.
+
+**Memory.** The most-called drawing helpers are no longer inlined (none run in ITCM), which made room for the switch.
+
+| Item | B259 | B261 | Limit |
+|---|---|---|---|
+| ITCM | 76.8 KB | 80.5 KB | 89.2 KB |
+| DTCM | 149.2 KB | 149.3 KB | 152.8 KB |
+| `.noinit`, the end of the patch's memory | ends at 0x818ff8b8 | ends at 0x818fd7b0 | 0x81900000 |
+
+The patch region has 10.3 KB left.
+
+**What to check.**
+
+1. Run the CPU test the same two ways as on B258 and B260 (recording with the synthetic calls off; record standby with them
+   on). For PITCH mono: `dsp`, `skip%` and `lost`. If it keeps up while recording, the next build can show PITCH in mono.
+2. In BAT DETECTOR, turn on SETTINGS > Record > Mute while recording. Start a take: do the headphones go silent, with MUTED in
+   the recording bar? Pause, then stop: does the sound come back each time, without a click?
+3. With the switch on, record a take with headphones on loud near the mics: is the headphone sound gone from the take?
+
 ## Step 37 test file: the patch built for size, to measure its processor cost (built 2026-11-10, installed 2026-11-10)
 
 **Result.** Too slow to keep: while recording, `dsp` is 6 to 12 points higher than B258's and HET, COMB and FD skip 1 to
