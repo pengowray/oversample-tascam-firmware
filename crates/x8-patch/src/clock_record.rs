@@ -6,15 +6,16 @@ use chime::format::LocalTime;
 
 pub const RECORD_BYTES: usize = 10;
 
-/// What the patch needs from a record it read: the time, and the two bytes whose meaning is not
-/// known for certain, kept so that a record written back uses the same conventions.
+/// What the patch needs from a record it read: the time, and two bytes that are kept so that a
+/// record written back uses the same conventions.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct ClockReading {
     /// Local seconds since 1970.
     pub local_seconds: i64,
     /// The record's weekday less the true weekday (0 = Sunday), mod 7: the chip's numbering.
     pub weekday_offset: u8,
-    /// Byte 6, which the set function turns into bit 6 of the chip's hours register.
+    /// Byte 6: the clock chip's AM/PM bit. The firmware runs the chip (a Seiko S-35390A or
+    /// compatible) in 24-hour mode, where the chip accepts 0 or 1 here and sets the bit itself.
     pub hour_flag: u8,
 }
 

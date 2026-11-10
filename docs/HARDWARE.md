@@ -19,8 +19,8 @@ Each fact has one source in the Source column:
 | Source | Meaning |
 |---|---|
 | Tascam spec | TASCAM's Reference Manual, Rev H (firmware V2.00), section 19 "Specifications", or other pages of that manual |
-| Teardown | Chip markings seen in two public teardown videos (links under [Opening the unit](#opening-the-unit-and-debug-access)) |
-| Datasheet | The chip maker's datasheet for a part identified in a teardown |
+| Teardown | Chip markings seen in two public teardown videos, or in a still photo of the logic board (both described under [Opening the unit](#opening-the-unit-and-debug-access)) |
+| Datasheet | The chip maker's datasheet for a part identified in a teardown or in the firmware |
 | Firmware | Read in the V2.03 firmware (build 217) with Ghidra or a disassembler |
 | Measured | Measured on the owner's unit, or in recordings made on it |
 | Not confirmed | A guess from indirect evidence, or not known at all |
@@ -32,8 +32,8 @@ Each fact has one source in the Source column:
 | Processor | NXP i.MX RT1062, part MIMXRT1062DVL6B. One Arm Cortex-M7 core with a double-precision FPU (FPv5-D16). | Teardown, Firmware |
 | Core clock | 600 MHz, read from the Cortex-M7 cycle counter by a test build (B223). | Measured |
 | On-chip RAM | 512 KB of FlexRAM, which the firmware splits into 288 KB of ITCM (code) and 224 KB of DTCM (data) by writing 0xffffeaaa to IOMUXC_GPR17. Plus OCRAM at 0x20200000, which holds the audio DMA descriptors. | Firmware |
-| Program flash | 32 MiB of FlexSPI NOR flash, one chip, part number not read. Erased and written in 64 KiB sectors. | Firmware, Teardown |
-| SDRAM | Two chips on the SEMC controller. The firmware uses addresses from 0x80000000 up to 0x87FFFFFF (the framebuffers are at 0x87E00000), which suggests 128 MiB. A controller window larger than the chips would also allow this, so 64 MiB is still possible. At least about 60 MB is real: the updater reads the whole 25.5 MB update file to 0x822F3AD8. | Teardown, Firmware, Not confirmed (size) |
+| Program flash | 32 MiB of FlexSPI NOR flash, one chip (U5) in an 8-pad package. The logo on the chip looks like Macronix's (MXIC). The part number is not legible in the photo. Erased and written in 64 KiB sectors. | Firmware, Teardown |
+| SDRAM | 128 MiB: two chips of 64 MiB each on the SEMC controller. The marking on chip U1 is ESMT M52D5121632A -6B: 1.8 V mobile SDRAM, 512 Mbit, 16 bits wide, 166 MHz grade, in a 54-ball BGA. The second chip's marking is outside the photo. The bootloader gives each chip its own chip select with 64 MiB: CS0 at 0x80000000 and CS1 at 0x84000000. The framebuffers at 0x87E00000 are in the second chip. | Teardown, Datasheet, Firmware |
 | FPGA | Lattice MachXO2, part LCMXO2-1200ZE-1MG132C: 1,280 LUTs, no hardware multipliers. The firmware's programming routine writes 2,164 configuration pages, which matches this part. | Teardown, Firmware |
 | FPGA's jobs | Read in the firmware: phantom power switches, the button latch and wheel counter (probably; the firmware calls it SPI device 6 on LPSPI4), and the jack detect for inputs 1 and 2. Audio clocking and joining the converters' outputs into one stream are likely but not traced. | Firmware, Not confirmed (audio) |
 | ADCs | Two AKM AK5704 chips. Each has 4 channels, mic preamps and rates up to 192 kHz. The firmware writes AK5704 registers at I2C address 0x10 on LPI2C1 and at 0x11 on LPI2C4, probably one chip on each bus. | Teardown, Datasheet, Firmware |
@@ -41,7 +41,9 @@ Each fact has one source in the Source column:
 | Electronic volume | Two JRC (New Japan Radio) NJW1195A chips, seen in the What Dennis Does video; the second line of the marking reads MM039C or similar. Each chip has 4 analog volume channels, +31.5 to −95 dB in 0.5 dB steps with mute, a 4-in 2-out stereo selector, and a 3-wire serial control bus shared by up to 4 chips. What the 8 channels control in the X8 is not known. | Teardown, Datasheet, Not confirmed (role) |
 | DAC | TI PCM1754, for the headphone and line output. | Teardown |
 | Headphone amplifier | TI TPA4411. | Teardown |
-| Real-time clock | A separate clock chip on I2C bus 2, read and set in BCD (date at register 0x32, time at 0x33). The processor's own SNVS clock is not used. Part number not known. | Firmware |
+| Real-time clock | Seiko Instruments S-35390A (now sold by ABLIC), or a part that takes the same commands. The chip's marking has not been read. The firmware's I2C traffic on bus 2 matches the S-35390A datasheet: I2C addresses 0x30 (status register 1), 0x32 (date and time, 7 bytes) and 0x33 (time, 3 bytes), BCD digits, and every byte of the date and time sent with its lowest bit first. The firmware sets the chip to 24-hour mode at every start-up. The processor's own SNVS clock is not used. | Firmware, Datasheet |
+| Clock backup cell and crystal | A Seiko rechargeable lithium coin cell marked MS621 is on the logic board, probably as the clock chip's backup supply. Seiko's current cell of that size, the MS621FE, is 3 V and 5.5 mAh. The board also has a crystal position, X4, with the printed label 32.768 kHz. Whether X4 serves the clock chip or the processor is not traced. | Teardown, Datasheet, Not confirmed (role) |
+| Oscillators | Two fitted oscillators are marked 24.576 and 22.579, each with the letters KDK, which are probably the maker's mark. 24.576 MHz is 512 × 48 kHz and 22.5792 MHz is 512 × 44.1 kHz, so the two oscillators are probably the audio master clocks: one for 48, 96 and 192 kHz, and one for 44.1, 88.2 and 176.4 kHz. The board's printed labels name X2 as 49.152 MHz and X3 as 22.5792 MHz. No part marked 49.152 is in the photo, and the photo does not show whether the 24.576 MHz oscillator is at X2. A TI SN74AHCU04 hex inverter (marked HD04) is beside the oscillators. Where the two oscillators' outputs go is not traced. | Teardown, Datasheet, Not confirmed (role) |
 | Touch controller | On LPI2C1 at address 0x55, 400 kHz, polled with no interrupt line, single touch. Its register layout is like Sitronix's ST1232; the part is not identified. | Firmware |
 
 ## Inputs
@@ -209,6 +211,11 @@ Two teardown videos are public: [What Dennis Does](https://www.youtube.com/watch
 (English, 2022) and [iFixThis](https://www.youtube.com/watch?v=YKcWbtdZgvI) (Polish, 2025). The
 owner's unit has not been opened.
 
+On 10 November 2026 the owner supplied a still photo of part of the logic board, which the owner
+thinks is a frame of the What Dennis Does video. The photo shows one SDRAM chip's marking, the
+flash chip, the coin cell, the oscillators and an 80-pin board-to-board connector. The photographed
+unit is not the owner's unit, so the markings on the owner's unit may differ.
+
 | Item | Details | Source |
 |---|---|---|
 | Opening | Batteries, card and mic capsules out; two screws under the rubber feet and six more free the back. The logic board has four screws and sits on a board-to-board connector. The LCD is under the logic board. | Teardown |
@@ -226,9 +233,9 @@ recovery](HOMEBREW.md#opening-the-unit-and-hardware-recovery) in HOMEBREW.md.
 |---|---|---|
 | Which converter serves inputs 1 and 2 | Their response above 20 kHz may differ from inputs 3 to 6 | Open a unit and read the chip markings |
 | Analog response from 60 to 96 kHz | Sets the real upper limit for bat calls | Line-level sine sweep into input 3, recorded at 192 kHz |
-| SDRAM size, 64 or 128 MiB | Sets how much memory is free for longer buffers | Read the SDRAM chip markings |
 | What the two NJW1195A volume chips control | The firmware applies the headphone volume as a gain in the processor, so these chips are probably in the input path, where they would set the analog level before the ADCs | Trace the chips' pins on an opened unit, or find the firmware code that writes their 3-wire bus |
 | Whether the steady lines near 37 and 72 kHz are the reported hum | A steady tone in that range is heard through HET | Record at 192 kHz with inputs 3 and 4 terminated, with and without a phone nearby |
-| The clock chip's part number, and whether its flag bit selects 12-hour mode | The patch sets the clock from phone chimes | Open a unit, or read the chip's register map once identified |
+| The flash chip's part number | A debug probe may need a flash routine written for this chip (see the recovery notes in HOMEBREW.md) | Read the marking on an opened unit, or read the chip's JEDEC ID from a test build |
+| The 5-pin chip marked MJ / 21 / 72 that the owner saw in the iFixThis video | The chip is not in the parts table, and its job is not known | Note where the chip is on the board and which parts are next to it, then look up the marking |
 | A hardware recovery path | Needed if an update is interrupted | Find SWD or BOOT_MODE on an opened unit |
 | Battery life at 192 kHz with the bat screen open | Field use | Time a full set of AA cells |

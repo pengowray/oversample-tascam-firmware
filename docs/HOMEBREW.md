@@ -3021,8 +3021,19 @@ byte (`crates/x8-patch/src/clock_record.rs`, host tests), then reads it back: a 
 While a command runs, task 1 ignores REC, so the phone remote holds its presses until the clock is done, and the PHONE TIME screen
 reads the clock only every 5 s.
 
-**Not checked:** whether the flag byte is a 12-hour mode. The patch keeps it as read and writes 24-hour hours; the read-back
-would show a mismatch.
+**The chip (found 2026-11-10).** The firmware's I2C traffic matches the Seiko Instruments S-35390A datasheet, so the chip is
+an S-35390A or a part that takes the same commands. Its marking has not been read. The S-35390A has no register addresses:
+the low 3 bits of its I2C address select what is read or written. Address 0x30 is status register 1, 0x32 is the date and
+time (7 bytes) and 0x33 is the time (3 bytes), so "register 0x32" and "register 0x33" above are I2C addresses. The chip
+sends the lowest bit of each byte first, and `FUN_80dfda04` reverses the bits of each byte. At start-up `FUN_80dfd67a`
+reads status register 1 and resets the chip if the power-on flag (bit 0) is set. Then `FUN_80dfd726(1)` sets bit 6 of status
+register 1, which selects 24-hour mode. The firmware does not reverse the bits of status register 1, so these bit numbers
+are the datasheet's.
+
+**The flag in the 10-byte record is the chip's AM/PM bit.** The AM/PM bit is bit 6 of the hour byte after the firmware
+reverses that byte's bits. The flag does not select 12-hour mode. In 24-hour mode the datasheet says that the
+chip accepts 0 or 1 in a written AM/PM bit, and that a read gives 0 for hours 0 to 11 and 1 for hours 12 to 23. The patch
+writes 24-hour hours, and writes the flag with the value from the patch's last read of the clock.
 
 **The phone's time during a take.** The DSP task keeps the phone's local time with the block count it was read at. For a take
 with a set waiting, the GUANO hook takes the start as that time, counted on to the moment the files close, less the length. Once
@@ -3631,6 +3642,10 @@ Two teardown videos are public: [What Dennis Does](https://www.youtube.com/watch
   are under the logic board.
 - **Chips.** MIMXRT1062DVL6B processor, LCMXO2-1200ZE FPGA, two SDRAM chips, one
   flash chip, two AK5704 ADCs, OPA1678 op-amps, PCM1754 DAC, TPA4411 headphone amp.
+- **A still photo of the logic board** (2026-11-10, thought to be a frame of the What Dennis Does video). One SDRAM chip
+  is marked ESMT M52D5121632A (512 Mbit), the flash chip has a logo that looks like Macronix's, and a Seiko MS621
+  rechargeable coin cell is next to a 560 Ω resistor and a diode. Two oscillators are marked 24.576 and 22.579, beside a TI
+  SN74AHCU04 hex inverter. The board-to-board connector has 80 pins. [HARDWARE.md](HARDWARE.md#main-parts) has the details.
 - **Test points.** The logic board has many labelled test points (TP2, TP80, TP83 and
   others are visible in the video). Neither video identifies SWD, JTAG or UART pads.
   No schematic or service manual is published.
