@@ -2393,7 +2393,10 @@ The patch region has 106.9 KB left.
    [Processing headroom](HARDWARE.md#processing-headroom-measured).
 3. Use BAT DETECTOR and BAT PLAYBACK for a minute each: does the screen still draw smoothly?
 
-## Step 36 test file: TASCAM's logo screen back, with a bigger bat and "Oversample Edition" below (built 2026-11-10, not yet installed)
+## Step 36 test file: TASCAM's logo screen back, with a bigger bat and "Oversample Edition" below (built 2026-11-10, logo checked on the unit)
+
+**Result.** On the unit, the logo screen shows TASCAM's logo, "Portacapture X8", the bat and "Oversample Edition", and the
+X8 starts normally. Update mode has not been tried with this change yet.
 
 `work/patch35/#PortaX8_0259.203` (B259, SHA-256 `6162c7a6…10b4e188`). Includes steps 11 to 35. Install this file in place of
 any earlier build. All the checks in `tools/x8patch.py` pass on this file. Header version 19: three new header fields for
@@ -2428,7 +2431,7 @@ The patch region has 1.8 KB left.
 
 **Result.** Installed. The CPU test on B258 is in [Processing headroom](HARDWARE.md#processing-headroom-measured): every mode
 but PITCH keeps up while recording, and PITCH mono now skips 4 to 7% of its input while recording. The logo screen showed the
-bat and "Oversample Edition" (see [Step 36](#step-36-test-file-tascams-logo-screen-back-with-a-bigger-bat-and-oversample-edition-below-built-2026-11-10-not-yet-installed)).
+bat and "Oversample Edition" (see [Step 36](#step-36-test-file-tascams-logo-screen-back-with-a-bigger-bat-and-oversample-edition-below-built-2026-11-10-logo-checked-on-the-unit)).
 
 `work/patch34/#PortaX8_0258.203` (B258, SHA-256 `723ac97a…765f26c9`). Includes steps 11 to 34. Install this file in place of
 any earlier build. All the checks in `tools/x8patch.py` pass on this file. No new stock hook site (header version 18).
