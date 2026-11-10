@@ -196,6 +196,16 @@ Found by checking that no stock code refers to these ranges (Firmware). Sizes ar
 At B259 the patch uses 76.8 KB of the ITCM range and 149.2 KB of the DTCM range, and its SDRAM
 region ends at 0x818FF8B8.
 
+The uncached SDRAM after Qt's framebuffers is nearly all in use at B259: the display buffer
+(300 KB), TE storage (375 KB), task 1's patch stack and BAT PLAYBACK's tables and read ring. About
+69 KB is unused, in three pieces: 0x87EA6004 to 0x87EAFFFF (40 KB), 0x87EFB000 to 0x87EFFFFF
+(20 KB) and 0x87F5DC00 to 0x87F5FFFF (9 KB). The patch region's two biggest buffers, the
+off-screen frame (300 KB) and the app's buffers (172 KB, the waterfall, detector history,
+snapshot, chime decoders and PITCH's right-ear shifter), need cached memory for speed, so they
+stay in the patch region. Two cached gaps in the stock layout were checked and are in use: stock
+code refers into 0x819A3482 to 0x819B186F (between IAR's unpacked data and its next zeroed range)
+and into the 2 MiB at 0x820F3AD8.
+
 ## Display and controls
 
 | Item | Details | Source |
