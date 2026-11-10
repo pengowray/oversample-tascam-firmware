@@ -88,6 +88,44 @@ fn text(
     }
 }
 
+/// A number with a fixed count of decimals, as `{:.N}` writes it (`{:+.N}` with `plus`), from
+/// integers. Formatting a float pulls in the core library's float printing, about 19 KB of code,
+/// which the X8 patch has no room for. Halves round away from zero.
+pub(crate) struct Fixed {
+    value: f64,
+    decimals: u8,
+    plus: bool,
+}
+
+impl Fixed {
+    pub(crate) fn new(value: impl Into<f64>, decimals: u8) -> Self {
+        Self { value: value.into(), decimals, plus: false }
+    }
+
+    pub(crate) fn signed(value: impl Into<f64>, decimals: u8) -> Self {
+        Self { value: value.into(), decimals, plus: true }
+    }
+}
+
+impl core::fmt::Display for Fixed {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        let scale = 10u64.pow(u32::from(self.decimals));
+        let scaled = libm::round(libm::fabs(self.value) * scale as f64) as u64;
+        let sign = if self.value < 0.0 && scaled != 0 {
+            "-"
+        } else if self.plus {
+            "+"
+        } else {
+            ""
+        };
+        write!(f, "{sign}{}", scaled / scale)?;
+        if self.decimals > 0 {
+            write!(f, ".{:0width$}", scaled % scale, width = usize::from(self.decimals))?;
+        }
+        Ok(())
+    }
+}
+
 const LEFT: HorizontalAlignment = HorizontalAlignment::Left;
 const CENTER: HorizontalAlignment = HorizontalAlignment::Center;
 const RIGHT: HorizontalAlignment = HorizontalAlignment::Right;
@@ -564,16 +602,24 @@ fn snapshot(app: &BatApp, fb: Fb) {
     }
     // The frequencies at the top and bottom of the snapshot.
     let (lo, hi) = app.snapshot_hz;
-    text(fb, &SMALL, format_args!("{:.0} kHz", hi / 1000.0), SNAP_X + 2, SNAP_Y + 8, LEFT, TEXT);
-    text(fb, &SMALL, format_args!("{:.0} kHz", lo / 1000.0), SNAP_X + 2, SNAP_Y + SNAP_H as i32 - 2, LEFT, TEXT);
+    text(fb, &SMALL, format_args!("{} kHz", Fixed::new(hi / 1000.0, 0)), SNAP_X + 2, SNAP_Y + 8, LEFT, TEXT);
+    text(
+        fb,
+        &SMALL,
+        format_args!("{} kHz", Fixed::new(lo / 1000.0, 0)),
+        SNAP_X + 2,
+        SNAP_Y + SNAP_H as i32 - 2,
+        LEFT,
+        TEXT,
+    );
     let fs = app.sample_rate;
     let ago_s = app.samples.saturating_sub(call.end_sample) as f32 / fs;
     // A steady tone's length is the whole tone so far, not its latest piece.
     let length_ms = (call.end_sample - app.last_call_since) as f32 / fs * 1000.0;
     if ago_s < 60.0 {
-        text(fb, &SMALL, format_args!("{:.0} s ago", libm::floorf(ago_s)), 308, top + 12, RIGHT, TEXT_MUTED);
+        text(fb, &SMALL, format_args!("{} s ago", ago_s as u32), 308, top + 12, RIGHT, TEXT_MUTED);
     } else {
-        text(fb, &SMALL, format_args!("{:.0} min ago", libm::floorf(ago_s / 60.0)), 308, top + 12, RIGHT, TEXT_MUTED);
+        text(fb, &SMALL, format_args!("{} min ago", (ago_s / 60.0) as u32), 308, top + 12, RIGHT, TEXT_MUTED);
     }
     let (y1, y2, y3) = (top + 28, top + 42, top + 56);
     for (label, y) in [("Peak", y1), ("Range", y2), ("Length", y3)] {
@@ -618,13 +664,21 @@ fn value_line(app: &BatApp, fb: Fb) {
     match app.mode {
         Mode::Het => {
             text(fb, &BODY, "Tuned to", label, y, LEFT, TEXT_MUTED);
-            text(fb, &VALUE, format_args!("{:.1} kHz", app.het.lo() / 1000.0), x, y, LEFT, TEXT);
+            text(fb, &VALUE, format_args!("{} kHz", Fixed::new(app.het.lo() / 1000.0, 1)), x, y, LEFT, TEXT);
         }
         Mode::Comb => {
             text(fb, &BODY, "Tuned to", label, y, LEFT, TEXT_MUTED);
             let f = app.comb_first_hz / 1000.0;
             let s = DEFAULT_COMB_SPACING_HZ / 1000.0;
-            text(fb, &VALUE, format_args!("{:.0}, {:.0}, {:.0} kHz", f, f + s, f + 2.0 * s), x, y, LEFT, TEXT);
+            text(
+                fb,
+                &VALUE,
+                format_args!("{}, {}, {} kHz", Fixed::new(f, 0), Fixed::new(f + s, 0), Fixed::new(f + 2.0 * s, 0)),
+                x,
+                y,
+                LEFT,
+                TEXT,
+            );
         }
         Mode::Fd => {
             text(fb, &BODY, "Divide by", label, y, LEFT, TEXT_MUTED);
@@ -632,15 +686,21 @@ fn value_line(app: &BatApp, fb: Fb) {
         }
         Mode::Te => {
             text(fb, &BODY, "Slower by", label, y, LEFT, TEXT_MUTED);
-            text(fb, &VALUE, format_args!("{:.0}\u{d7}", app.te.factor()), x, y, LEFT, TEXT);
+            text(fb, &VALUE, format_args!("{}\u{d7}", Fixed::new(app.te.factor(), 0)), x, y, LEFT, TEXT);
             // A file playing slowed has no capture to wait for.
             match app.te_status() {
                 _ if app.playback_slowing() > 1 => 0,
                 TeStatus::Waiting => text(fb, &BODY, "Waiting for a call", 312, y, RIGHT, TEXT_MUTED),
                 TeStatus::Capturing => text(fb, &BODY, "Capturing", 312, y, RIGHT, TEXT),
-                TeStatus::Playing { .. } => {
-                    text(fb, &BODY, format_args!("Playing, {:.1} s left", app.te_seconds_left()), 312, y, RIGHT, TEXT)
-                }
+                TeStatus::Playing { .. } => text(
+                    fb,
+                    &BODY,
+                    format_args!("Playing, {} s left", Fixed::new(app.te_seconds_left(), 1)),
+                    312,
+                    y,
+                    RIGHT,
+                    TEXT,
+                ),
             };
         }
         Mode::Thru => {
@@ -648,7 +708,7 @@ fn value_line(app: &BatApp, fb: Fb) {
         }
         Mode::Pitch => {
             text(fb, &BODY, "Divide by", label, y, LEFT, TEXT_MUTED);
-            text(fb, &VALUE, format_args!("{:.0}", app.pitch.factor()), x, y, LEFT, TEXT);
+            text(fb, &VALUE, format_args!("{}", Fixed::new(app.pitch.factor(), 0)), x, y, LEFT, TEXT);
         }
     }
 }
@@ -829,8 +889,8 @@ fn listen_page(app: &BatApp, fb: Fb) {
                             fb,
                             &SMALL,
                             format_args!(
-                                "Reaching down to {:.0} kHz, like handling noise.",
-                                app.detector.band().0 / 1000.0
+                                "Reaching down to {} kHz, like handling noise.",
+                                Fixed::new(app.detector.band().0 / 1000.0, 0)
                             ),
                             hx,
                             hy,
@@ -861,7 +921,15 @@ fn listen_page(app: &BatApp, fb: Fb) {
         };
         text(fb, &BODY, label, x, y + 18, LEFT, TEXT_MUTED);
         if *setting == Setting::LowestBatCall {
-            text(fb, &VALUE, format_args!("{:.0} kHz", app.lowest_bat_call_hz() / 1000.0), x, y + 38, LEFT, TEXT);
+            text(
+                fb,
+                &VALUE,
+                format_args!("{} kHz", Fixed::new(app.lowest_bat_call_hz() / 1000.0, 0)),
+                x,
+                y + 38,
+                LEFT,
+                TEXT,
+            );
         } else {
             let value = match (app.feed(), app.inputs(), app.source()) {
                 (Feed::Mix, _, MonitorSource::Both) => "MANUAL's mix",

@@ -9,8 +9,8 @@ use embedded_graphics::primitives::Rectangle;
 use u8g2_fonts::{FontRenderer, fonts};
 
 use super::{
-    BODY, BODY_BOLD, CENTER, Fb, LEFT, SMALL, VALUE, fill, mix_silence_lines, no_input_notice, rate_warning, rounded,
-    text,
+    BODY, BODY_BOLD, CENTER, Fb, Fixed, LEFT, SMALL, VALUE, fill, mix_silence_lines, no_input_notice, rate_warning,
+    rounded, text,
 };
 use crate::chime_test::{Channel, ChimeClock, Failure, FailureReason};
 use crate::layout::{CLOCK_BACK, CLOCK_SET};
@@ -113,7 +113,7 @@ struct Location(f64, f64);
 
 impl fmt::Display for Location {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "Location: {:.5}, {:.5}", self.0, self.1)
+        write!(f, "Location: {}, {}", Fixed::new(self.0, 5), Fixed::new(self.1, 5))
     }
 }
 
@@ -182,15 +182,15 @@ fn column_values(fb: Fb, x: i32, channel: &Channel) {
     text(fb, &SMALL, format_args!("{}", channel.read), x, row(0), LEFT, TEXT);
     text(fb, &SMALL, format_args!("{}", channel.failed), x, row(1), LEFT, TEXT);
     match channel.carrier_dbfs {
-        Some(level) => text(fb, &SMALL, format_args!("{level:.1}"), x, row(2), LEFT, TEXT),
+        Some(level) => text(fb, &SMALL, format_args!("{}", Fixed::new(level, 1)), x, row(2), LEFT, TEXT),
         None => text(fb, &SMALL, "--", x, row(2), LEFT, TEXT_MUTED),
     };
     match channel.snr_db {
         Some(snr) if snr.is_nan() => text(fb, &SMALL, SNR_NOT_MEASURED, x, row(3), LEFT, TEXT_MUTED),
-        Some(snr) => text(fb, &SMALL, format_args!("{snr:+.0}"), x, row(3), LEFT, TEXT),
+        Some(snr) => text(fb, &SMALL, format_args!("{}", Fixed::signed(snr, 0)), x, row(3), LEFT, TEXT),
         None => text(fb, &SMALL, "--", x, row(3), LEFT, TEXT_MUTED),
     };
-    text(fb, &SMALL, format_args!("{:.0} dBFS", channel.band_dbfs), x, row(4), LEFT, TEXT);
+    text(fb, &SMALL, format_args!("{} dBFS", Fixed::new(channel.band_dbfs, 0)), x, row(4), LEFT, TEXT);
     level_bar(fb, x, row(4) + 4, channel.band_dbfs);
 }
 

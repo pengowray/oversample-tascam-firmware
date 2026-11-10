@@ -1668,3 +1668,25 @@ fn the_phone_page_without_the_remote_starts_with_the_qr_code() {
     app.touch(button.x, button.y);
     assert_eq!(app.screen(), Screen::ChimeTest);
 }
+
+#[test]
+fn fixed_decimals_match_float_formatting() {
+    use crate::screen::Fixed;
+    use std::string::ToString;
+    let cases: [(f64, u8, &str); 9] = [
+        (45.0, 1, "45.0"),
+        (45.04, 1, "45.0"),
+        (-12.5, 1, "-12.5"),
+        (-0.04, 1, "0.0"),
+        (61.6, 0, "62"),
+        (-36.123456, 5, "-36.12346"),
+        (146.000007, 5, "146.00001"),
+        (0.0, 0, "0"),
+        (9.95, 1, "10.0"),
+    ];
+    for (value, decimals, shown) in cases {
+        assert_eq!(Fixed::new(value, decimals).to_string(), shown, "{value} to {decimals}");
+    }
+    assert_eq!(Fixed::signed(12.4, 0).to_string(), "+12");
+    assert_eq!(Fixed::signed(-3.0, 0).to_string(), "-3");
+}

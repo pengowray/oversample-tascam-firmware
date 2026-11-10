@@ -5,7 +5,7 @@ use embedded_graphics::pixelcolor::Rgb565;
 use embedded_graphics::prelude::*;
 use embedded_graphics::primitives::{PrimitiveStyle, Rectangle};
 
-use super::{BODY, BODY_BOLD, Fb, LEFT, SMALL, outline_selected, rounded, switch_control, text};
+use super::{BODY, BODY_BOLD, Fb, Fixed, LEFT, SMALL, outline_selected, rounded, switch_control, text};
 use crate::layout::{
     PHONE_CLOCK, PHONE_REMOTE, QR_MARGIN, QR_MODULE, QR_TEXT_X, RECORD_GUANO, RECORD_MIX_FILE, RECORD_PAUSE,
     TESTS_CPU_TEST, TESTS_DEBUG, panel_switch, phone_time, qr_card,
@@ -219,7 +219,7 @@ fn remote_panel(app: &BatApp, fb: Fb) {
         Some(last) => {
             let name = command_name(last.message.known());
             let seconds = app.samples.saturating_sub(last.read_at) / app.sample_rate as u64;
-            let line = format_args!("Last: {name}, {seconds} s ago, carrier {:.0} dBFS", last.level_dbfs);
+            let line = format_args!("Last: {name}, {seconds} s ago, carrier {} dBFS", Fixed::new(last.level_dbfs, 0));
             text(fb, &SMALL, line, x, y + 114, LEFT, TEXT);
         }
         None => {
