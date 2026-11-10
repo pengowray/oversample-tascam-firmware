@@ -127,9 +127,9 @@ patched update file.
 | Fixed addresses (`spare.rs`) | SDRAM 0x865E2000 and 0x87EB0000 onwards | No | Output ring (cached), the display buffer, TE storage, task 1's patch stack and BAT PLAYBACK's read ring (uncached). |
 
 `crates/x8-patch/x8patch.ld` is the linker script; its comments give the reasons for each range. At
-B258 the patched update file is 25,854,540 bytes, 361,004 bytes longer than the official one.
+B258 the patched update file is 25,854,732 bytes, 361,196 bytes longer than the official one.
 Free space at B258: ITCM 76.8 of 89.2 KB used, DTCM 149.2 of 152.8 KB used, and the patch region
-ends at 0x818FE0B8 of 0x81900000, 7.8 KB short of the end. DTCM is nearly full. Formatting a
+ends at 0x818FE178 of 0x81900000, 7.6 KB short of the end. DTCM is nearly full. Formatting a
 float with `{:.1}` and the like pulls about 19 KB of the core library's float printing into the
 patch region; the app writes numbers with `screen::Fixed` instead.
 
@@ -384,7 +384,7 @@ on this board. See [HARDWARE.md](HARDWARE.md#opening-the-unit-and-debug-access).
   other rates. BAT PLAYBACK converts other rates to 192 kHz.
 - **PITCH is too slow** on the X8 and is hidden there (see
   [HARDWARE.md](HARDWARE.md#processing-headroom-measured)).
-- **Memory is nearly full.** DTCM has about 3.6 KB left at B258, and the patch region 7.8 KB.
+- **Memory is nearly full.** DTCM has about 3.6 KB left at B258, and the patch region 7.6 KB.
 - **Not tested on a unit:** B255 to B258, going back to stock, a take started or stopped by the
   phone remote, and the AK-BT1 adapter. HOMEBREW.md's status line lists what was last checked.
 - **Bat app settings are not saved in the X8's settings record,** since the patch never writes

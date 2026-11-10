@@ -541,8 +541,11 @@ fn details_for_another_file_or_a_failed_read_and_texts_that_do_not_fit() {
     let lines = screen::details_lines(&app);
     assert!(lines.contains(&"No XRI in this file".to_string()) && lines.contains(&"No GUANO in this file".to_string()));
 
-    // Reading the card again gives files new ids: the view forgets its file.
+    // Reading the card again gives files new ids: the view forgets its file, and the host closes
+    // the view if it is showing.
     app.player_mut().scan_started();
+    app.close_file_info();
+    assert_ne!(app.screen, Screen::FileInfo);
     assert_eq!(app.player().details_state(), None);
     assert_eq!(screen::details_lines(&app), ["This file is no longer in the list"]);
 }
@@ -566,6 +569,32 @@ fn the_wheel_scrolls_the_information_view_as_far_as_its_last_row() {
     assert_eq!(app.player().details_top, rows - layout::INFO_ROWS - 3);
     app.wheel(-100);
     assert_eq!(app.player().details_top, 0);
+}
+
+#[test]
+fn sizes_in_kb_mb_and_gb() {
+    let mut storage = vec![0.0f32; 1024];
+    let mut files = vec![FileEntry::new(0, 0, b"", 0, 0, 0); 8];
+    let mut app = BatApp::new(FS, &mut storage, buffers());
+    app.set_input_kind(InputKind::Playback);
+    let player = app.player_mut();
+    player.set_storage(&mut files);
+    player.scan_started();
+    let sizes = [999, 1_000, 999_949_999, 999_950_000, 1_158_092_908, u32::MAX];
+    for (id, bytes) in sizes.into_iter().enumerate() {
+        player.add_file(FileEntry::new(id as u16, 0, format!("{id}.wav").as_bytes(), 0, 0, bytes));
+    }
+    player.scan_finished(true);
+    let shown: Vec<String> = (0..sizes.len())
+        .map(|row| {
+            app.player_mut().show_details(row);
+            screen::details_lines(&app).into_iter().find(|l| l.starts_with("Size: ")).unwrap()
+        })
+        .collect();
+    assert_eq!(
+        shown,
+        ["Size: 999 bytes", "Size: 1 KB", "Size: 999.9 MB", "Size: 1.00 GB", "Size: 1.16 GB", "Size: 4.29 GB"]
+    );
 }
 
 #[test]

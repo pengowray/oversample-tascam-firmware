@@ -1857,6 +1857,14 @@ impl<'a> BatApp<'a> {
         }
     }
 
+    /// The host is reading the card again, which gives the files new ids: the file information
+    /// view, if it is showing, closes, back to where it was opened from.
+    pub fn close_file_info(&mut self) {
+        if self.screen == Screen::FileInfo {
+            self.screen = self.info_from;
+        }
+    }
+
     /// Whether the file information view has a Play button: opened from the list, for a file
     /// that can be played.
     pub(crate) fn details_play_shown(&self) -> bool {

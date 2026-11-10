@@ -2359,7 +2359,7 @@ B241 or an earlier build. All the checks in `tools/x8patch.py` pass on this file
 
 ## Step 35 test file: file information in BAT PLAYBACK (built 2026-11-10, not yet installed)
 
-`work/patch34/#PortaX8_0258.203` (B258, SHA-256 `19928c6b…e05bad7`). Includes steps 11 to 34. Install this file in place of
+`work/patch34/#PortaX8_0258.203` (B258, SHA-256 `723ac97a…765f26c9`). Includes steps 11 to 34. Install this file in place of
 any earlier build. All the checks in `tools/x8patch.py` pass on this file. No new stock hook site (header version 18).
 
 The owner asked whether BAT PLAYBACK could open BROWSE's file menu on a long press, and whether FILE INFORMATION could get a
@@ -2399,12 +2399,13 @@ Lifting the finger after a long press does not also choose the row. Files that c
 |---|---|---|---|
 | ITCM | 76.7 KB | 76.8 KB | 89.2 KB |
 | DTCM | 149.1 KB | 149.2 KB | 152.8 KB |
-| `.noinit`, the end of the patch's memory | ends at 0x818ffcd0 | ends at 0x818fe0b8 | 0x81900000 |
+| `.noinit`, the end of the patch's memory | ends at 0x818ffcd0 | ends at 0x818fe178 | 0x81900000 |
 
-The patch region has 7.8 KB left.
+The patch region has 7.6 KB left.
 
-**Not known until it runs on the unit:** whether the file system lets a file be read for the view while the reader streams
-it (the view uses the same handle, so it should), and whether 0.6 s feels right.
+**Not known until it runs on the unit:** whether seeking the playing file's handle to its start and its tail, then back to
+where the ring's reads had got to, leaves the sound playing without a gap; the cost of drawing the view, which measures every
+character of the GUANO text on every frame; and whether 0.6 s feels right.
 
 **What to check.**
 
@@ -2415,6 +2416,8 @@ it (the view uses the same handle, so it should), and whether 0.6 s feels right.
    this file"?
 4. While a file plays, tap the **i**: does it keep playing without a gap, and does Back return to the player?
 5. Drag the list without holding still: it scrolls and opens nothing.
+6. With a file playing, open the view for a file with a long GUANO Note and note `draw` on the debug line.
+7. Hold HOME on FILE INFORMATION, then open BAT PLAYBACK again: does it open on the list or the player, not on the view?
 
 ## Step 34 test file: phone commands for the clock and listening mode, a Phone tab with a QR code, BROWSE's order, the logo screen (built 2026-11-10, not yet installed)
 

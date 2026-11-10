@@ -142,6 +142,9 @@ pub(super) fn start_session(app: &mut BatApp<'static>) {
     player.close();
     pass_requests(app);
     app.player_mut().rescan();
+    if app.player().scan() == Scan::Running {
+        app.close_file_info();
+    }
     pass_requests(app);
     if app.player().transport() == Transport::NoFile {
         app.open_files();

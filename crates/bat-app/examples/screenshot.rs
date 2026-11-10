@@ -389,7 +389,12 @@ fn fake_files<'a>(app: &mut BatApp<'a>, storage: &'a mut [FileEntry], details: &
     ];
     if which != "empty" {
         for (id, (name, folder, d, t, info)) in files.into_iter().enumerate() {
-            let mut e = FileEntry::new(id as u16, folder, name, d, t, 1_000_000);
+            // The size an X8 take of that length has: its 5,548-byte header, then 32-bit samples.
+            let bytes = match info {
+                FileInfo::Playable(a) => 5_548 + a.frames * u32::from(a.channels) * 4,
+                _ => 1_000_000,
+            };
+            let mut e = FileEntry::new(id as u16, folder, name, d, t, bytes);
             e.info = info;
             player.add_file(e);
         }
@@ -446,7 +451,7 @@ fn fake_files<'a>(app: &mut BatApp<'a>, storage: &'a mut [FileEntry], details: &
             let Some(id) = details else { return };
             let xri: &[u8] = b"T=XRI 008a;XRI VER=0002;MAKER=TASCAM;MODEL=X8;FW VER=2.03;SOURCE=3:EXT MIC,4:EXT MIC;\
 INPUT GAIN=3:LOW,4:LOW;LEVEL=3:20,4:20;AUTO_LEVEL=3:OFF,4:OFF;,";
-            let guano: &[u8] = b"GUANO|Version: 1.0\nTimestamp: 2026-03-15T20:50:48+11:00\nLength: 92.000000\n\
+            let guano: &[u8] = b"GUANO|Version: 1.0\nTimestamp: 2026-03-15T20:51:26+11:00\nLength: 754.000000\n\
 Samplerate: 192000\nMake: TASCAM\nModel: Portacapture X8\nFirmware Version: V2.03 with bat patch B258\n\
 Original Filename: 260315_0066_3-4.wav\nLoc Position: -36.123456 146.000007\nX8Bat|Pauses: 0\nX8Bat|Paused: 0.000\n\
 Note: Gatehouse bat hole, SO.4 mics on inputs 3 and 4, Marshmallow on input 5, about two metres from the roost\n";

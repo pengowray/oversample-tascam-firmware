@@ -408,17 +408,22 @@ fn note(line: &str, out: &mut dyn FnMut(Row<'_>)) {
     }
 }
 
-/// A size in bytes as KB or MB (1,000 and 1,000,000 bytes), with one decimal for MB.
+/// A size in bytes as KB, MB or GB (powers of 1,000), with one decimal for MB and two for GB.
 struct Bytes(u32);
 
 impl fmt::Display for Bytes {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self.0 {
-            b @ 0..1_000 => write!(f, "{b} bytes"),
-            b @ 1_000..1_000_000 => write!(f, "{} KB", b / 1_000),
-            b => {
-                let tenths = (b as u64 + 50_000) / 100_000;
+        let b = u64::from(self.0);
+        match b {
+            0..1_000 => write!(f, "{b} bytes"),
+            1_000..1_000_000 => write!(f, "{} KB", b / 1_000),
+            1_000_000..999_950_000 => {
+                let tenths = (b + 50_000) / 100_000;
                 write!(f, "{}.{} MB", tenths / 10, tenths % 10)
+            }
+            _ => {
+                let hundredths = (b + 5_000_000) / 10_000_000;
+                write!(f, "{}.{:02} GB", hundredths / 100, hundredths % 100)
             }
         }
     }
