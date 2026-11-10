@@ -5,7 +5,8 @@
 //! phase-vocoder techniques for real-time pitch shifting, chorusing,
 //! harmonizing and other exotic audio modifications", JAES 47(11), 1999):
 //!
-//! 1. Every 256 samples, the last 1024 are windowed (Hann) and transformed.
+//! 1. Every 288 samples (1.5 ms), the last 1024 are windowed (Hann) and
+//!    transformed.
 //! 2. Each local maximum of the magnitude spectrum is a peak. The bins within 4
 //!    of a peak (and nearer to it than to the next peak) move together, by the
 //!    whole number of bins that puts the peak nearest to its frequency divided
@@ -15,7 +16,7 @@
 //!    in fixed blocks of 5 bins, each block by the shift of its centre.
 //! 4. Moving a bin by `d` bins changes its frequency within the frame but not
 //!    its phase at the centre of the frame. To keep the output continuous from
-//!    one frame to the next, the moved bins are also rotated by `d × 256 / 1024`
+//!    one frame to the next, the moved bins are also rotated by `d × 288 / 1024`
 //!    turns more each hop. For peaks this `d` is not rounded, so a tone comes
 //!    out at exactly its frequency divided by the factor. Each peak or block
 //!    continues the rotation stored at its bin in the previous frame.
@@ -54,10 +55,19 @@ use core::f32::consts::FRAC_PI_2;
 
 use microfft::Complex32;
 
+mod fft;
+
+use fft::{PHASOR_STEPS, PHASORS};
+
 /// Samples in one analysis frame.
 pub const FRAME_LEN: usize = 1024;
-/// Samples between frames: 75% overlap.
-pub const HOP: usize = FRAME_LEN / 4;
+/// Samples between frames. 288 costs 11% less than 256 (a quarter frame)
+/// with the same figures for steady tones in `measurements`; at 320 their
+/// median tone to residual falls from 49 to 41 dB. Unlike 256, 288 does not
+/// divide the frame, so noise comes out with its level rising and falling
+/// once a hop: 0.6 dB from top to bottom at factor 4, 0.25 dB at factor 10
+/// (0.05 dB, the measuring limit, at 256). A multiple of [`DECIMATION`].
+pub const HOP: usize = 288;
 
 pub const DEFAULT_FACTOR: f32 = 10.0;
 /// The smallest factor: the shifted sound must fit below 24 kHz (see [`Stft`]).
@@ -130,7 +140,8 @@ impl PitchShifter {
     }
 
     /// Divide frequencies by `factor`, clamped to [`MIN_FACTOR`] to
-    /// [`MAX_FACTOR`]. Takes effect from the next frame (within 256 samples).
+    /// [`MAX_FACTOR`]. Takes effect from the next frame (within [`HOP`]
+    /// samples).
     /// A value that is not finite is ignored.
     pub fn set_factor(&mut self, factor: f32) {
         if factor.is_finite() {
@@ -165,8 +176,11 @@ impl PitchShifter {
 
     pub fn process(&mut self, input: &[f32], output: &mut [f32]) {
         debug_assert_eq!(input.len(), output.len());
-        for (y, &x) in output.iter_mut().zip(input) {
-            *y = self.stft.push(x);
+        let mut done = 0;
+        while done < input.len() {
+            let n = self.stft.room().min(input.len() - done);
+            self.stft.push(&input[done..done + n], &mut output[done..done + n]);
+            done += n;
             if self.stft.frame_due() {
                 let shift = &mut self.shift;
                 let lowest = if self.highpass_on { self.cutoff_bin } else { 1 };
@@ -177,7 +191,7 @@ impl PitchShifter {
 }
 
 /// Hann-windowed short-time Fourier transform and overlap-add resynthesis:
-/// 1024-point frames every 256 samples. The shifted spectrum has nothing above
+/// 1024-point frames every HOP samples. The shifted spectrum has nothing above
 /// 24 kHz (96 kHz divided by [`MIN_FACTOR`]), so each frame is resynthesised at
 /// a quarter of the sample rate, from bins 0 to [`OUT_BINS`] - 1, with a
 /// 256-point inverse transform, and overlap-added there. The output is that
@@ -185,18 +199,20 @@ impl PitchShifter {
 /// and [`DECIMATION`] samples.
 #[derive(Clone, Debug)]
 struct Stft {
-    /// The last FRAME_LEN input samples, oldest first. The newest HOP are
-    /// filled in during the current hop.
+    /// The last FRAME_LEN input samples, in a circular buffer that starts at
+    /// `start`. The newest HOP, just before `start`, are filled in during the
+    /// current hop.
     input: [f32; FRAME_LEN],
+    /// Where the oldest input sample is: always even.
+    start: usize,
     /// Overlap-add sums at the quarter rate, oldest first. The first
-    /// LOW_HOP are complete and are output during the current hop.
-    acc: [f32; LOW_LEN],
-    /// The last complete sum before `acc[0]`, for the interpolation.
-    before: f32,
-    /// The windowed frame, then its spectrum.
-    fft: [f32; FRAME_LEN],
-    /// The modified spectrum, then the inverse transform.
-    spec: [Complex32; OUT_BINS],
+    /// LOW_HOP + 1 are complete; the output during the current hop is
+    /// interpolated between them.
+    acc: [f32; LOW_LEN + 1],
+    /// The spectrum of the last frame.
+    spectrum: [Complex32; HALF],
+    /// The modified spectrum (see [`Shifted`]), then the inverse transform.
+    spec: Shifted,
     /// Samples taken since the last frame.
     fill: usize,
 }
@@ -213,8 +229,21 @@ const _: () = assert!(MAX_INPUT_BIN as f32 / MIN_FACTOR <= OUT_BINS as f32);
 /// Highest input bin that carries sound: just below Nyquist.
 const MAX_INPUT_BIN: usize = HALF - 1;
 
-/// Periodic Hann window: sin²(πn / FRAME_LEN).
-static WINDOW: [f32; FRAME_LEN] = {
+/// The shifted spectrum: bin `j` (0 to OUT_BINS - 1) is at `j + GUARD`, in
+/// microfft's packed layout. Bins moved below 1 or to OUT_BINS and above land
+/// in the GUARD places either side, which the inverse transform leaves out
+/// with bin 0, so the bins are moved without checking where they land.
+type Shifted = [Complex32; OUT_BINS + 2 * GUARD];
+/// A bin moves with a peak or block whose frequency is within 4.5 bins of it,
+/// so it lands within 5 bins of that frequency divided by the factor: from -5
+/// to 133.
+const GUARD: usize = 8;
+const _: () = assert!(HALF as f32 / MIN_FACTOR + PEAK_REACH as f32 + 1.0 < (OUT_BINS + GUARD) as f32);
+
+/// Periodic Hann window: sin²(πn / FRAME_LEN). Only for building
+/// [`SYNTHESIS`] and for tests: [`fft::windowed_rfft_1024`] applies the window
+/// in the spectrum.
+const WINDOW: [f32; FRAME_LEN] = {
     let mut w = [0.0; FRAME_LEN];
     let mut n = 0;
     while n < FRAME_LEN {
@@ -226,8 +255,10 @@ static WINDOW: [f32; FRAME_LEN] = {
 };
 
 /// Synthesis window at the quarter rate: every 4th sample of the Hann
-/// window, divided by the sum of the squared Hann window over the 4 frames
-/// that overlap each sample (1.5) and by FRAME_LEN for the inverse transform.
+/// window, divided by the sum of the squared Hann window over the frames that
+/// overlap each sample (1.5 if HOP were a quarter frame; at other hops it
+/// varies along the frame), by FRAME_LEN for the inverse transform and
+/// by the 8 that [`fft::windowed_rfft_1024`] multiplies its spectrum by.
 /// Frames analysed with [`WINDOW`] and overlap-added with this one give back
 /// the input's band below 24 kHz.
 static SYNTHESIS: [f32; LOW_LEN] = {
@@ -241,7 +272,7 @@ static SYNTHESIS: [f32; LOW_LEN] = {
             sum += WINDOW[k] * WINDOW[k];
             k += HOP;
         }
-        w[m] = WINDOW[n] / (sum * FRAME_LEN as f32);
+        w[m] = WINDOW[n] / (sum * (8 * FRAME_LEN) as f32);
         m += 1;
     }
     w
@@ -262,111 +293,73 @@ static DROOP: [f32; OUT_BINS] = {
     g
 };
 
-/// e^(+2πik / LOW_LEN) for k in 0..=OUT_BINS / 2, for the inverse transform.
-static TWIDDLE: [Complex32; OUT_BINS / 2 + 1] = {
-    let mut t = [Complex32::new(0.0, 0.0); OUT_BINS / 2 + 1];
-    let mut k = 0;
-    while k <= OUT_BINS / 2 {
-        let (c, s) = cos_sin_turns(k as f32 / LOW_LEN as f32);
-        t[k] = Complex32::new(c, s);
-        k += 1;
-    }
-    t
-};
+const _: () = assert!(fft::INV == OUT_BINS && HOP.is_multiple_of(DECIMATION));
 
 impl Stft {
     const fn new() -> Self {
         Self {
             input: [0.0; FRAME_LEN],
-            acc: [0.0; LOW_LEN],
-            before: 0.0,
-            fft: [0.0; FRAME_LEN],
-            spec: [Complex32::new(0.0, 0.0); OUT_BINS],
+            start: 0,
+            acc: [0.0; LOW_LEN + 1],
+            spectrum: [Complex32::new(0.0, 0.0); HALF],
+            spec: [Complex32::new(0.0, 0.0); OUT_BINS + 2 * GUARD],
             fill: 0,
         }
     }
 
     fn reset(&mut self) {
         self.input.fill(0.0);
+        self.start = 0;
         self.acc.fill(0.0);
-        self.before = 0.0;
         self.fill = 0;
     }
 
-    /// Store one input sample and return the output sample one frame and
-    /// DECIMATION samples older.
+    /// Input samples that can be taken before the next frame is due.
+    fn room(&self) -> usize {
+        HOP - self.fill
+    }
+
+    /// Store input samples (at most [`room`](Self::room)) and write the output
+    /// samples one frame and DECIMATION samples older.
     #[inline]
-    fn push(&mut self, x: f32) -> f32 {
-        self.input[FRAME_LEN - HOP + self.fill] = x;
-        let (m, r) = (self.fill / DECIMATION, self.fill % DECIMATION);
-        let to = self.acc[m];
-        let from = if m == 0 { self.before } else { self.acc[m - 1] };
-        self.fill += 1;
-        from + (to - from) * (r as f32 / DECIMATION as f32)
+    fn push(&mut self, x: &[f32], y: &mut [f32]) {
+        let at = (self.start + FRAME_LEN - HOP + self.fill) % FRAME_LEN;
+        let (first, wrapped) = x.split_at(x.len().min(FRAME_LEN - at));
+        self.input[at..at + first.len()].copy_from_slice(first);
+        self.input[..wrapped.len()].copy_from_slice(wrapped);
+        for (j, out) in y.iter_mut().enumerate() {
+            let f = self.fill + j;
+            let (m, r) = (f / DECIMATION, f % DECIMATION);
+            let (from, to) = (self.acc[m], self.acc[m + 1]);
+            *out = from + (to - from) * (r as f32 / DECIMATION as f32);
+        }
+        self.fill += x.len();
     }
 
     fn frame_due(&self) -> bool {
         self.fill == HOP
     }
 
-    /// Transform the last frame, let `modify` write the shifted spectrum's
-    /// bins 0 to OUT_BINS - 1 from it (both in microfft's packed layout, with
-    /// DC and Nyquist in bin 0), and overlap-add the result.
-    fn frame(&mut self, modify: impl FnOnce(&[Complex32; HALF], &mut [Complex32; OUT_BINS])) {
+    /// Transform the last frame, let `modify` write the shifted spectrum from
+    /// it (microfft's packed layout, with DC and Nyquist in bin 0; see
+    /// [`Shifted`]), and overlap-add the result.
+    fn frame(&mut self, modify: impl FnOnce(&[Complex32; HALF], &mut Shifted)) {
         self.fill = 0;
-        for ((f, &x), &w) in self.fft.iter_mut().zip(&self.input).zip(&WINDOW) {
-            *f = x * w;
-        }
-        let src = microfft::real::rfft_1024(&mut self.fft);
-        modify(src, &mut self.spec);
-        // DC and the quarter rate's Nyquist bin carry no shifted sound.
-        self.spec[0] = Complex32::new(0.0, 0.0);
-        for (c, &g) in self.spec.iter_mut().zip(&DROOP).skip(1) {
-            *c *= g;
-        }
+        fft::windowed_rfft_1024(&self.input, self.start, &mut self.spectrum);
+        self.start = (self.start + HOP) % FRAME_LEN;
+        modify(&self.spectrum, &mut self.spec);
 
-        let frame = inverse_rfft(&mut self.spec, &TWIDDLE);
-        self.before = self.acc[LOW_HOP - 1];
         self.acc.copy_within(LOW_HOP.., 0);
-        self.acc[LOW_LEN - LOW_HOP..].fill(0.0);
-        let pairs = self.acc.as_chunks_mut::<2>().0.iter_mut().zip(SYNTHESIS.as_chunks::<2>().0);
-        for ((a, w), z) in pairs.zip(frame) {
-            a[0] += z.re * w[0];
-            a[1] -= z.im * w[1];
-        }
-        self.input.copy_within(HOP.., 0);
+        self.acc[LOW_LEN + 1 - LOW_HOP..].fill(0.0);
+        let acc = &mut self.acc;
+        // DC and the quarter rate's Nyquist bin carry no shifted sound, and
+        // the inverse transform leaves them out.
+        let bins = (&mut self.spec[GUARD..GUARD + OUT_BINS]).try_into().unwrap();
+        fft::inverse_rfft_256(bins, &DROOP, |k, z| {
+            acc[2 * k + 1] += z.re * SYNTHESIS[2 * k];
+            acc[2 * k + 2] -= z.im * SYNTHESIS[2 * k + 1];
+        });
     }
-}
-
-/// Inverse of a 256-point real FFT in microfft's packed layout, using one
-/// 128-point complex FFT.
-///
-/// `spec` is overwritten. In the result, frame sample `2m` is `re / 256` of
-/// element `m` and sample `2m + 1` is `-im / 256`.
-///
-/// The even and odd samples of the frame are packed as one complex signal
-/// `z[m] = x[2m] + i x[2m+1]`, whose spectrum is rebuilt from the real
-/// spectrum. The forward FFT of its conjugate gives the conjugate of the
-/// inverse, which skips the reordering and the divisions of microfft's
-/// inverse.
-fn inverse_rfft<'a>(
-    spec: &'a mut [Complex32; OUT_BINS],
-    twiddle: &[Complex32; OUT_BINS / 2 + 1],
-) -> &'a mut [Complex32; OUT_BINS] {
-    let (dc, nyquist) = (spec[0].re, spec[0].im);
-    spec[0] = Complex32::new(dc + nyquist, nyquist - dc);
-    for (k, t) in twiddle.iter().enumerate().skip(1) {
-        let a = spec[k];
-        let b = spec[OUT_BINS - k];
-        // Twice the spectra of the even and odd samples: e = a + conj(b),
-        // o = (a - conj(b)) × twiddle.
-        let e = Complex32::new(a.re + b.re, a.im - b.im);
-        let o = Complex32::new(a.re - b.re, a.im + b.im) * t;
-        // Conjugates of z's spectrum, e + i o, at k and OUT_BINS - k.
-        spec[k] = Complex32::new(e.re - o.im, -e.im - o.re);
-        spec[OUT_BINS - k] = Complex32::new(e.re + o.im, e.im - o.re);
-    }
-    microfft::complex::cfft_128(spec)
 }
 
 /// Spectral peak shifting for [`Stft`].
@@ -377,13 +370,11 @@ struct PeakShift {
     shift_per_bin: f32,
     /// Power of bins 0 to HALF (Nyquist).
     power: [f32; HALF + 1],
-    /// Rotation of each bin's peak in the last frame, in turns.
-    rotation: [f32; HALF + 1],
-    /// Shift of each bin's peak in the last frame, in bins.
-    last_shift: [f32; HALF + 1],
+    /// Rotation and shift of each bin's peak in the last frame.
+    track: [Track; HALF + 1],
     /// Bins of this frame's peaks, in order. Peaks are at least 2 bins apart,
-    /// so there are at most HALF / 2.
-    peaks: [u16; HALF / 2],
+    /// so there are at most HALF / 2, and one more place is written to.
+    peaks: [u16; HALF / 2 + 1],
 }
 
 impl PeakShift {
@@ -392,9 +383,8 @@ impl PeakShift {
             factor,
             shift_per_bin: 1.0 / factor - 1.0,
             power: [0.0; HALF + 1],
-            rotation: [0.0; HALF + 1],
-            last_shift: [0.0; HALF + 1],
-            peaks: [0; HALF / 2],
+            track: [Track::ZERO; HALF + 1],
+            peaks: [0; HALF / 2 + 1],
         }
     }
 
@@ -404,14 +394,13 @@ impl PeakShift {
     }
 
     fn reset(&mut self) {
-        self.rotation.fill(0.0);
-        self.last_shift.fill(0.0);
+        self.track.fill(Track::ZERO);
     }
 
     /// Write the shifted spectrum of `src` to `dst`, both packed, from the
     /// bins of `src` from `lowest` up (at least 1). The bins below are left
     /// out, which is the high-pass.
-    fn apply(&mut self, src: &[Complex32; HALF], dst: &mut [Complex32; OUT_BINS], lowest: usize) {
+    fn apply(&mut self, src: &[Complex32; HALF], dst: &mut Shifted, lowest: usize) {
         dst.fill(Complex32::new(0.0, 0.0));
 
         // Powers from the bin below `lowest`, which the peak search compares
@@ -426,13 +415,19 @@ impl PeakShift {
             strongest = strongest.max(*p);
         }
 
+        // Without a branch, which on noise goes one way or the other at random.
         let threshold = strongest * PEAK_THRESHOLD;
         let mut count = 0;
         for (k, w) in self.power[below..].windows(3).enumerate() {
-            if w[1] > threshold && w[1] > w[0] && w[1] >= w[2] {
-                self.peaks[count] = (below + k + 1) as u16;
-                count += 1;
-            }
+            self.peaks[count] = (below + k + 1) as u16;
+            count += usize::from((w[1] > threshold) & (w[1] > w[0]) & (w[1] >= w[2]));
+        }
+
+        // Each peak's frequency, in place of its power: peaks are at least 2
+        // bins apart, so no later peak reads that power.
+        for &k in &self.peaks[..count] {
+            let k = k as usize;
+            self.power[k] = k as f32 + peak_offset(self.power[k - 1], self.power[k], self.power[k + 1]);
         }
 
         // Bins `lowest` to HALF - 1 (not DC or Nyquist). Bins within reach of
@@ -444,9 +439,8 @@ impl PeakShift {
             let core_from = next.max(k.saturating_sub(PEAK_REACH));
             let core_to = hi.min(k + PEAK_REACH);
             self.move_blocks(src, dst, next, core_from);
-            let freq = k as f32 + peak_offset(self.power[k - 1], self.power[k], self.power[k + 1]);
-            let (whole, rot) = self.plan_move(core_from, core_to, k, freq, true);
-            add_shifted(src, dst, core_from, core_to, whole, rot);
+            let freq = self.power[k];
+            self.move_bins(src, dst, core_from, core_to, k, freq, true);
             self.move_blocks(src, dst, core_to + 1, hi + 1);
             next = hi + 1;
         }
@@ -455,112 +449,127 @@ impl PeakShift {
 
     /// Move bins `from..end` in blocks of [`BLOCK`] bins, aligned to multiples
     /// of [`BLOCK`] so the same bins are grouped in every frame.
-    fn move_blocks(&mut self, src: &[Complex32; HALF], dst: &mut [Complex32; OUT_BINS], from: usize, end: usize) {
+    fn move_blocks(&mut self, src: &[Complex32; HALF], dst: &mut Shifted, from: usize, end: usize) {
         let mut a = from;
         while a < end {
             let b = ((a / BLOCK + 1) * BLOCK).min(end);
-            let (whole, rot) = self.plan_move(a, b - 1, (a + b - 1) / 2, 0.5 * (a + b - 1) as f32, false);
-            add_shifted(src, dst, a, b - 1, whole, rot);
+            self.move_bins(src, dst, a, b - 1, (a + b - 1) / 2, 0.5 * (a + b - 1) as f32, false);
             a = b;
         }
     }
 
-    /// Plan moving bins `from..=to` together to where `freq` (in bins) lands:
-    /// returns the whole-bin shift and the rotation to multiply them by. The
-    /// rotation continues from the one stored at bin `key` in the last frame,
-    /// and is stored for the moved bins for the next frame.
+    /// Add bins `from..=to` of `src` into `dst`, moved together by the whole
+    /// number of bins nearest to where `freq` (in bins) lands, and rotated.
+    /// The rotation continues from the one stored at bin `key` in the last
+    /// frame, and is stored for the moved bins for the next frame.
     ///
     /// For a peak (`exact`), the rotation advances by the exact shift, so a
     /// tone comes out at exactly `freq / factor`. Other bins carry broadband
     /// sound, such as a fast FM call, and advance by the whole shift, which
     /// makes overlapping frames agree exactly while the shift holds.
-    fn plan_move(&mut self, from: usize, to: usize, key: usize, freq: f32, exact: bool) -> (isize, Complex32) {
+    #[allow(clippy::too_many_arguments)]
+    fn move_bins(
+        &mut self,
+        src: &[Complex32; HALF],
+        dst: &mut Shifted,
+        from: usize,
+        to: usize,
+        key: usize,
+        freq: f32,
+        exact: bool,
+    ) {
         let shift = self.shift_per_bin * freq;
         let whole = round_to_int(shift);
         let rate = if exact { shift } else { whole as f32 };
         // Advance by the mean of this and the last frame's rate, so a peak
         // whose shift changes (a chirp) gets the rate from halfway through the
         // hop.
-        let turns = wrap_turns(self.rotation[key] + 0.5 * (self.last_shift[key] + rate) * TURNS_PER_BIN);
-        self.rotation[from..=to].fill(turns);
-        self.last_shift[from..=to].fill(rate);
+        let last = self.track[key];
+        let turns = wrap_turns(last.turns + 0.5 * (last.rate + rate) * TURNS_PER_BIN);
 
         // `turns` is the rotation at the centre of the frame. Moving by
         // `whole` bins turns the centre by `whole / 2` turns, which this takes
-        // back, so frames with different whole shifts agree there.
-        (whole as isize, unit_phasor(turns + 0.5 * whole as f32))
+        // back, so frames with different whole shifts agree there: half a
+        // turn more when `whole` is odd.
+        let rot = unit_phasor(turns);
+        let rot = if whole % 2 == 0 { rot } else { -rot };
+        let at = (GUARD as isize + whole as isize) as usize;
+        let moved = dst[at.wrapping_add(from)..=at.wrapping_add(to)].iter_mut();
+        for ((d, &x), t) in moved.zip(&src[from..=to]).zip(&mut self.track[from..=to]) {
+            *d += x * rot;
+            *t = Track { turns, rate };
+        }
     }
 }
 
-/// Add `src[from..=to] × rot` into `dst`, `shift` bins along. Bins that would
-/// land outside 1..OUT_BINS (on DC, the quarter rate's Nyquist or beyond) are
-/// dropped.
-fn add_shifted(
-    src: &[Complex32; HALF],
-    dst: &mut [Complex32; OUT_BINS],
-    from: usize,
-    to: usize,
-    shift: isize,
-    rot: Complex32,
-) {
-    let from = (from as isize).max(1 - shift);
-    let to = (to as isize).min(OUT_BINS as isize - 1 - shift);
-    if from > to {
-        return;
-    }
-    let (src_from, src_to) = (from as usize, to as usize);
-    let (dst_from, dst_to) = ((from + shift) as usize, (to + shift) as usize);
-    for (d, &x) in dst[dst_from..=dst_to].iter_mut().zip(&src[src_from..=src_to]) {
-        *d += x * rot;
-    }
+/// The rotation of a peak or block, stored at each of its bins for the next
+/// frame.
+#[derive(Clone, Copy, Debug)]
+struct Track {
+    /// Rotation at the centre of the frame, in turns (-0.5 to 0.5).
+    turns: f32,
+    /// Shift, in bins.
+    rate: f32,
+}
+
+impl Track {
+    const ZERO: Self = Self { turns: 0.0, rate: 0.0 };
 }
 
 /// Offset in bins (-0.5 to 0.5) of a tone from the centre of its peak bin,
 /// from the powers of the peak bin and its two neighbours. Exact for a single
 /// tone under a Hann window (Grandke, 1983).
+#[allow(clippy::manual_clamp)] // `clamp` would keep a NaN.
 fn peak_offset(left: f32, centre: f32, right: f32) -> f32 {
     if centre <= 0.0 {
         return 0.0;
     }
     let (side, sign) = if right > left { (right, 1.0) } else { (left, -1.0) };
-    // Magnitude ratio a = (1 + d) / (2 - d) for a tone d bins from the centre.
-    let a = libm::sqrtf(side / centre);
-    sign * ((2.0 * a - 1.0) / (a + 1.0)).clamp(0.0, 0.5)
+    // Magnitude ratio a = (1 + d) / (2 - d) for a tone d bins from the centre,
+    // so d = (2a - 1) / (a + 1). With a = sqrt(side / centre), that is
+    // (2g - centre) / (g + centre) for g = sqrt(side × centre), which takes
+    // one division instead of two.
+    let g = sqrt(side * centre);
+    // `max` before `min` turns a NaN (from an overflowing product) into 0, so
+    // the peak's bins always land inside [`Shifted`].
+    sign * ((2.0 * g - centre) / (g + centre)).max(0.0).min(0.5)
 }
 
-/// Entries per turn in [`PHASORS`].
-const PHASOR_STEPS: usize = 1024;
-
-/// e^(2πi n / PHASOR_STEPS) for n in 0..=PHASOR_STEPS, for [`unit_phasor`].
-static PHASORS: [Complex32; PHASOR_STEPS + 1] = {
-    let mut t = [Complex32::new(0.0, 0.0); PHASOR_STEPS + 1];
-    let mut n = 0;
-    while n <= PHASOR_STEPS {
-        let (c, s) = cos_sin_turns(n as f32 / PHASOR_STEPS as f32);
-        t[n] = Complex32::new(c, s);
-        n += 1;
+/// Square root, within 5 parts in a million, for numbers from 1e-30 to 1e30:
+/// a peak's offset comes out within 4e-6 bins. libm's `sqrtf` is a slow
+/// routine in software on the X8, and Rust has no hardware square root
+/// without the standard library.
+///
+/// Starts from an estimate of 1 / sqrt(x) made from the bits of `x`
+/// (within 3.5%), refined by two Newton steps.
+#[inline]
+fn sqrt(x: f32) -> f32 {
+    let mut y = f32::from_bits(0x5f37_5a86 - (x.to_bits() >> 1));
+    for _ in 0..2 {
+        y *= 1.5 - 0.5 * x * y * y;
     }
-    t
-};
+    x * y
+}
 
-/// e^(2πi t) for `t` in turns, within about ±1000 turns, interpolated
-/// linearly from [`PHASORS`]: within 6e-6 of the exact value. It has no
-/// branches, and is faster than [`cos_sin_turns`]: on a PC the peak shifting
-/// took 4.3 ms per second of audio with it, 5.7 ms without.
+/// e^(2πi t) for `t` from -0.5 to 0.5 turns, interpolated linearly from
+/// [`PHASORS`]: within 6e-6 of the exact value. It is faster than
+/// [`cos_sin_turns`]: on a PC the peak shifting took 4.3 ms per second of audio
+/// with it, 5.7 ms without.
 #[inline]
 fn unit_phasor(t: f32) -> Complex32 {
-    let x = (t - libm::floorf(t)) * PHASOR_STEPS as f32;
+    // Looked up half a turn on, so the index is not negative, then negated.
+    let x = t * PHASOR_STEPS as f32 + (PHASOR_STEPS / 2) as f32;
     let i = (x as usize).min(PHASOR_STEPS - 1);
     let f = x - i as f32;
     let (a, b) = (PHASORS[i], PHASORS[i + 1]);
-    Complex32::new(a.re + (b.re - a.re) * f, a.im + (b.im - a.im) * f)
+    Complex32::new((a.re - b.re) * f - a.re, (a.im - b.im) * f - a.im)
 }
 
 /// Nearest integer, halves away from zero. For values well inside the i32
-/// range.
+/// range. Without a branch, since the sign of a rotation is random.
 #[inline]
 const fn round_to_int(x: f32) -> i32 {
-    if x >= 0.0 { (x + 0.5) as i32 } else { (x - 0.5) as i32 }
+    (x + 0.5f32.copysign(x)) as i32
 }
 
 /// The same angle in -0.5 to 0.5 turns.
@@ -612,12 +621,24 @@ mod tests {
     fn unit_phasor_matches_f64() {
         let mut worst = 0.0f64;
         for i in -40_000..=40_000 {
-            let t = i as f32 * 0.000_123_7;
+            let t = i as f32 / 80_000.0;
             let z = unit_phasor(t);
             let a = core::f64::consts::TAU * t as f64;
             worst = worst.max((z.re as f64 - a.cos()).abs()).max((z.im as f64 - a.sin()).abs());
         }
         assert!(worst < 6e-6, "worst error {worst}");
+    }
+
+    #[test]
+    fn sqrt_matches_f64() {
+        let mut worst = 0.0f64;
+        for i in -3000..=3000 {
+            let x = libm::powf(10.0, i as f32 / 100.0) * 1.000_123;
+            let r = sqrt(x) as f64 / (x as f64).sqrt() - 1.0;
+            worst = worst.max(r.abs());
+        }
+        assert!(worst < 5e-6, "worst relative error {worst}");
+        assert_eq!(sqrt(0.0), 0.0);
     }
 
     #[test]
@@ -630,20 +651,6 @@ mod tests {
             worst = worst.max((c as f64 - a.cos()).abs()).max((s as f64 - a.sin()).abs());
         }
         assert!(worst < 5e-7, "worst error {worst}");
-    }
-
-    #[test]
-    fn inverse_rfft_undoes_the_forward_fft() {
-        let x = noise(1.0, LOW_LEN, 7);
-        let mut buf: [f32; LOW_LEN] = x.clone().try_into().unwrap();
-        let mut spec = *microfft::real::rfft_256(&mut buf);
-        let z = inverse_rfft(&mut spec, &TWIDDLE);
-        for (m, c) in z.iter().enumerate() {
-            let even = c.re / LOW_LEN as f32;
-            let odd = -c.im / LOW_LEN as f32;
-            assert!((even - x[2 * m]).abs() < 1e-5, "sample {}: {even} vs {}", 2 * m, x[2 * m]);
-            assert!((odd - x[2 * m + 1]).abs() < 1e-5, "sample {}: {odd} vs {}", 2 * m + 1, x[2 * m + 1]);
-        }
     }
 
     #[test]
@@ -662,9 +669,11 @@ mod tests {
         let y: Vec<f32> = x
             .iter()
             .map(|&v| {
-                let out = stft.push(v);
+                let mut out = [0.0];
+                stft.push(&[v], &mut out);
+                let out = out[0];
                 if stft.frame_due() {
-                    stft.frame(|src, dst| dst.copy_from_slice(&src[..OUT_BINS]));
+                    stft.frame(|src, dst| dst[GUARD..GUARD + OUT_BINS].copy_from_slice(&src[..OUT_BINS]));
                 }
                 out
             })
@@ -775,6 +784,21 @@ mod tests {
         assert!(y.iter().all(|v| v.is_finite()));
         assert!(peak < 3.0, "peak {peak}");
         assert!(rms(&y[FRAME_LEN..]) > 0.05, "output almost silent");
+    }
+
+    #[test]
+    fn huge_nan_and_infinite_input_does_not_panic() {
+        // Powers this large overflow when multiplied in `peak_offset`.
+        let huge = sine(FS, 50_000.0, 1e7, 20_000);
+        let y = shift(&huge, 10.0, true);
+        assert!(y[4 * FRAME_LEN..].iter().any(|v| v.is_finite() && v.abs() > 1e6));
+        let mut x = sine(FS, 50_000.0, 0.5, 40_000);
+        x[10_000] = f32::NAN;
+        x[20_000] = f32::INFINITY;
+        x[20_001] = f32::NEG_INFINITY;
+        let y = shift(&x, 7.0, true);
+        // The shifter recovers once the bad samples have left its frames.
+        assert!(y[30_000..].iter().all(|v| v.is_finite()));
     }
 
     /// Average power at `freqs` over 2048-sample Hann-windowed segments, half
@@ -929,7 +953,8 @@ mod measurements {
         };
         let db = |r: f32| 20.0 * libm::log10f(r);
         // Steady tones: level error, envelope ripple, and power off the expected frequency.
-        let (mut worst_gain, mut worst_ripple, mut worst_snr) = (0.0f32, 0.0f32, f32::INFINITY);
+        let (mut worst_gain, mut worst_ripple) = (0.0f32, 0.0f32);
+        let mut snrs = std::vec::Vec::new();
         for factor in [4.0, 8.0, 10.0, 16.0, 32.0] {
             let mut f_in = 20_000.0;
             while f_in < 92_000.0 {
@@ -946,12 +971,17 @@ mod measurements {
                 if snr < 25.0 {
                     std::println!("  {f_in} Hz / {factor}: tone to residual {snr:.1} dB, ripple {:.2}", db(hi / lo));
                 }
-                worst_snr = worst_snr.min(snr);
+                snrs.push(snr);
                 f_in += 3_137.0;
             }
         }
+        snrs.sort_by(f32::total_cmp);
         std::println!(
-            "tones: worst level error {worst_gain:.2} dB, worst ripple {worst_ripple:.2} dB, worst tone to residual {worst_snr:.1} dB"
+            "tones: worst level error {worst_gain:.2} dB, worst ripple {worst_ripple:.2} dB, tone to residual: worst {:.1} dB, \
+             10th percentile {:.1} dB, median {:.1} dB",
+            snrs[0],
+            snrs[snrs.len() / 10],
+            snrs[snrs.len() / 2]
         );
         // Chirp 80 to 30 kHz over 20 ms (fast) and 300 ms (slow): level ripple along it.
         for ms in [5.0, 20.0, 300.0] {
@@ -973,59 +1003,75 @@ mod measurements {
         let y = &y[4 * FRAME_LEN..];
         let e: f64 = y.iter().map(|v| (*v as f64).powi(2)).sum();
         let mut worst_r = 0.0f64;
-        for lag in [256, 512, 768, 1024] {
+        for lag in [HOP, 2 * HOP, 3 * HOP, FRAME_LEN] {
             let r: f64 = y.iter().zip(&y[lag..]).map(|(a, b)| *a as f64 * *b as f64).sum::<f64>() / e;
             worst_r = worst_r.max(r.abs());
         }
-        std::println!("noise: gain {:.2} dB, worst correlation at 256 to 1024 lag {worst_r:.3}", db(rms(y) / rms(&x)));
+        std::println!("noise: gain {:.2} dB, worst correlation at 1 to 3 hops or 1 frame {worst_r:.3}", db(rms(y) / rms(&x)));
     }
     #[test]
     #[ignore]
     /// Milliseconds per second of 192 kHz audio for each part of a frame, and
-    /// for the whole shifter. The parts are timed for 750 frames a second.
+    /// for the whole shifter, on white noise. Each part is timed on one
+    /// second's frames, each different, so that the processor cannot learn
+    /// the branches of one frame. Each figure is the fastest of 7 runs.
     fn time_parts() {
-        let frames = 750 * 5;
+        fn best(mut f: impl FnMut()) -> f64 {
+            (0..7)
+                .map(|_| {
+                    let t = Instant::now();
+                    f();
+                    t.elapsed().as_secs_f64() * 1000.0
+                })
+                .fold(f64::MAX, f64::min)
+        }
+        const FS: usize = 192_000;
+        let x = crate::test_util::noise(0.5, FS + FRAME_LEN, 2);
         let mut st = Stft::new();
-        let mut ps = PeakShift::new(10.0);
-        let mut seed = 1u32;
-        for v in st.input.iter_mut() {
-            seed = seed.wrapping_mul(1664525).wrapping_add(1013904223);
-            *v = (seed >> 8) as f32 / 16777216.0 - 0.5;
-        }
-        let t = Instant::now();
-        for _ in 0..frames {
-            for ((f, &x), &w) in st.fft.iter_mut().zip(&st.input).zip(&WINDOW) {
-                *f = x * w;
+        let frames = FS / HOP;
+        let fwd = best(|| {
+            for f in 0..frames {
+                // Only `start` matters for the time.
+                st.start = ((f * HOP) % FRAME_LEN) & !1;
+                fft::windowed_rfft_1024(&st.input, st.start, &mut st.spectrum);
+                std::hint::black_box(&st.spectrum);
             }
-            let s = microfft::real::rfft_1024(&mut st.fft);
-            std::hint::black_box(s);
-        }
-        let fwd = t.elapsed().as_secs_f64() / 5.0 * 1000.0;
-        for ((f, &x), &w) in st.fft.iter_mut().zip(&st.input).zip(&WINDOW) {
-            *f = x * w;
-        }
-        let src: [Complex32; HALF] = *microfft::real::rfft_1024(&mut st.fft);
-        let t = Instant::now();
-        for _ in 0..frames {
-            ps.apply(&src, &mut st.spec, 80);
-            std::hint::black_box(&st.spec);
-        }
-        let apply = t.elapsed().as_secs_f64() / 5.0 * 1000.0;
-        let t = Instant::now();
-        for _ in 0..frames {
-            let mut sp: [Complex32; OUT_BINS] = src[..OUT_BINS].try_into().unwrap();
-            let z = inverse_rfft(&mut sp, &TWIDDLE);
-            std::hint::black_box(z);
-        }
-        let inv = t.elapsed().as_secs_f64() / 5.0 * 1000.0;
-        let mut p = PitchShifter::new(192_000.0);
-        let x: std::vec::Vec<f32> = (0..192_000 * 5).map(|i| ((i * 7919) % 1000) as f32 / 1000.0 - 0.5).collect();
+        });
+        let spectra: std::vec::Vec<[Complex32; HALF]> = (0..frames)
+            .map(|f| {
+                let mut ring = [0.0; FRAME_LEN];
+                ring.copy_from_slice(&x[f * HOP..f * HOP + FRAME_LEN]);
+                let mut s = [Complex32::new(0.0, 0.0); HALF];
+                fft::windowed_rfft_1024(&ring, 0, &mut s);
+                s
+            })
+            .collect();
+        let mut ps = PeakShift::new(10.0);
+        let mut spec = [Complex32::new(0.0, 0.0); OUT_BINS + 2 * GUARD];
+        let apply = best(|| {
+            for src in &spectra {
+                ps.apply(src, &mut spec, 80);
+                std::hint::black_box(&spec);
+            }
+        });
+        let mut acc = [0.0f32; LOW_LEN + 1];
+        let inv = best(|| {
+            for src in &spectra {
+                let mut sp: [Complex32; OUT_BINS] = src[..OUT_BINS].try_into().unwrap();
+                fft::inverse_rfft_256(&mut sp, &DROOP, |k, z| {
+                    acc[2 * k + 1] += z.re * SYNTHESIS[2 * k];
+                    acc[2 * k + 2] -= z.im * SYNTHESIS[2 * k + 1];
+                });
+                std::hint::black_box(&acc);
+            }
+        });
+        let mut p = PitchShifter::new(FS as f32);
         let mut y = std::vec![0.0; 256];
-        let t = Instant::now();
-        for c in x.chunks(256) {
-            p.process(c, &mut y[..c.len()]);
-        }
-        let all = t.elapsed().as_secs_f64() / 5.0 * 1000.0;
-        std::println!("ms per s: forward {fwd:.2}, apply {apply:.2}, inverse {inv:.2}, whole {all:.2}");
+        let all = best(|| {
+            for c in x[..FS].chunks(256) {
+                p.process(c, &mut y[..c.len()]);
+            }
+        });
+        std::println!("ms per s: forward {fwd:.2}, apply {apply:.2}, inverse and overlap-add {inv:.2}, whole {all:.2}");
     }
 }
