@@ -412,7 +412,7 @@ impl PeakShift {
         let mut count = 0;
         for (k, w) in self.power[below..].windows(3).enumerate() {
             self.peaks[count] = (below + k + 1) as u16;
-            count += usize::from(w[1] > threshold && w[1] > w[0] && w[1] >= w[2]);
+            count += usize::from((w[1] > threshold) & (w[1] > w[0]) & (w[1] >= w[2]));
         }
 
         // Bins `lowest` to HALF - 1 (not DC or Nyquist). Bins within reach of
@@ -479,9 +479,10 @@ impl PeakShift {
         let rot = unit_phasor(turns);
         let rot = if whole % 2 == 0 { rot } else { -rot };
         let at = (GUARD as isize + whole as isize) as usize;
-        for k in from..=to {
-            self.track[k] = Track { turns, rate };
-            dst[at.wrapping_add(k)] += src[k] * rot;
+        let moved = dst[at.wrapping_add(from)..=at.wrapping_add(to)].iter_mut();
+        for ((d, &x), t) in moved.zip(&src[from..=to]).zip(&mut self.track[from..=to]) {
+            *d += x * rot;
+            *t = Track { turns, rate };
         }
     }
 }
@@ -547,10 +548,10 @@ fn unit_phasor(t: f32) -> Complex32 {
 }
 
 /// Nearest integer, halves away from zero. For values well inside the i32
-/// range.
+/// range. Without a branch, since the sign of a rotation is random.
 #[inline]
 const fn round_to_int(x: f32) -> i32 {
-    if x >= 0.0 { (x + 0.5) as i32 } else { (x - 0.5) as i32 }
+    (x + 0.5f32.copysign(x)) as i32
 }
 
 /// The same angle in -0.5 to 0.5 turns.
@@ -919,7 +920,8 @@ mod measurements {
         };
         let db = |r: f32| 20.0 * libm::log10f(r);
         // Steady tones: level error, envelope ripple, and power off the expected frequency.
-        let (mut worst_gain, mut worst_ripple, mut worst_snr) = (0.0f32, 0.0f32, f32::INFINITY);
+        let (mut worst_gain, mut worst_ripple) = (0.0f32, 0.0f32);
+        let mut snrs = std::vec::Vec::new();
         for factor in [4.0, 8.0, 10.0, 16.0, 32.0] {
             let mut f_in = 20_000.0;
             while f_in < 92_000.0 {
@@ -936,12 +938,17 @@ mod measurements {
                 if snr < 25.0 {
                     std::println!("  {f_in} Hz / {factor}: tone to residual {snr:.1} dB, ripple {:.2}", db(hi / lo));
                 }
-                worst_snr = worst_snr.min(snr);
+                snrs.push(snr);
                 f_in += 3_137.0;
             }
         }
+        snrs.sort_by(f32::total_cmp);
         std::println!(
-            "tones: worst level error {worst_gain:.2} dB, worst ripple {worst_ripple:.2} dB, worst tone to residual {worst_snr:.1} dB"
+            "tones: worst level error {worst_gain:.2} dB, worst ripple {worst_ripple:.2} dB, tone to residual: worst {:.1} dB, \
+             10th percentile {:.1} dB, median {:.1} dB",
+            snrs[0],
+            snrs[snrs.len() / 10],
+            snrs[snrs.len() / 2]
         );
         // Chirp 80 to 30 kHz over 20 ms (fast) and 300 ms (slow): level ripple along it.
         for ms in [5.0, 20.0, 300.0] {
@@ -963,17 +970,18 @@ mod measurements {
         let y = &y[4 * FRAME_LEN..];
         let e: f64 = y.iter().map(|v| (*v as f64).powi(2)).sum();
         let mut worst_r = 0.0f64;
-        for lag in [256, 512, 768, 1024] {
+        for lag in [HOP, 2 * HOP, 3 * HOP, FRAME_LEN] {
             let r: f64 = y.iter().zip(&y[lag..]).map(|(a, b)| *a as f64 * *b as f64).sum::<f64>() / e;
             worst_r = worst_r.max(r.abs());
         }
-        std::println!("noise: gain {:.2} dB, worst correlation at 256 to 1024 lag {worst_r:.3}", db(rms(y) / rms(&x)));
+        std::println!("noise: gain {:.2} dB, worst correlation at 1 to 3 hops or 1 frame {worst_r:.3}", db(rms(y) / rms(&x)));
     }
     #[test]
     #[ignore]
     /// Milliseconds per second of 192 kHz audio for each part of a frame, and
-    /// for the whole shifter, on white noise. The parts are timed for 750
-    /// frames a second. Each figure is the fastest of 7 runs.
+    /// for the whole shifter, on white noise. Each part is timed on one
+    /// second's frames, each different, so that the processor cannot learn
+    /// the branches of one frame. Each figure is the fastest of 7 runs.
     fn time_parts() {
         fn best(mut f: impl FnMut()) -> f64 {
             (0..7)
@@ -984,27 +992,38 @@ mod measurements {
                 })
                 .fold(f64::MAX, f64::min)
         }
-        let frames = 750;
+        const FS: usize = 192_000;
+        let x = crate::test_util::noise(0.5, FS + FRAME_LEN, 2);
         let mut st = Stft::new();
-        let mut ps = PeakShift::new(10.0);
-        st.input.copy_from_slice(&crate::test_util::noise(0.5, FRAME_LEN, 1));
+        let frames = FS / HOP;
         let fwd = best(|| {
-            for _ in 0..frames {
-                fft::windowed_rfft_1024(&st.input, 0, &mut st.spectrum);
+            for f in 0..frames {
+                // Only `start` matters for the time.
+                st.start = (f * HOP) % FRAME_LEN & !1;
+                fft::windowed_rfft_1024(&st.input, st.start, &mut st.spectrum);
                 std::hint::black_box(&st.spectrum);
             }
         });
-        let src = st.spectrum;
+        let spectra: std::vec::Vec<[Complex32; HALF]> = (0..frames)
+            .map(|f| {
+                let mut ring = [0.0; FRAME_LEN];
+                ring.copy_from_slice(&x[f * HOP..f * HOP + FRAME_LEN]);
+                let mut s = [Complex32::new(0.0, 0.0); HALF];
+                fft::windowed_rfft_1024(&ring, 0, &mut s);
+                s
+            })
+            .collect();
+        let mut ps = PeakShift::new(10.0);
         let mut spec = [Complex32::new(0.0, 0.0); OUT_BINS + 2 * GUARD];
         let apply = best(|| {
-            for _ in 0..frames {
-                ps.apply(&src, &mut spec, 80);
+            for src in &spectra {
+                ps.apply(src, &mut spec, 80);
                 std::hint::black_box(&spec);
             }
         });
         let mut acc = [0.0f32; LOW_LEN + 1];
         let inv = best(|| {
-            for _ in 0..frames {
+            for src in &spectra {
                 let mut sp: [Complex32; OUT_BINS] = src[..OUT_BINS].try_into().unwrap();
                 fft::inverse_rfft_256(&mut sp, &DROOP, |k, z| {
                     acc[2 * k + 1] += z.re * SYNTHESIS[2 * k];
@@ -1013,11 +1032,10 @@ mod measurements {
                 std::hint::black_box(&acc);
             }
         });
-        let mut p = PitchShifter::new(192_000.0);
-        let x = crate::test_util::noise(0.5, 192_000, 2);
+        let mut p = PitchShifter::new(FS as f32);
         let mut y = std::vec![0.0; 256];
         let all = best(|| {
-            for c in x.chunks(256) {
+            for c in x[..FS].chunks(256) {
                 p.process(c, &mut y[..c.len()]);
             }
         });

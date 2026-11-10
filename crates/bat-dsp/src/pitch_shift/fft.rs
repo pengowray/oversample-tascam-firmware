@@ -9,8 +9,8 @@
 //! as it reads the frame, and the inverse leaves its output in that order for
 //! the overlap-add to read, so neither needs a pass to reorder. The twiddles
 //! come from [`PHASORS`], which the shifter also uses for its rotations. On a PC
-//! without SIMD the forward transform took 1.6 ms per second of audio, against
-//! 4.0 ms for microfft's `rfft_1024` and its windowing.
+//! without SIMD the forward transform took 2.8 ms per second of audio, against
+//! 3.6 ms for microfft's `rfft_1024` and its windowing.
 
 use microfft::Complex32;
 
