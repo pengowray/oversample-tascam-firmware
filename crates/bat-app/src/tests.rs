@@ -9,6 +9,7 @@ use bat_dsp::spectrum::SpectrumAnalyzer;
 
 mod chime_test;
 mod cpu_test;
+mod mute;
 mod player;
 mod remote;
 mod stereo;

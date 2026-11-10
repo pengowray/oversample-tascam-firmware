@@ -72,6 +72,7 @@ fn fit<'s>(font: &FontRenderer, s: &'s str, max: i32) -> (&'s str, bool) {
 
 /// Draw `content` with its baseline at `y`; returns the x where the next text
 /// would start (for left-aligned text).
+#[inline(never)]
 fn text(
     fb: Fb,
     font: &FontRenderer,
@@ -133,16 +134,19 @@ const LEFT: HorizontalAlignment = HorizontalAlignment::Left;
 const CENTER: HorizontalAlignment = HorizontalAlignment::Center;
 const RIGHT: HorizontalAlignment = HorizontalAlignment::Right;
 
+#[inline(never)]
 fn fill(fb: Fb, r: Rectangle, color: Rgb565) {
     let _ = fb.fill_solid(&r, color);
 }
 
+#[inline(never)]
 fn rounded(fb: Fb, r: Rectangle, radius: u32, color: Rgb565) {
     let _ = RoundedRectangle::new(r, CornerRadii::new(Size::new(radius, radius)))
         .into_styled(PrimitiveStyle::with_fill(color))
         .draw(fb);
 }
 
+#[inline(never)]
 fn hline(fb: Fb, x0: i32, x1: i32, y: i32, color: Rgb565) {
     fill(fb, Rectangle::new(Point::new(x0, y), Size::new((x1 - x0 + 1).max(0) as u32, 1)), color);
 }
@@ -220,6 +224,7 @@ pub fn draw(app: &BatApp, fb: Fb) {
     mode_buttons(app, fb);
 }
 
+#[inline(never)]
 fn title_bar(fb: Fb, title: impl u8g2_fonts::Content, menu: bool) {
     fill(fb, Rectangle::new(Point::zero(), Size::new(320, TITLE_H as u32)), TITLE);
     text(fb, &BODY_BOLD, title, 160, 17, CENTER, TEXT);
@@ -309,6 +314,9 @@ fn status_bar(app: &BatApp, fb: Fb) {
         x = text(fb, &BIG, format_args!("{value:02}"), x, baseline, LEFT, TEXT);
         x = text(fb, &BODY, unit, x + 1, baseline, LEFT, TEXT) + 3;
     }
+    if app.muted_for_take() {
+        text(fb, &BODY, pages::MUTED_LABEL, x + 8, baseline - 1, LEFT, TEXT);
+    }
     let c = app.clock_s;
     text(
         fb,
@@ -357,6 +365,7 @@ fn notice_panel(fb: Fb) -> (i32, i32) {
     (panel.top_left.x + 10, panel.top_left.y + 22)
 }
 
+#[inline(never)]
 fn notice_lines(fb: Fb, x: i32, heading_y: i32, lines: &[&str]) {
     for (line, y) in lines.iter().zip((1..).map(|row| heading_y + row * 24)) {
         text(fb, &BODY, *line, x, y, LEFT, TEXT);
@@ -373,6 +382,7 @@ fn mix_silence_notice(fb: Fb, silence: MixSilence) {
 }
 
 /// A small notice in the top left corner of the waterfall.
+#[inline(never)]
 fn corner_notice_lines(fb: Fb, lines: &[&str]) {
     let width = |line: &&str| {
         BODY.get_rendered_dimensions(*line, Point::zero(), VerticalPosition::Baseline).map_or(0, |d| d.advance.x)
@@ -671,6 +681,7 @@ fn snapshot(app: &BatApp, fb: Fb) {
 
 /// Draw `value` to one decimal place with its decimal point at `point_x`:
 /// the whole part ends there and the point and tenth start there.
+#[inline(never)]
 fn number_at_point(fb: Fb, font: &FontRenderer, value: f32, point_x: i32, y: i32, color: Rgb565) {
     let tenths = libm::roundf(value.max(0.0) * 10.0) as u32;
     text(fb, font, format_args!("{}", tenths / 10), point_x, y, RIGHT, color);
@@ -811,6 +822,7 @@ pub(crate) fn listen_help(app: &BatApp) -> ListenHelp {
     }
 }
 
+#[inline(never)]
 fn outline_selected(fb: Fb, r: Rectangle) {
     let outline = PrimitiveStyleBuilder::new().stroke_color(ACCENT).stroke_width(2).build();
     let _ = RoundedRectangle::new(r, CornerRadii::new(Size::new(6, 6))).into_styled(outline).draw(fb);
@@ -832,6 +844,7 @@ fn auto_volume_row(app: &BatApp, fb: Fb) {
 }
 
 /// A switch. On: blue track, knob at the right. Off: grey track, knob at the left.
+#[inline(never)]
 fn switch_control(fb: Fb, sw: Rectangle, on: bool) {
     let h = sw.size.height;
     let _ = RoundedRectangle::new(sw, CornerRadii::new(Size::new(h / 2, h / 2)))

@@ -207,12 +207,14 @@ pub const fn panel_switch(panel: Rectangle) -> Rectangle {
     Rectangle::new(Point::new(260, panel.top_left.y + 8), Size::new(SWITCH_W, SWITCH_H))
 }
 
-/// Record page: the MIX file, GUANO metadata, then whether REC pauses takes. A panel is 48 px with
+/// Record page: the MIX file, GUANO metadata, whether REC pauses takes, then whether the
+/// headphones are muted during a take. A panel is 48 px with
 /// one help line, 14 px more for each line after; the gaps are 6 px, as small as keeps the panels
 /// apart.
 pub const RECORD_MIX_FILE: Rectangle = panel(PAGE_TOP, 48);
 pub const RECORD_GUANO: Rectangle = panel(PAGE_TOP + 54, 62);
 pub const RECORD_PAUSE: Rectangle = panel(PAGE_TOP + 122, 48);
+pub const RECORD_MUTE: Rectangle = panel(PAGE_TOP + 176, 48);
 /// Phone page: the phone remote with its status lines, its clock switch, then the phone page's QR
 /// code with the address and the Phone time button beside it. The remote's switch is what people
 /// change most, so it is at the top; the QR code is needed once for each phone.
@@ -270,6 +272,7 @@ pub fn control_row(setting: Setting) -> Rectangle {
         Setting::MixFile => panel_switch_row(RECORD_MIX_FILE),
         Setting::ClockFromRemote => panel_switch_row(PHONE_CLOCK),
         Setting::PauseWithRec => panel_switch_row(RECORD_PAUSE),
+        Setting::MuteWhileRecording => panel_switch_row(RECORD_MUTE),
         Setting::DebugInfo => panel_switch_row(TESTS_DEBUG),
         Setting::Mark(kind) => {
             let j = Setting::MARKS.iter().position(|&k| k == kind).unwrap_or(0) as i32;
@@ -317,6 +320,7 @@ pub fn switch(setting: Setting) -> Rectangle {
         Setting::MixFile => panel_switch(RECORD_MIX_FILE),
         Setting::ClockFromRemote => panel_switch(PHONE_CLOCK),
         Setting::PauseWithRec => panel_switch(RECORD_PAUSE),
+        Setting::MuteWhileRecording => panel_switch(RECORD_MUTE),
         Setting::DebugInfo => panel_switch(TESTS_DEBUG),
         _ => {
             let r = control_row(setting);

@@ -7,8 +7,8 @@ use embedded_graphics::primitives::{PrimitiveStyle, Rectangle};
 
 use super::{BODY, BODY_BOLD, Fb, Fixed, LEFT, SMALL, outline_selected, rounded, switch_control, text};
 use crate::layout::{
-    PHONE_CLOCK, PHONE_REMOTE, QR_MARGIN, QR_MODULE, QR_TEXT_X, RECORD_GUANO, RECORD_MIX_FILE, RECORD_PAUSE,
-    TESTS_CPU_TEST, TESTS_DEBUG, panel_switch, phone_time, qr_card,
+    PHONE_CLOCK, PHONE_REMOTE, QR_MARGIN, QR_MODULE, QR_TEXT_X, RECORD_GUANO, RECORD_MIX_FILE, RECORD_MUTE,
+    RECORD_PAUSE, TESTS_CPU_TEST, TESTS_DEBUG, panel_switch, phone_time, qr_card,
 };
 use crate::palette::*;
 use crate::{BatApp, Mode, RecorderCommand, RemoteCommand, RemoteResult, Setting, qr};
@@ -31,6 +31,11 @@ pub(super) const PAUSE_NAME: &str = "Pause with REC";
 /// Each switch's line says what its current setting does: [off, on].
 pub(super) const PAUSE_STATE: [&str; 2] =
     ["REC is ignored during a take, so takes have no gaps", "REC pauses and resumes a take, with a MARK per pause"];
+pub(super) const MUTE_NAME: &str = "Mute while recording";
+pub(super) const MUTE_STATE: [&str; 2] =
+    ["Headphones play the listening mode during a take", "Headphones are silent during a take. Uses less CPU"];
+/// In the recording bar while Mute while recording silences the headphones.
+pub(super) const MUTED_LABEL: &str = "MUTED";
 /// On the main screen when REC was kept from pausing a take.
 pub(super) const PAUSE_OFF_LINES: [&str; 2] = ["Pausing is off.", "STOP ends the take."];
 pub(super) const CLOCK_FROM_REMOTE_STATE: [&str; 2] =
@@ -86,6 +91,7 @@ fn state(lines: &[&'static str; 2], on: bool) -> &'static str {
 
 /// A panel with a name, a switch at the right of the name, and under it a line saying what the
 /// current setting does, then any fixed help.
+#[inline(never)]
 fn switch_panel(fb: Fb, panel: Rectangle, name: &str, lines: &[&str], on: bool, selected: bool) {
     rounded(fb, panel, 6, PANEL);
     if selected {
@@ -100,6 +106,7 @@ fn switch_panel(fb: Fb, panel: Rectangle, name: &str, lines: &[&str], on: bool, 
 }
 
 /// A button that opens a test, with its help inside.
+#[inline(never)]
 fn test_button(fb: Fb, button: Rectangle, name: &str, help: &[&str]) {
     rounded(fb, button, 4, BUTTON);
     let (x, y) = (button.top_left.x + 10, button.top_left.y);
@@ -130,6 +137,11 @@ pub(super) fn record(app: &BatApp, fb: Fb) {
             app.pause_with_rec(),
             selected,
         );
+    }
+    if app.input_kind() == crate::InputKind::Live {
+        let selected = app.selected_setting() == Setting::MuteWhileRecording;
+        let on = app.mute_while_recording();
+        switch_panel(fb, RECORD_MUTE, MUTE_NAME, &[state(&MUTE_STATE, on)], on, selected);
     }
 }
 

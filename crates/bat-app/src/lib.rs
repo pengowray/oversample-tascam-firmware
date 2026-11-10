@@ -97,6 +97,9 @@ const WF_NO_DATA: u8 = 255;
 /// After lost input, how many samples the step in the input at the join is faded
 /// over (0.33 ms at 192 kHz).
 const JOIN_FADE_SAMPLES: u32 = 64;
+/// How long the headphones take to fade out when a take starts with Mute while recording on, and
+/// to fade back in when it ends: 20 ms at 192 kHz.
+const MUTE_FADE_SAMPLES: f32 = 3_840.0;
 /// Margin shown either side of a call in its snapshot.
 const SNAP_MARGIN_MS: f32 = 2.0;
 
@@ -263,19 +266,23 @@ pub enum Setting {
     ClockFromRemote,
     /// Whether REC pauses a take: see [`BatApp::set_pause_option_available`].
     PauseWithRec,
+    /// Whether the headphones are silent while a take is being recorded: see
+    /// [`BatApp::mute_while_recording`].
+    MuteWhileRecording,
     /// Whether detections of this kind are marked: a tick under the
     /// waterfall, the last-call panel, and time expansion. On or off.
     Mark(CallKind),
 }
 
 impl Setting {
-    pub const ALL: [Setting; 11] = [
+    pub const ALL: [Setting; 12] = [
         Setting::LowestBatCall,
         Setting::ListenTo,
         Setting::AutoLevel,
         Setting::DebugInfo,
         Setting::MixFile,
         Setting::PauseWithRec,
+        Setting::MuteWhileRecording,
         Setting::ClockFromRemote,
         Setting::Mark(CallKind::Bat),
         Setting::Mark(CallKind::Tone),
@@ -287,7 +294,7 @@ impl Setting {
 
     pub fn page(self) -> SettingsPage {
         match self {
-            Setting::MixFile | Setting::PauseWithRec => SettingsPage::Record,
+            Setting::MixFile | Setting::PauseWithRec | Setting::MuteWhileRecording => SettingsPage::Record,
             Setting::ClockFromRemote => SettingsPage::Phone,
             Setting::DebugInfo => SettingsPage::Tests,
             _ => SettingsPage::Listen,
@@ -616,6 +623,12 @@ pub struct BatApp<'a> {
     clock_from_remote: bool,
     pause_option_available: bool,
     pause_with_rec: bool,
+    /// See [`mute_while_recording`](Self::mute_while_recording).
+    mute_while_recording: bool,
+    /// The headphones' gain for Mute while recording: 1 heard, 0 silent, between while fading.
+    listen_gain: f32,
+    /// The listening modes were skipped while muted, so they start clean when the sound returns.
+    modes_skipped: bool,
     /// Until this sample, the main screen says that REC did not pause the take.
     pause_refused_until: u64,
     /// The host's clock: local seconds since 1970 at an app sample.
@@ -782,6 +795,9 @@ impl<'a> BatApp<'a> {
             field!((*this).clock_from_remote).write(true);
             field!((*this).pause_option_available).write(false);
             field!((*this).pause_with_rec).write(false);
+            field!((*this).mute_while_recording).write(false);
+            field!((*this).listen_gain).write(1.0);
+            field!((*this).modes_skipped).write(false);
             field!((*this).pause_refused_until).write(0);
             field!((*this).host_clock).write(None);
             field!((*this).clock_state).write(ClockState::Idle);
@@ -841,8 +857,12 @@ impl<'a> BatApp<'a> {
         }
         self.mode = mode;
         self.level.sound_changed();
-        // Start the new mode clean, so no stale sound from its last use plays.
-        match mode {
+        self.reset_mode();
+    }
+
+    /// Start the current mode clean, so no stale sound from its last use plays.
+    fn reset_mode(&mut self) {
+        match self.mode {
             Mode::Het => self.het.reset(),
             Mode::Comb => self.comb.reset(),
             Mode::Fd => self.fd.reset(),
@@ -1111,6 +1131,8 @@ impl<'a> BatApp<'a> {
             Setting::ClockFromRemote => {}
             Setting::PauseWithRec if steps != 0 => self.pause_with_rec = steps > 0,
             Setting::PauseWithRec => {}
+            Setting::MuteWhileRecording if steps != 0 => self.mute_while_recording = steps > 0,
+            Setting::MuteWhileRecording => {}
             // Turning the wheel up switches on, down switches off.
             Setting::Mark(kind) if steps != 0 => self.set_marked(kind, steps > 0),
             Setting::Mark(_) => {}
@@ -1370,6 +1392,23 @@ impl<'a> BatApp<'a> {
         self.pause_with_rec
     }
 
+    /// Whether the headphones are silent while a take is being recorded (not in record standby
+    /// or while paused), so the sound from headphones or a speaker is not recorded. The
+    /// listening mode is skipped then, which saves its CPU. Off by default. The CPU test plays
+    /// every mode whatever this says.
+    pub fn mute_while_recording(&self) -> bool {
+        self.mute_while_recording
+    }
+
+    pub fn set_mute_while_recording(&mut self, on: bool) {
+        self.mute_while_recording = on;
+    }
+
+    /// Whether Mute while recording is silencing the headphones now (or fading them out).
+    pub fn muted_for_take(&self) -> bool {
+        self.mute_while_recording && self.input_kind == InputKind::Live && self.is_recording() && !self.cpu_test.running
+    }
+
     /// The host kept REC from pausing a take: the main screen says so for a few seconds.
     pub fn pause_refused(&mut self) {
         self.pause_refused_until = self.samples + PAUSE_REFUSED_S * self.sample_rate as u64;
@@ -1453,6 +1492,7 @@ impl<'a> BatApp<'a> {
             Setting::MixFile => self.mix_file_available,
             Setting::ClockFromRemote => self.remote.available,
             Setting::PauseWithRec => self.pause_option_available,
+            Setting::MuteWhileRecording => self.input_kind == InputKind::Live,
             _ => true,
         }
     }
@@ -1744,6 +1784,7 @@ impl<'a> BatApp<'a> {
                     Setting::MixFile => self.mix_file = !self.mix_file,
                     Setting::ClockFromRemote => self.clock_from_remote = !self.clock_from_remote,
                     Setting::PauseWithRec => self.pause_with_rec = !self.pause_with_rec,
+                    Setting::MuteWhileRecording => self.mute_while_recording = !self.mute_while_recording,
                     _ => {}
                 }
             }
@@ -2187,6 +2228,29 @@ impl<'a> BatApp<'a> {
     /// The headphone output for a chunk of the inputs, whose mono mix is in `mono`.
     fn make_output(&mut self, first: &[f32], second: &[f32], out_l: &mut [f32], out_r: &mut [f32]) {
         let len = first.len();
+        let muted = self.muted_for_take();
+        if muted && self.listen_gain == 0.0 {
+            // Silent for the take: no listening mode, time expansion or Auto volume runs. A phone
+            // remote beep is used up silently, so it does not play late when the take ends.
+            if self.remote.beeping() {
+                self.remote.add_beep(out_l, out_r);
+            }
+            out_l.fill(0.0);
+            out_r.fill(0.0);
+            self.modes_skipped = true;
+            self.last_mono = self.mono[len - 1];
+            self.last_ears = [first[len - 1], second[len - 1]];
+            self.last_out = [0.0; 2];
+            self.stages.lap(Stage::Input);
+            self.stages.lap(Stage::Output);
+            return;
+        }
+        if self.modes_skipped {
+            // The take has ended: the modes start from silence, under the fade in.
+            self.modes_skipped = false;
+            self.reset_mode();
+            self.level.sound_changed();
+        }
         let analysis_runs = self.analysis_runs();
         let stereo = self.wants_stereo();
         if stereo && !self.stereo {
@@ -2292,6 +2356,17 @@ impl<'a> BatApp<'a> {
         self.switch_left = self.switch_left.saturating_sub(len as u32);
         if self.remote.beeping() {
             self.remote.add_beep(out_l, out_r);
+        }
+        let target = if muted { 0.0 } else { 1.0 };
+        if self.listen_gain != target || target != 1.0 {
+            let step = if muted { -1.0 / MUTE_FADE_SAMPLES } else { 1.0 / MUTE_FADE_SAMPLES };
+            let mut gain = self.listen_gain;
+            for (l, r) in out_l.iter_mut().zip(out_r.iter_mut()) {
+                gain = (gain + step).clamp(0.0, 1.0);
+                *l *= gain;
+                *r *= gain;
+            }
+            self.listen_gain = gain;
         }
         self.last_out = [out_l[len - 1], out_r[len - 1]];
         self.stages.lap(Stage::Output);
