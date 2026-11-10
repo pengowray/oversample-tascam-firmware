@@ -14,17 +14,20 @@ command whether Phone remote is on or not.
 
 ## What the phone plays
 
-1. **Wake tone.** An 18 kHz tone for 0.5 s. The phone page uses the AudioMoth library's
+1. **Lead-in.** 1 s of quiet white noise, about 27 dB below the tone, with 50 ms fades. It wakes
+   Bluetooth speakers and headphones, which can cut off the start of a sound after silence. It has
+   no peak at 18 kHz, so it does not wake the X8's decoders. Pages before 2026-11-11 did not play it.
+2. **Wake tone.** An 18 kHz tone for 0.5 s. The phone page uses the AudioMoth library's
    `playTone`, which plays the carrier in 10 ms and 5 ms symbols with the polarity turned over at
    each symbol. The X8's chime decoders are asleep while it records, to save CPU. They wake when the
    18 kHz bin of the bat screen's spectrum is at least 10 dB above the bins 1.5 kHz to either side
    for about 120 ms. Once awake, they read chimes for 6 s, and another tone in that time keeps them
    awake for 6 s more.
-2. **Wait.** 0.8 s. The AudioMoth connector then waits up to 1.2 s more, so that the chime starts on
+3. **Wait.** 0.8 s. The AudioMoth connector then waits up to 1.2 s more, so that the chime starts on
    a whole second.
-3. **Chime.** An AudioMoth chime with the time, the UTC offset, optionally the location, and the
+4. **Chime.** An AudioMoth chime with the time, the UTC offset, optionally the location, and the
    deployment ID below.
-4. **Once.** The phone page plays each command once. Pages before 2026-11-10 played the tone and
+5. **Once.** The phone page plays each command once. Pages before 2026-11-10 played the tone and
    the chime twice; a command read twice does no harm (see Rules), so a press that was not heard
    can simply be repeated.
 
