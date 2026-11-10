@@ -181,6 +181,30 @@ run is comparable with B251's.
   FD, 43 for PITCH mono and 77 to 82 for PITCH stereo. Drawing a frame is 6 to 7 and copying it
   to the screen 4.
 
+**B260, the same source built for size (`opt-level = "s"`), 10 November 2026.** Run the same two
+ways as B258. `dsp` is 5 to 8 points higher in record standby and 6 to 12 points higher while
+recording:
+
+| Listening mode | Standby: B258 | Standby: B260 | Recording: B258 | Recording: B260 | Recording, B260: input skipped |
+|---|---|---|---|---|---|
+| 1:1 mono, Auto volume off | 27 | 32 | 32 | 38 | 0% |
+| FD, Auto volume off | 38 | 44 | 44 | 55 | 1% |
+| HET stereo, Auto volume on | 36 | 41 | 43 | 51 | 1% |
+| COMB stereo, Auto volume on | 39 | 45 | 46 | 58 | 3% |
+| FD, Auto volume on, chime decoders running | 48 | 55 | 59 | 68 | 4% |
+| PITCH mono, Auto volume off | 61 | 73 | 76 | 80 | 56% |
+
+- While recording, B260 skips 1 to 4% of the input in HET, COMB and FD with Auto volume on or the
+  chime decoders running, where B258 skipped none. PITCH mono skips about half its input and loses
+  frames.
+- In the stages view, the analysis (`ana`) rises from 24 to 27 to 29 to 32 while recording, and
+  FD's mode from 12 to 13 to 15 to 16. The audio interrupt's part (`hook`) rises from 8 to 10, and
+  drawing and copying a frame each by about 1.
+- So the whole patch built for size is too slow. Building only the cold code for size needs
+  per-function settings, which the pinned stable toolchain lacks (`#[optimize(size)]` is
+  unstable), or changes to the code itself. Per-crate settings save little under fat LTO, and
+  thin LTO makes the patch bigger.
+
 ## Memory free for the patch
 
 Found by checking that no stock code refers to these ranges (Firmware). Sizes are for V2.03 build 217.

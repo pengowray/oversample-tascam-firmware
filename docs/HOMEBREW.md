@@ -2360,6 +2360,10 @@ B241 or an earlier build. All the checks in `tools/x8patch.py` pass on this file
 
 ## Step 37 test file: the patch built for size, to measure its processor cost (built 2026-11-10, installed 2026-11-10)
 
+**Result.** Too slow to keep: while recording, `dsp` is 6 to 12 points higher than B258's and HET, COMB and FD skip 1 to
+4% of their input with Auto volume on or the chime decoders running. Details in
+[Processing headroom](HARDWARE.md#processing-headroom-measured). The logo screen and update mode work (Step 36).
+
 `work/patch36/#PortaX8_0260.203` (B260, SHA-256 `028d18fa…136d5613`). The same source as B259 (steps 11 to 36, including
 B259's logo screen), built with `opt-level = "s"` instead of 3:
 
