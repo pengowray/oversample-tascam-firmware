@@ -204,7 +204,9 @@ off-screen frame (300 KB) and the app's buffers (172 KB, the waterfall, detector
 snapshot, chime decoders and PITCH's right-ear shifter), need cached memory for speed, so they
 stay in the patch region. Two cached gaps in the stock layout were checked and are in use: stock
 code refers into 0x819A3482 to 0x819B186F (between IAR's unpacked data and its next zeroed range)
-and into the 2 MiB at 0x820F3AD8.
+and into the 2 MiB at 0x820F3AD8. Qt's two framebuffers cannot hold the bat screen either: Qt keeps drawing MANUAL into them
+while the bat screen is up, and its present function writes to the patch's dummy LCDIF registers,
+which is how `leave_bat_screen` knows which framebuffer to show again.
 
 ## Display and controls
 
