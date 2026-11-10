@@ -2409,6 +2409,10 @@ The patch region has 10.3 KB left.
 2. In BAT DETECTOR, turn on SETTINGS > Record > Mute while recording. Start a take: do the headphones go silent, with MUTED in
    the recording bar? Pause, then stop: does the sound come back each time, without a click?
 3. With the switch on, record a take with headphones on loud near the mics: is the headphone sound gone from the take?
+4. **Phone remote reading a chime while recording.** The CPU test's decoder rows have no chime in them, and on the PC the
+   decoders cost 2.5 times as much while reading one (see Phone remote, Reading a chime). With two inputs on, FD, Auto volume on,
+   Phone remote on and Debug info on, start a take, then press Stop recording on the phone page. Note `dsp` and `lost` just
+   before the press and while the chime plays. Does `lost` stay 0, and does the take stop?
 
 ## Step 37 test file: the patch built for size, to measure its processor cost (built 2026-11-10, installed 2026-11-10)
 
