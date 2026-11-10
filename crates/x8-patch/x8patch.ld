@@ -79,11 +79,13 @@ SECTIONS
   .rodata : { *(.rodata .rodata.*) } > PATCH
   .data : { *(.data .data.*) } > PATCH
   .bss (NOLOAD) : { *(.bss .bss.* COMMON) } > PATCH
-  /* Buffers the patch writes before reading (stacks, the app's buffers, the
-     off-screen frame): left out of the update file, so they hold whatever the
-     bootloader copied from flash. */
+  /* Buffers the patch writes before reading (the app's buffers, the off-screen
+     frame): left out of the update file, so they hold whatever the bootloader
+     copied from flash. Task 1's patch stack is at a fixed SDRAM address
+     (PATCH_STACK in spare.rs). */
   .noinit (NOLOAD) : { *(.noinit .noinit.*) } > PATCH
-  /* Hot state in DTCM, also written before it is read. */
+  /* Hot state, and the DSP and card reader tasks' stacks, in DTCM. Also
+     written before it is read. */
   .dtcm (NOLOAD) : ALIGN(8) { *(.dtcm .dtcm.*) } > DTCM
   /DISCARD/ : { *(.ARM.exidx .ARM.exidx.* .ARM.extab.*) }
 }
