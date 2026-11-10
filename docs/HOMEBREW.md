@@ -2358,7 +2358,7 @@ B241 or an earlier build. All the checks in `tools/x8patch.py` pass on this file
 1. **Start and stop.** With Phone remote on and the phone page reloaded, do `Start recording` and `Stop recording` work as before?
 2. **Old phone page.** If a phone still has the old page cached, its commands should do nothing at all. Reload the page.
 
-## Step 37 test file: the patch built for size, to measure its processor cost (built 2026-11-10, not yet installed)
+## Step 37 test file: the patch built for size, to measure its processor cost (built 2026-11-10, installed 2026-11-10)
 
 `work/patch36/#PortaX8_0260.203` (B260, SHA-256 `028d18fa…136d5613`). The same source as B259 (steps 11 to 36, including
 B259's logo screen), built with `opt-level = "s"` instead of 3:
@@ -2396,7 +2396,8 @@ The patch region has 106.9 KB left.
 ## Step 36 test file: TASCAM's logo screen back, with a bigger bat and "Oversample Edition" below (built 2026-11-10, logo checked on the unit)
 
 **Result.** On the unit, the logo screen shows TASCAM's logo, "Portacapture X8", the bat and "Oversample Edition", and the
-X8 starts normally. Update mode has not been tried with this change yet.
+X8 starts normally, and UPDATE MODE still shows when HOME and REC are held at power-on. Checked on B260, which has the
+same logo screen change built for size (Step 37).
 
 `work/patch35/#PortaX8_0259.203` (B259, SHA-256 `6162c7a6…10b4e188`). Includes steps 11 to 35. Install this file in place of
 any earlier build. All the checks in `tools/x8patch.py` pass on this file. Header version 19: three new header fields for
