@@ -195,7 +195,13 @@ pub enum Screen {
     Files,
     /// BAT PLAYBACK's choice of the folder listed, from the folders at the top of the card.
     Folders,
+    /// BAT PLAYBACK's information about one file: its format, and the XRI and GUANO texts in it.
+    FileInfo,
 }
+
+/// How long a finger stays down without moving on a row of BAT PLAYBACK's list to open that
+/// file's information. The host times it and calls [`BatApp::hold`].
+pub const LONG_PRESS_MS: u32 = 600;
 
 /// A finger on the screen that may move: see `BatApp::release`.
 #[derive(Clone, Copy, Debug)]
@@ -534,6 +540,8 @@ pub struct BatApp<'a> {
     /// A finger on the screen that may move: where it touched down, where it is now, whether it
     /// has moved far enough to be a drag, and the list's first row when it touched down.
     gesture: Gesture,
+    /// The screen the file information view returns to: the list, or the main screen.
+    info_from: Screen,
     skipped_chunks: u32,
     /// The next chunk does not follow on from the last one.
     input_gap: bool,
@@ -732,6 +740,7 @@ impl<'a> BatApp<'a> {
             field!((*this).remote).write(remote::Remote::new());
             field!((*this).player).write(player::Player::new());
             field!((*this).gesture).write(Gesture::NONE);
+            field!((*this).info_from).write(Screen::Files);
             field!((*this).skipped_chunks).write(0);
             field!((*this).input_gap).write(false);
             field!((*this).lost_frames).write(0);
@@ -1522,6 +1531,8 @@ impl<'a> BatApp<'a> {
                 }
                 if self.input_kind == InputKind::Playback && self.screen == Screen::Main {
                     self.open_files();
+                } else if self.screen == Screen::FileInfo {
+                    self.screen = self.info_from;
                 } else if self.screen == Screen::Folders {
                     self.screen = Screen::Files;
                 } else {
@@ -1536,6 +1547,8 @@ impl<'a> BatApp<'a> {
                     }
                 }
                 Screen::Folders => self.choose_folder(self.player.folder_list.highlight),
+                Screen::FileInfo if self.details_play_shown() => self.play_details_file(),
+                Screen::FileInfo if self.info_from == Screen::Main => self.play_button(),
                 Screen::Main if !self.cpu_test.running => self.play_button(),
                 _ => {}
             },
@@ -1559,6 +1572,10 @@ impl<'a> BatApp<'a> {
         }
         if self.screen == Screen::Folders {
             self.player.move_folder_highlight(steps, layout::LIST_ROWS);
+            return;
+        }
+        if self.screen == Screen::FileInfo {
+            self.scroll_details_to(self.player.details_top as i32 + steps);
             return;
         }
         if matches!(self.screen, Screen::ChimeTest | Screen::CpuTest) || self.cpu_test.running {
@@ -1620,6 +1637,18 @@ impl<'a> BatApp<'a> {
                 }
                 return;
             }
+            Screen::FileInfo => {
+                self.gesture = Gesture { down: Some((x, y)), at: (x, y), moved: false, top: self.player.details_top };
+                let play = self.details_play_shown();
+                if layout::info_back(play).contains(p) {
+                    self.gesture = Gesture::NONE;
+                    self.screen = self.info_from;
+                } else if play && layout::INFO_PLAY.contains(p) {
+                    self.gesture = Gesture::NONE;
+                    self.play_details_file();
+                }
+                return;
+            }
             Screen::Folders => {
                 self.gesture =
                     Gesture { down: Some((x, y)), at: (x, y), moved: false, top: self.player.folder_list.top };
@@ -1636,6 +1665,11 @@ impl<'a> BatApp<'a> {
             return;
         }
         if self.input_kind == InputKind::Playback {
+            if layout::TITLE_INFO.contains(p) && self.player.show_current_details() {
+                self.info_from = Screen::Main;
+                self.screen = Screen::FileInfo;
+                return;
+            }
             if layout::TITLE_MIDDLE.contains(p) {
                 self.open_files();
                 return;
@@ -1731,18 +1765,19 @@ impl<'a> BatApp<'a> {
     pub fn drag(&mut self, x: i32, y: i32) {
         if let Some((_, y0)) = self.gesture.down {
             self.gesture.at = (x, y);
-            if matches!(self.screen, Screen::Files | Screen::Folders) {
+            if matches!(self.screen, Screen::Files | Screen::Folders | Screen::FileInfo) {
                 // A list row is chosen when the finger lifts, unless it moved: then it scrolls.
                 if (y - y0).abs() > 8 {
                     self.gesture.moved = true;
                 }
                 if self.gesture.moved {
-                    let rows = (y0 - y) as f32 / layout::LIST_ROW_H as f32;
+                    let row_h = if self.screen == Screen::FileInfo { layout::INFO_ROW_H } else { layout::LIST_ROW_H };
+                    let rows = (y0 - y) as f32 / row_h as f32;
                     let top = self.gesture.top as i32 + libm::roundf(rows) as i32;
-                    if self.screen == Screen::Files {
-                        self.player.scroll_to(top, layout::LIST_ROWS);
-                    } else {
-                        self.player.scroll_folders_to(top, layout::LIST_ROWS);
+                    match self.screen {
+                        Screen::Files => self.player.scroll_to(top, layout::LIST_ROWS),
+                        Screen::Folders => self.player.scroll_folders_to(top, layout::LIST_ROWS),
+                        _ => self.scroll_details_to(top),
                     }
                 }
             }
@@ -1766,6 +1801,9 @@ impl<'a> BatApp<'a> {
         let p = embedded_graphics::prelude::Point::new(x, y);
         if matches!(self.screen, Screen::Files | Screen::Folders) {
             return layout::LIST.contains(p);
+        }
+        if self.screen == Screen::FileInfo {
+            return layout::INFO_ROWS_AREA.contains(p);
         }
         if self.screen == Screen::Main && self.input_kind == InputKind::Playback && layout::SEEK.contains(p) {
             return true;
@@ -1800,6 +1838,42 @@ impl<'a> BatApp<'a> {
             }
             _ => {}
         }
+    }
+
+    /// The finger that touched down has stayed down for [`LONG_PRESS_MS`] (the host times it).
+    /// On a row of the list of recordings, if it has not moved, this opens that file's
+    /// information, and the finger lifting then does nothing, so the row is not also chosen.
+    pub fn hold(&mut self) {
+        let Some((_, y0)) = self.gesture.down else { return };
+        if self.screen != Screen::Files || self.gesture.moved {
+            return;
+        }
+        if let Some(row) = layout::list_row_at(y0)
+            && self.player.show_details(self.player.list.top + row)
+        {
+            self.gesture = Gesture::NONE;
+            self.info_from = Screen::Files;
+            self.screen = Screen::FileInfo;
+        }
+    }
+
+    /// Whether the file information view has a Play button: opened from the list, for a file
+    /// that can be played.
+    pub(crate) fn details_play_shown(&self) -> bool {
+        self.info_from == Screen::Files
+            && self.player.details_file().is_some_and(|e| !matches!(e.info, player::FileInfo::NotPlayable(_)))
+    }
+
+    fn play_details_file(&mut self) {
+        if self.player.choose_details_file() {
+            self.screen = Screen::Main;
+        }
+    }
+
+    /// Scroll the file information view so row `top` is first, keeping the rows shown filled.
+    fn scroll_details_to(&mut self, top: i32) {
+        let last = screen::details_row_count(self).saturating_sub(layout::INFO_ROWS) as i32;
+        self.player.details_top = top.clamp(0, last.max(0)) as usize;
     }
 
     /// Where the seek bar's knob is drawn, as a fraction of the file: under the finger while it

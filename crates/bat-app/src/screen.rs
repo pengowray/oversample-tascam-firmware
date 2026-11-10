@@ -34,6 +34,9 @@ pub(crate) use cpu_test_screen::{
 };
 #[cfg(test)]
 pub(crate) use pages::lines_with_widths as pages_lines;
+#[cfg(test)]
+pub(crate) use player_screen::details_lines;
+pub(crate) use player_screen::details_row_count;
 
 /// The width of the chime test's clock, for tests.
 #[cfg(test)]
@@ -171,6 +174,11 @@ pub fn draw(app: &BatApp, fb: Fb) {
         player_screen::folders(app, fb);
         return;
     }
+    if app.screen == Screen::FileInfo {
+        title_bar(fb, player_screen::INFO_TITLE, false);
+        player_screen::details(app, fb);
+        return;
+    }
     let title = match app.input_kind() {
         InputKind::Live => "BAT DETECTOR",
         InputKind::Playback => player_screen::title(app),
@@ -179,7 +187,8 @@ pub fn draw(app: &BatApp, fb: Fb) {
         let (at, count) = (app.cpu_test.at + 1, app.cpu_test.count);
         title_bar(fb, format_args!("{} row {at}/{count}", cpu_test_screen::TITLE), true);
     } else {
-        title_bar_fitted(fb, title, true, app.input_kind() == InputKind::Playback);
+        let playback = app.input_kind() == InputKind::Playback;
+        title_bar_fitted(fb, title, true, playback, playback && app.player().current().is_some());
     }
     if app.remote_on() {
         let colour = if app.remote.listening(app.samples) { ACCENT } else { TEXT_MUTED };
@@ -220,10 +229,20 @@ fn title_bar(fb: Fb, title: impl u8g2_fonts::Content, menu: bool) {
 /// A title too long for the bar is cut short with "...", between the menu and the battery.
 /// With `chevron`, a small downward arrow follows the title, as on a drop-down: in BAT
 /// PLAYBACK a tap on the title opens the list of recordings.
-fn title_bar_fitted(fb: Fb, title: &str, menu: bool, chevron: bool) {
+///
+/// With `info`, a circled "i" before the battery opens the file's information, and the title,
+/// still centred, keeps clear of it.
+fn title_bar_fitted(fb: Fb, title: &str, menu: bool, chevron: bool, info: bool) {
     const CHEVRON_W: i32 = 14;
     fill(fb, Rectangle::new(Point::zero(), Size::new(320, TITLE_H as u32)), TITLE);
-    let room = TITLE_MIDDLE.size.width as i32 - if chevron { CHEVRON_W } else { 0 };
+    let middle = if info { 2 * (TITLE_INFO.top_left.x - 160) - 4 } else { TITLE_MIDDLE.size.width as i32 };
+    let room = middle - if chevron { CHEVRON_W } else { 0 };
+    if info {
+        let _ = Circle::with_center(TITLE_INFO_CENTRE, 17)
+            .into_styled(PrimitiveStyleBuilder::new().stroke_color(TEXT).stroke_width(2).build())
+            .draw(fb);
+        text(fb, &BODY_BOLD, "i", TITLE_INFO_CENTRE.x, TITLE_INFO_CENTRE.y + 5, CENTER, TEXT);
+    }
     let (shown, cut) = fit(&BODY_BOLD, title, room);
     let w = width(&BODY_BOLD, shown) + if cut { width(&BODY_BOLD, "...") } else { 0 };
     let total = w + if chevron { CHEVRON_W } else { 0 };

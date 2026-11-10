@@ -17,6 +17,13 @@ pub const TOP_FOLDERS: usize = 24;
 pub const TOP_NAME_BYTES: usize = 40;
 /// The folder listed until another is chosen: the one the X8 records into.
 pub const DEFAULT_FOLDER: &str = "SOUND";
+/// Bytes the file information view keeps of a file's XRI text and GUANO text together, in the
+/// storage given with [`Player::set_details_storage`].
+pub const DETAILS_BYTES: usize = 4096;
+/// Bytes kept of the XRI text, which comes first. The X8 writes about 140.
+pub const XRI_BYTES: usize = 512;
+
+pub use bat_dsp::wav::Encoding;
 
 /// One WAV file on the card, as the host found it.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -139,6 +146,28 @@ pub enum Request {
     Open { id: u16, frame: u32 },
     /// Close the file: the bat screen is closing, or the list is being read again.
     Close,
+    /// Read file `id`'s XRI text (the `bext` chunk's CodingHistory) and GUANO text, and its
+    /// sample format, then call `details_read`.
+    Details { id: u16 },
+}
+
+/// How far the host has got with reading the file the information view shows.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum DetailsState {
+    Reading,
+    Read,
+    /// The card gave an error, or the file is no longer in the list.
+    Failed,
+}
+
+/// The file the information view shows, and what was read from it.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct Details {
+    id: u16,
+    state: DetailsState,
+    encoding: Option<Encoding>,
+    xri_len: u16,
+    guano_len: u16,
 }
 
 /// A list's highlighted row (the one the wheel moves and PLAY chooses) and its first row shown.
@@ -203,6 +232,13 @@ pub struct Player<'a> {
     request: Option<Request>,
     /// [`Request::ListFolders`], kept apart so it never replaces another request.
     folders_wanted: bool,
+    /// The file information view's file, its texts in `details_store`, and whether
+    /// [`Request::Details`] is waiting to be taken.
+    details: Option<Details>,
+    details_store: &'a mut [u8],
+    details_wanted: bool,
+    /// The information view's first row shown.
+    pub(crate) details_top: usize,
 }
 
 impl<'a> Player<'a> {
@@ -230,6 +266,10 @@ impl<'a> Player<'a> {
             folder_list: ListView { highlight: 0, top: 0 },
             request: None,
             folders_wanted: false,
+            details: None,
+            details_store: &mut [],
+            details_wanted: false,
+            details_top: 0,
         }
     }
 
@@ -239,7 +279,16 @@ impl<'a> Player<'a> {
         self.forget_list();
     }
 
+    /// Where the information view keeps a file's XRI and GUANO texts: [`DETAILS_BYTES`].
+    pub fn set_details_storage(&mut self, store: &'a mut [u8]) {
+        self.details_store = store;
+        self.details = None;
+    }
+
     fn forget_list(&mut self) {
+        // File ids are given again by each scan.
+        self.details = None;
+        self.details_wanted = false;
         self.count = 0;
         self.dropped = 0;
         self.folder_lens = [0; FOLDERS];
@@ -301,7 +350,14 @@ impl<'a> Player<'a> {
     }
 
     pub fn take_request(&mut self) -> Option<Request> {
-        self.request.take().or_else(|| core::mem::take(&mut self.folders_wanted).then_some(Request::ListFolders))
+        if let Some(request) = self.request.take() {
+            return Some(request);
+        }
+        if core::mem::take(&mut self.folders_wanted) {
+            return Some(Request::ListFolders);
+        }
+        let details = self.details.filter(|_| core::mem::take(&mut self.details_wanted))?;
+        Some(Request::Details { id: details.id })
     }
 
     /// The folder listed, at the top of the card.
@@ -485,7 +541,103 @@ impl<'a> Player<'a> {
         self.transport = Transport::Ended;
     }
 
+    /// What the host read for [`Request::Details`]: the file's sample format if it can be
+    /// played, and its XRI and GUANO texts (empty if it has none), or None if it could not be
+    /// read. Texts longer than the storage are cut: GUANO at the end of its last whole line.
+    pub fn details_read(&mut self, id: u16, read: Option<(Option<Encoding>, &[u8], &[u8])>) {
+        let Some(details) = self.details.as_mut().filter(|d| d.id == id && d.state == DetailsState::Reading) else {
+            return;
+        };
+        let Some((encoding, xri, guano)) = read else {
+            details.state = DetailsState::Failed;
+            return;
+        };
+        let store = &mut *self.details_store;
+        let xri = &xri[..xri.len().min(XRI_BYTES).min(store.len())];
+        store[..xri.len()].copy_from_slice(xri);
+        let room = store.len() - xri.len();
+        let guano = if guano.len() <= room {
+            guano
+        } else {
+            let cut = &guano[..room];
+            &cut[..cut.iter().rposition(|&b| b == b'\n').map_or(0, |i| i + 1)]
+        };
+        store[xri.len()..xri.len() + guano.len()].copy_from_slice(guano);
+        *details = Details {
+            id,
+            state: DetailsState::Read,
+            encoding,
+            xri_len: xri.len() as u16,
+            guano_len: guano.len() as u16,
+        };
+    }
+
+    /// The file the information view shows, if it is still in the list.
+    pub fn details_file(&self) -> Option<&FileEntry> {
+        let id = self.details?.id;
+        self.files().iter().find(|e| e.id == id)
+    }
+
+    pub fn details_state(&self) -> Option<DetailsState> {
+        Some(self.details?.state)
+    }
+
+    /// The shown file's sample format, once read, if it can be played.
+    pub fn details_encoding(&self) -> Option<Encoding> {
+        self.details.filter(|d| d.state == DetailsState::Read)?.encoding
+    }
+
+    /// The shown file's XRI text, once read: None if it has none.
+    pub fn xri(&self) -> Option<&[u8]> {
+        let d = self.details.filter(|d| d.state == DetailsState::Read && d.xri_len > 0)?;
+        Some(&self.details_store[..d.xri_len as usize])
+    }
+
+    /// The shown file's GUANO text, once read: None if it has none.
+    pub fn guano(&self) -> Option<&[u8]> {
+        let d = self.details.filter(|d| d.state == DetailsState::Read && d.guano_len > 0)?;
+        let start = d.xri_len as usize;
+        Some(&self.details_store[start..start + d.guano_len as usize])
+    }
+
     // The user's side.
+
+    /// Show the information view for the file at list row `row`, asking the host to read it.
+    /// Returns whether there is a file at that row.
+    pub fn show_details(&mut self, row: usize) -> bool {
+        let Some(id) = self.files().get(row).map(|e| e.id) else { return false };
+        self.list.highlight = row;
+        self.show_details_of(id);
+        true
+    }
+
+    /// The same, for the chosen file. Returns whether there is one.
+    pub fn show_current_details(&mut self) -> bool {
+        let Some(id) = self.current().map(|e| e.id) else { return false };
+        self.show_details_of(id);
+        true
+    }
+
+    fn show_details_of(&mut self, id: u16) {
+        self.details_top = 0;
+        if self.details.is_some_and(|d| d.id == id && d.state == DetailsState::Read) {
+            return;
+        }
+        self.details = Some(Details { id, state: DetailsState::Reading, encoding: None, xri_len: 0, guano_len: 0 });
+        self.details_wanted = true;
+    }
+
+    /// Choose the file the information view shows and play it from the start, as [`choose`]
+    /// does. Returns whether it was chosen.
+    ///
+    /// [`choose`]: Self::choose
+    pub fn choose_details_file(&mut self) -> bool {
+        let Some(id) = self.details.map(|d| d.id) else { return false };
+        match self.files().iter().position(|e| e.id == id) {
+            Some(row) => self.choose(row),
+            None => false,
+        }
+    }
 
     /// Ask the host to list the folders at the top of the card again.
     pub fn list_folders(&mut self) {
@@ -617,6 +769,17 @@ impl<'a> Player<'a> {
             self.closed = true;
         }
     }
+}
+
+/// The fields of the XRI text the X8 writes into a take's `bext` chunk, as (key, value): for
+/// example `T=XRI 008a;XRI VER=0002;MAKER=TASCAM;...;SOURCE=3:EXT MIC,4:EXT MIC;`. Parts without
+/// `=`, or that are not UTF-8, are skipped.
+pub fn xri_fields(text: &[u8]) -> impl Iterator<Item = (&str, &str)> {
+    text.split(|&b| b == b';').filter_map(|part| {
+        let (key, value) = core::str::from_utf8(part).ok()?.split_once('=')?;
+        let key = key.trim();
+        (!key.is_empty()).then(|| (key, value.trim()))
+    })
 }
 
 fn default_root() -> [u8; TOP_NAME_BYTES] {

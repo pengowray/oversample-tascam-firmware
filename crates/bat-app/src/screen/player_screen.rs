@@ -6,11 +6,15 @@ use core::fmt;
 use embedded_graphics::prelude::*;
 use embedded_graphics::primitives::{Circle, PrimitiveStyle, Rectangle, Triangle};
 
+use u8g2_fonts::FontRenderer;
+
 use super::{BODY, BODY_BOLD, CENTER, Fb, LEFT, RIGHT, SMALL, fill, fit, rounded, text, width};
 use crate::BatApp;
 use crate::layout::*;
 use crate::palette::*;
-use crate::player::{DEFAULT_FOLDER, FileEntry, FileInfo, NotPlayable, Player, Scan, Transport};
+use crate::player::{
+    DEFAULT_FOLDER, DetailsState, Encoding, FileEntry, FileInfo, NotPlayable, Player, Scan, Transport, xri_fields,
+};
 
 pub(crate) const TITLE: &str = "BAT PLAYBACK";
 pub(super) const NO_FILE: &str = "Choose a recording: tap here or press PLAY";
@@ -257,13 +261,7 @@ fn list_row(player: &Player, fb: Fb, e: &FileEntry, y: i32, highlighted: bool, c
     let second = y + 38;
     match e.info {
         FileInfo::NotPlayable(reason) => {
-            let why = match reason {
-                NotPlayable::NotWav => NOT_PLAYABLE_NOT_WAV,
-                NotPlayable::Unsupported => NOT_PLAYABLE_UNSUPPORTED,
-                NotPlayable::NoAudio => NOT_PLAYABLE_NO_AUDIO,
-                NotPlayable::Unreadable => NOT_PLAYABLE_UNREADABLE,
-            };
-            text(fb, &SMALL, why, 12, second, LEFT, TEXT_DIM);
+            text(fb, &SMALL, not_playable(reason), 12, second, LEFT, TEXT_DIM);
         }
         _ => {
             text(fb, &SMALL, format_args!("{}", Details { player, e }), 12, second, LEFT, TEXT_MUTED);
@@ -324,4 +322,299 @@ impl fmt::Write for Buf {
         self.len = end;
         Ok(())
     }
+}
+
+pub(super) const INFO_TITLE: &str = "FILE INFORMATION";
+pub(super) const PLAY: &str = "Play";
+pub(super) const INFO_READING: &str = "Reading the file";
+pub(super) const INFO_READ_FAILED: &str = "Couldn't read the file";
+pub(super) const INFO_GONE: &str = "This file is no longer in the list";
+pub(super) const XRI_HEADING: &str = "XRI";
+pub(super) const NO_XRI: &str = "No XRI in this file";
+pub(super) const GUANO_HEADING: &str = "GUANO";
+pub(super) const NO_GUANO: &str = "No GUANO in this file";
+
+/// Lines a file's name may take at the top of the information view.
+const NAME_LINES: usize = 3;
+/// Room for a value, from [`INFO_VALUE_X`] to the scroll bar.
+const VALUE_W: i32 = 306 - INFO_VALUE_X;
+
+/// One row of the file information view.
+enum Row<'a> {
+    /// A line of the file's name.
+    Name(&'a str),
+    /// A section's heading: XRI or GUANO.
+    Heading(&'a str),
+    /// A label and its value. A label too wide for its column has the row to itself, with an
+    /// empty value, and the value follows on `More` rows.
+    Field(&'a str, fmt::Arguments<'a>),
+    /// A further line of the value above.
+    More(&'a str),
+    /// A muted line: why there is nothing to show. Longer notes take more rows: see [`note`].
+    Note(&'a str),
+}
+
+/// The end of the longest start of `s` that fits in `max` pixels, at the last space in it if
+/// there is one, so words stay whole. At least one character.
+fn line_end(font: &FontRenderer, s: &str, max: i32) -> usize {
+    let mut x = 0;
+    let mut last_space = None;
+    for (i, c) in s.char_indices() {
+        let mut buf = [0; 4];
+        x += width(font, c.encode_utf8(&mut buf));
+        if x > max {
+            let end = last_space.filter(|&at| at > 0).unwrap_or(i);
+            return if end == 0 { c.len_utf8() } else { end };
+        }
+        if c == ' ' {
+            last_space = Some(i + 1);
+        }
+    }
+    s.len()
+}
+
+/// Each line of `s` broken to fit `max` pixels.
+fn wrapped<'s>(font: &'s FontRenderer, s: &'s str, max: i32) -> impl Iterator<Item = &'s str> + 's {
+    let mut rest = s;
+    core::iter::from_fn(move || {
+        if rest.is_empty() {
+            return None;
+        }
+        let end = line_end(font, rest, max);
+        let (line, after) = rest.split_at(end);
+        rest = after;
+        Some(line.trim_end())
+    })
+}
+
+/// A label and a text value, which takes as many rows as it needs.
+fn text_field(label: &str, value: &str, out: &mut dyn FnMut(Row<'_>)) {
+    let label_fits = width(&BODY, label) <= INFO_VALUE_X - 18;
+    let mut lines = wrapped(&BODY, value, VALUE_W);
+    if label_fits {
+        out(Row::Field(label, format_args!("{}", lines.next().unwrap_or(""))));
+    } else {
+        out(Row::Field(label, format_args!("")));
+    }
+    for line in lines {
+        out(Row::More(line));
+    }
+}
+
+/// A muted note, on as many rows as it needs.
+fn note(line: &str, out: &mut dyn FnMut(Row<'_>)) {
+    for part in wrapped(&BODY, line, 294) {
+        out(Row::Note(part));
+    }
+}
+
+/// A size in bytes as KB or MB (1,000 and 1,000,000 bytes), with one decimal for MB.
+struct Bytes(u32);
+
+impl fmt::Display for Bytes {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self.0 {
+            b @ 0..1_000 => write!(f, "{b} bytes"),
+            b @ 1_000..1_000_000 => write!(f, "{} KB", b / 1_000),
+            b => {
+                let tenths = (b as u64 + 50_000) / 100_000;
+                write!(f, "{}.{} MB", tenths / 10, tenths % 10)
+            }
+        }
+    }
+}
+
+/// A sample rate in kHz when it is whole kHz, otherwise in Hz.
+struct Rate(u32);
+
+impl fmt::Display for Rate {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        if self.0.is_multiple_of(1000) {
+            write!(f, "{} kHz", self.0 / 1000)
+        } else if self.0 >= 1000 {
+            write!(f, "{},{:03} Hz", self.0 / 1000, self.0 % 1000)
+        } else {
+            write!(f, "{} Hz", self.0)
+        }
+    }
+}
+
+/// The XRI key as a label, for the keys the X8 writes.
+fn xri_label(key: &str) -> &str {
+    match key {
+        "MAKER" => "Maker",
+        "MODEL" => "Model",
+        "FW VER" => "Firmware",
+        "SOURCE" => "Source",
+        "INPUT GAIN" => "Input gain",
+        "LEVEL" => "Level",
+        "AUTO_LEVEL" => "Auto level",
+        other => other,
+    }
+}
+
+/// The rows of the file information view, in order.
+fn details_rows(app: &BatApp, out: &mut dyn FnMut(Row<'_>)) {
+    let player = app.player();
+    let Some(e) = player.details_file() else {
+        note(INFO_GONE, out);
+        return;
+    };
+    for line in wrapped(&BODY_BOLD, e.name(), 296).take(NAME_LINES) {
+        out(Row::Name(line));
+    }
+    let root = player.root();
+    match player.folder_name(e.folder) {
+        Some(folder) if e.folder != 0 => out(Row::Field("Folder", format_args!("{root}/{folder}"))),
+        _ => out(Row::Field("Folder", format_args!("{root}"))),
+    }
+    if let Some((year, month, day, hour, minute)) = e.date_time() {
+        let month = MONTHS[month as usize - 1];
+        out(Row::Field("Date", format_args!("{day} {month} {year} {hour:02}:{minute:02}")));
+    }
+    out(Row::Field("Size", format_args!("{}", Bytes(e.bytes))));
+    match e.info {
+        FileInfo::Playable(audio) => {
+            out(Row::Field("Length", format_args!("{}", Clock(audio.tenths()))));
+            out(Row::Field("Sample rate", format_args!("{}", Rate(audio.sample_rate))));
+            let kind = match audio.channels {
+                1 => " (mono)",
+                2 => " (stereo)",
+                _ => "",
+            };
+            out(Row::Field("Channels", format_args!("{}{kind}", audio.channels)));
+            if let Some(encoding) = player.details_encoding() {
+                let depth = match encoding {
+                    Encoding::Pcm16 => "16-bit",
+                    Encoding::Pcm24 => "24-bit",
+                    Encoding::Pcm32 => "32-bit",
+                    Encoding::Float32 => "32-bit float",
+                };
+                out(Row::Field("Bit depth", format_args!("{depth}")));
+            }
+        }
+        FileInfo::NotPlayable(reason) => note(not_playable(reason), out),
+        FileInfo::Unknown => {}
+    }
+    match player.details_state() {
+        Some(DetailsState::Read) => {}
+        Some(DetailsState::Failed) => return note(INFO_READ_FAILED, out),
+        _ => return note(INFO_READING, out),
+    }
+    out(Row::Heading(XRI_HEADING));
+    let mut any = false;
+    for (key, value) in player.xri().into_iter().flat_map(xri_fields) {
+        // The text's length and the XRI format's version say nothing about the recording.
+        if key == "T" || key == "XRI VER" {
+            continue;
+        }
+        any = true;
+        // One row for each input, as "3: EXT MIC".
+        let mut label = xri_label(key);
+        for part in value.split(',').map(str::trim).filter(|p| !p.is_empty()) {
+            match part.split_once(':') {
+                Some((input, setting)) => out(Row::Field(label, format_args!("{input}: {setting}"))),
+                None => out(Row::Field(label, format_args!("{part}"))),
+            }
+            label = "";
+        }
+    }
+    if !any {
+        note(NO_XRI, out);
+    }
+    out(Row::Heading(GUANO_HEADING));
+    let mut any = false;
+    for (key, value) in player.guano().into_iter().flat_map(guano::fields) {
+        // The format's version says nothing about the recording.
+        if key == "GUANO|Version" {
+            continue;
+        }
+        any = true;
+        text_field(key, value, out);
+    }
+    if !any {
+        note(NO_GUANO, out);
+    }
+}
+
+fn not_playable(reason: NotPlayable) -> &'static str {
+    match reason {
+        NotPlayable::NotWav => NOT_PLAYABLE_NOT_WAV,
+        NotPlayable::Unsupported => NOT_PLAYABLE_UNSUPPORTED,
+        NotPlayable::NoAudio => NOT_PLAYABLE_NO_AUDIO,
+        NotPlayable::Unreadable => NOT_PLAYABLE_UNREADABLE,
+    }
+}
+
+/// How many rows the file information view has, for scrolling.
+pub(crate) fn details_row_count(app: &BatApp) -> usize {
+    let mut count = 0;
+    details_rows(app, &mut |_| count += 1);
+    count
+}
+
+/// The file information view: the rows that fit, a scroll bar if there are more, then Back,
+/// and Play when it was opened from the list for a file that can be played.
+pub(super) fn details(app: &BatApp, fb: Fb) {
+    let top = app.player().details_top;
+    let mut count = 0;
+    details_rows(app, &mut |row| {
+        let i = count;
+        count += 1;
+        if i < top || i >= top + INFO_ROWS {
+            return;
+        }
+        let y = INFO_TOP + (i - top) as i32 * INFO_ROW_H;
+        let baseline = y + 15;
+        match row {
+            Row::Name(line) => {
+                text(fb, &BODY_BOLD, line, 12, baseline, LEFT, TEXT);
+            }
+            Row::Heading(heading) => {
+                fill(fb, Rectangle::new(Point::new(12, y + 2), Size::new(294, 1)), LINE);
+                text(fb, &BODY_BOLD, heading, 12, baseline + 2, LEFT, TEXT);
+            }
+            Row::Field(label, value) => {
+                text(fb, &BODY, label, 12, baseline, LEFT, TEXT_MUTED);
+                text(fb, &BODY, value, INFO_VALUE_X, baseline, LEFT, TEXT);
+            }
+            Row::More(line) => {
+                text(fb, &BODY, line, INFO_VALUE_X, baseline, LEFT, TEXT);
+            }
+            Row::Note(line) => {
+                text(fb, &BODY, line, 12, baseline, LEFT, TEXT_MUTED);
+            }
+        }
+    });
+    if count > INFO_ROWS {
+        // The scroll bar: the part shown, of all the rows.
+        let track = INFO_ROW_H * INFO_ROWS as i32;
+        let thumb = (track * INFO_ROWS as i32 / count as i32).max(12);
+        let at = INFO_TOP + (track - thumb) * top as i32 / (count - INFO_ROWS) as i32;
+        fill(fb, Rectangle::new(Point::new(313, INFO_TOP), Size::new(3, track as u32)), PANEL);
+        fill(fb, Rectangle::new(Point::new(313, at), Size::new(3, thumb as u32)), TEXT_MUTED);
+    }
+    let play = app.details_play_shown();
+    let back = info_back(play);
+    rounded(fb, back, 4, BUTTON);
+    text(fb, &BODY_BOLD, BACK, back.center().x, back.top_left.y + 28, CENTER, TEXT);
+    if play {
+        rounded(fb, INFO_PLAY, 4, BUTTON);
+        text(fb, &BODY_BOLD, PLAY, INFO_PLAY.center().x, INFO_PLAY.top_left.y + 28, CENTER, TEXT);
+    }
+}
+
+/// The file information view's rows as text, for tests: `label: value`, a heading in capitals
+/// as written, and notes and further lines as they are.
+#[cfg(test)]
+pub(crate) fn details_lines(app: &BatApp) -> std::vec::Vec<std::string::String> {
+    use std::format;
+    let mut lines = std::vec::Vec::new();
+    details_rows(app, &mut |row| {
+        lines.push(match row {
+            Row::Name(line) | Row::Heading(line) | Row::More(line) | Row::Note(line) => line.into(),
+            Row::Field(label, value) => format!("{label}: {value}"),
+        })
+    });
+    lines
 }

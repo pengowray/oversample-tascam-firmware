@@ -40,6 +40,28 @@ pub const LIST_BACK: Rectangle = Rectangle::new(Point::new(6, BUTTONS_Y), Size::
 pub const FILES_BACK: Rectangle = Rectangle::new(Point::new(6, BUTTONS_Y), Size::new(100, BUTTON_H as u32));
 pub const FILES_FOLDER: Rectangle = Rectangle::new(Point::new(112, BUTTONS_Y), Size::new(202, BUTTON_H as u32));
 
+/// The title bar's information button, between the title and the battery, shown in BAT PLAYBACK
+/// once a file is chosen: it opens that file's information. The title then has the room from
+/// the menu to this button, centred.
+pub const TITLE_INFO: Rectangle = Rectangle::new(Point::new(250, 0), Size::new(34, TITLE_H as u32));
+pub const TITLE_INFO_CENTRE: Point = Point::new(266, 12);
+
+/// The file information view: rows of a label and a value, scrolled by dragging or the wheel,
+/// then Back, and Play when the view was opened from the list for a file that can be played.
+pub const INFO_TOP: i32 = 30;
+pub const INFO_ROW_H: i32 = 20;
+pub const INFO_ROWS: usize = 19;
+pub const INFO_ROWS_AREA: Rectangle =
+    Rectangle::new(Point::new(0, INFO_TOP), Size::new(320, (INFO_ROW_H * INFO_ROWS as i32) as u32));
+/// Where values start, after the labels.
+pub const INFO_VALUE_X: i32 = 116;
+pub const INFO_PLAY: Rectangle = FILES_FOLDER;
+
+/// The file information view's Back: beside Play, or the width of the screen.
+pub fn info_back(play: bool) -> Rectangle {
+    if play { FILES_BACK } else { LIST_BACK }
+}
+
 /// The fraction of the file at screen position `x` on the seek bar.
 pub fn seek_fraction(x: i32) -> f32 {
     ((x - SEEK_X0) as f32 / (SEEK_X1 - SEEK_X0) as f32).clamp(0.0, 1.0)

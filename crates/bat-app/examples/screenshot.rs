@@ -18,6 +18,9 @@
 //! `PLAYBACK=1` shows the screen as BAT PLAYBACK shows it on the X8.
 //! `FILES=list|playing|paused|nofile|reading|empty|failed|folders|foldersreading|foldersfailed|nofolders` adds made-up recordings to BAT PLAYBACK's
 //! player: `list` shows the list, the others the main screen or the list in that state.
+//! `FILES=info|inforeading|infonone|infonotplayable|infomain` shows the file information view,
+//! opened by a long press on the list (or from the title bar for `infomain`); `INFO_SCROLL=N`
+//! turns the wheel N steps on it.
 //! `BUILD=240` gives the app the X8 patch's build number, for the CPU test.
 //! `INPUTS=5,6` or `INPUTS=5` names the inputs for the meters and settings;
 //! `INPUTS=none` shows the notice for no input.
@@ -105,6 +108,7 @@ fn main() {
     let fs = spec.sample_rate as f32;
     let mut storage = vec![0.0f32; spec.sample_rate as usize];
     let mut file_storage = vec![FileEntry::new(0, 0, b"", 0, 0, 0); 64];
+    let mut details_storage = vec![0u8; bat_app::player::DETAILS_BYTES];
     let mut buffers = Box::new(Buffers::new());
     let mut app = BatApp::new(fs, &mut storage, &mut buffers);
     app.set_mode(mode);
@@ -272,7 +276,7 @@ fn main() {
     if let Ok(files) = std::env::var("FILES") {
         app.set_input_kind(InputKind::Playback);
         app.set_inputs([Some(InputName { short: "L", long: "Left" }), Some(InputName { short: "R", long: "Right" })]);
-        fake_files(&mut app, &mut file_storage, &files);
+        fake_files(&mut app, &mut file_storage, &mut details_storage, &files);
     }
     let mut pixels = vec![0u16; WIDTH * HEIGHT];
     let mut fb = Rgb565Buffer::new(&mut pixels, WIDTH, HEIGHT);
@@ -335,10 +339,11 @@ fn main() {
 }
 
 /// Made-up recordings for BAT PLAYBACK's player, in the state `which` names (see the top of this file).
-fn fake_files<'a>(app: &mut BatApp<'a>, storage: &'a mut [FileEntry], which: &str) {
+fn fake_files<'a>(app: &mut BatApp<'a>, storage: &'a mut [FileEntry], details: &'a mut [u8], which: &str) {
     use bat_app::player::{Audio, FileInfo, NotPlayable};
     let player = app.player_mut();
     player.set_storage(storage);
+    player.set_details_storage(details);
     player.scan_started();
     if which == "failed" {
         app.open_files();
@@ -410,6 +415,51 @@ fn fake_files<'a>(app: &mut BatApp<'a>, storage: &'a mut [FileEntry], which: &st
             }
             app.open_files();
             app.player_mut().move_highlight(3, 8);
+        }
+        "info" | "inforeading" | "infonone" | "infonotplayable" | "infomain" => {
+            // A long press on a row of the list, or a tap on the title bar's information button.
+            let file = match which {
+                "infonone" => 6,
+                "infonotplayable" => 9,
+                _ => 5,
+            };
+            if which == "infomain" {
+                app.player_mut().choose(file);
+                app.player_mut().opened();
+                app.touch(266, 12);
+            } else {
+                app.open_files();
+                let player = app.player_mut();
+                // The last 8 of the 11 rows, so rows 3 to 10 are shown.
+                player.scroll_to(3, 8);
+                let row_y = 50 + (file as i32 - 3) * 47 + 20;
+                app.touch(160, row_y);
+                app.hold();
+                app.release();
+            }
+            let mut details = None;
+            while let Some(request) = app.player_mut().take_request() {
+                if let bat_app::player::Request::Details { id } = request {
+                    details = Some(id);
+                }
+            }
+            let Some(id) = details else { return };
+            let xri: &[u8] = b"T=XRI 008a;XRI VER=0002;MAKER=TASCAM;MODEL=X8;FW VER=2.03;SOURCE=3:EXT MIC,4:EXT MIC;\
+INPUT GAIN=3:LOW,4:LOW;LEVEL=3:20,4:20;AUTO_LEVEL=3:OFF,4:OFF;,";
+            let guano: &[u8] = b"GUANO|Version: 1.0\nTimestamp: 2026-03-15T20:50:48+11:00\nLength: 92.000000\n\
+Samplerate: 192000\nMake: TASCAM\nModel: Portacapture X8\nFirmware Version: V2.03 with bat patch B258\n\
+Original Filename: 260315_0066_3-4.wav\nLoc Position: -36.123456 146.000007\nX8Bat|Pauses: 0\nX8Bat|Paused: 0.000\n\
+Note: Gatehouse bat hole, SO.4 mics on inputs 3 and 4, Marshmallow on input 5, about two metres from the roost\n";
+            use bat_app::player::Encoding;
+            match which {
+                "inforeading" => {}
+                "infonone" => app.player_mut().details_read(id, Some((Some(Encoding::Pcm16), b"", b""))),
+                "infonotplayable" => app.player_mut().details_read(id, Some((None, b"", b""))),
+                _ => app.player_mut().details_read(id, Some((Some(Encoding::Float32), xri, guano))),
+            }
+            if let Ok(steps) = std::env::var("INFO_SCROLL") {
+                app.wheel(steps.parse().unwrap());
+            }
         }
         "folders" | "foldersreading" | "foldersfailed" | "nofolders" => {
             app.open_files();

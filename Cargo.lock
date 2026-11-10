@@ -60,6 +60,7 @@ dependencies = [
  "bat-dsp",
  "chime",
  "embedded-graphics",
+ "guano",
  "hound",
  "libm",
  "png",

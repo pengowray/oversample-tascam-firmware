@@ -364,3 +364,214 @@ fn the_list_follows_browse_with_folders_first_and_the_newest_highlighted() {
     // y.wav, in FOLDER_0001/below, is the newest.
     assert_eq!(app.player().list.highlight, 1);
 }
+
+const XRI: &[u8] = b"T=XRI 008a;XRI VER=0002;MAKER=TASCAM;MODEL=X8;FW VER=2.03;SOURCE=3:EXT MIC,4:EXT MIC;\
+INPUT GAIN=3:LOW,4:LOW;LEVEL=3:20,4:20;AUTO_LEVEL=3:OFF,4:OFF;,";
+const GUANO: &[u8] = b"GUANO|Version: 1.0\nTimestamp: 2026-03-15T20:50:48+11:00\nMake: TASCAM\n\
+Firmware Version: V2.03 with bat patch B258\nLoc Position: -36.123456 146.000007\n\
+Note: Gatehouse bat hole, SO.4 mics on inputs 3 and 4, Marshmallow on input 5\n";
+
+/// Touch down on list row `row` (counting from the first shown) and keep the finger there.
+fn press_row(app: &mut BatApp, row: i32) {
+    app.touch(160, layout::LIST_TOP + row * layout::LIST_ROW_H + 10);
+}
+
+fn take_requests(app: &mut BatApp) -> Vec<Request> {
+    core::iter::from_fn(|| app.player_mut().take_request()).collect()
+}
+
+#[test]
+fn a_long_press_on_a_row_shows_its_information_and_does_not_choose_it() {
+    let mut storage = vec![0.0f32; 1024];
+    let mut files = vec![FileEntry::new(0, 0, b"", 0, 0, 0); 8];
+    let mut details = vec![0u8; crate::player::DETAILS_BYTES];
+    let mut app = listed(&mut storage, &mut files);
+    app.player_mut().set_details_storage(&mut details);
+    app.open_files();
+    let _ = take_requests(&mut app);
+    // B.wav, id 1, the second row.
+    press_row(&mut app, 1);
+    app.hold();
+    assert_eq!(app.screen, Screen::FileInfo);
+    app.release();
+    assert_eq!(app.screen, Screen::FileInfo, "lifting the finger does not choose the row");
+    assert_eq!(app.player().transport(), Transport::NoFile);
+    assert_eq!(take_requests(&mut app), [Request::Details { id: 1 }]);
+    assert_eq!(app.player().list.highlight, 1);
+    assert_eq!(app.player().details_state(), Some(crate::player::DetailsState::Reading));
+    assert!(screen::details_lines(&app).contains(&"Reading the file".to_string()));
+
+    app.player_mut().details_read(1, Some((Some(crate::player::Encoding::Float32), XRI, GUANO)));
+    let lines = screen::details_lines(&app);
+    for expected in [
+        "B.wav",
+        "Folder: SOUND",
+        "Date: 2 Mar 2026 00:00",
+        "Size: 1 KB",
+        "Length: 0:10",
+        "Sample rate: 192 kHz",
+        "Channels: 2 (stereo)",
+        "Bit depth: 32-bit float",
+        "XRI",
+        "Maker: TASCAM",
+        "Firmware: 2.03",
+        "Source: 3: EXT MIC",
+        ": 4: EXT MIC",
+        "Auto level: 3: OFF",
+        "GUANO",
+        "Timestamp: 2026-03-15T20:50:48+11:00",
+        "Loc Position: -36.123456 146.000007",
+    ] {
+        assert!(lines.iter().any(|l| l == expected), "{expected:?} in {lines:?}");
+    }
+    // The XRI text's length, its version and GUANO's version are left out; a label too wide for
+    // its column has its value on the rows below.
+    assert!(!lines.iter().any(|l| l.starts_with("T:") || l.contains("XRI VER") || l.contains("GUANO|Version")));
+    let firmware = lines.iter().position(|l| l == "Firmware Version: ").unwrap();
+    assert_eq!(lines[firmware + 1], "V2.03 with bat patch B258");
+    let note = lines.iter().position(|l| l.starts_with("Note: ")).unwrap();
+    assert!(lines.len() > note + 1, "a long note takes more than one row: {lines:?}");
+}
+
+#[test]
+fn a_finger_that_moved_or_lifted_before_the_long_press_opens_nothing() {
+    let mut storage = vec![0.0f32; 1024];
+    let mut files = vec![FileEntry::new(0, 0, b"", 0, 0, 0); 8];
+    let mut app = listed(&mut storage, &mut files);
+    app.open_files();
+    let _ = take_requests(&mut app);
+    press_row(&mut app, 1);
+    app.drag(160, layout::LIST_TOP + layout::LIST_ROW_H + 30);
+    app.hold();
+    assert_eq!(app.screen, Screen::Files);
+    app.release();
+    // A hold after the finger has lifted (the host's timer firing late) does nothing either.
+    app.hold();
+    assert_eq!(app.screen, Screen::Files);
+    assert!(take_requests(&mut app).is_empty());
+    // Below the rows.
+    app.touch(160, layout::LIST_TOP + 3 * layout::LIST_ROW_H + 10);
+    app.hold();
+    assert_eq!(app.screen, Screen::Files);
+}
+
+#[test]
+fn the_information_view_s_play_and_back() {
+    let mut storage = vec![0.0f32; 1024];
+    let mut files = vec![FileEntry::new(0, 0, b"", 0, 0, 0); 8];
+    let mut details = vec![0u8; crate::player::DETAILS_BYTES];
+    let mut app = listed(&mut storage, &mut files);
+    app.player_mut().set_details_storage(&mut details);
+    app.open_files();
+    press_row(&mut app, 2);
+    app.hold();
+    app.release();
+    let _ = take_requests(&mut app);
+    // Back, beside Play, returns to the list; HOME does too.
+    let back = layout::info_back(true).center();
+    app.touch(back.x, back.y);
+    assert_eq!(app.screen, Screen::Files);
+    press_row(&mut app, 2);
+    app.hold();
+    app.release();
+    app.button(Button::Home);
+    assert_eq!(app.screen, Screen::Files);
+    // Play plays it from the start (C.wav, id 0), as a tap on its row does. The file read before
+    // is shown again without reading it again.
+    press_row(&mut app, 2);
+    app.hold();
+    app.release();
+    let play = layout::INFO_PLAY.center();
+    app.touch(play.x, play.y);
+    assert_eq!(app.screen, Screen::Main);
+    assert!(take_requests(&mut app).contains(&Request::Open { id: 0, frame: 0 }));
+
+    // The title bar's information button shows the file playing, with Back only.
+    let info = layout::TITLE_INFO_CENTRE;
+    app.touch(info.x, info.y);
+    assert_eq!(app.screen, Screen::FileInfo);
+    assert!(!app.details_play_shown());
+    assert!(screen::details_lines(&app)[0] == "C.wav");
+    // PLAY there pauses and plays, as on the main screen.
+    app.player_mut().opened();
+    app.button(Button::Play);
+    assert_eq!(app.player().transport(), Transport::Paused);
+    let back = layout::info_back(false).center();
+    app.touch(back.x, back.y);
+    assert_eq!(app.screen, Screen::Main);
+}
+
+#[test]
+fn the_title_bar_information_button_needs_a_chosen_file() {
+    let mut storage = vec![0.0f32; 1024];
+    let mut files = vec![FileEntry::new(0, 0, b"", 0, 0, 0); 8];
+    let mut app = listed(&mut storage, &mut files);
+    let info = layout::TITLE_INFO_CENTRE;
+    app.touch(info.x, info.y);
+    // With no file chosen, the title opens the list as before.
+    assert_eq!(app.screen, Screen::Files);
+}
+
+#[test]
+fn details_for_another_file_or_a_failed_read_and_texts_that_do_not_fit() {
+    let mut storage = vec![0.0f32; 1024];
+    let mut files = vec![FileEntry::new(0, 0, b"", 0, 0, 0); 8];
+    let mut details = vec![0u8; 600];
+    let mut app = listed(&mut storage, &mut files);
+    app.player_mut().set_details_storage(&mut details);
+    assert!(app.player_mut().show_details(0));
+    // An answer for a file no longer shown is ignored.
+    app.player_mut().details_read(2 + 1, Some((None, XRI, GUANO)));
+    assert_eq!(app.player().details_state(), Some(crate::player::DetailsState::Reading));
+    app.player_mut().details_read(2, None);
+    assert_eq!(app.player().details_state(), Some(crate::player::DetailsState::Failed));
+    assert!(screen::details_lines(&app).contains(&"Couldn't read the file".to_string()));
+
+    // Too long for the storage: GUANO is cut after its last whole line.
+    assert!(app.player_mut().show_details(1));
+    app.player_mut().details_read(1, Some((None, XRI, GUANO)));
+    assert_eq!(app.player().xri(), Some(XRI));
+    let guano = app.player().guano().unwrap();
+    assert!(guano.len() <= 600 - XRI.len() && guano.ends_with(b"\n"));
+    assert!(GUANO.starts_with(guano));
+
+    // None of either.
+    assert!(app.player_mut().show_details(0));
+    app.player_mut().details_read(2, Some((None, b"", b"")));
+    let lines = screen::details_lines(&app);
+    assert!(lines.contains(&"No XRI in this file".to_string()) && lines.contains(&"No GUANO in this file".to_string()));
+
+    // Reading the card again gives files new ids: the view forgets its file.
+    app.player_mut().scan_started();
+    assert_eq!(app.player().details_state(), None);
+    assert_eq!(screen::details_lines(&app), ["This file is no longer in the list"]);
+}
+
+#[test]
+fn the_wheel_scrolls_the_information_view_as_far_as_its_last_row() {
+    let mut storage = vec![0.0f32; 1024];
+    let mut files = vec![FileEntry::new(0, 0, b"", 0, 0, 0); 8];
+    let mut details = vec![0u8; crate::player::DETAILS_BYTES];
+    let mut app = listed(&mut storage, &mut files);
+    app.player_mut().set_details_storage(&mut details);
+    app.open_files();
+    press_row(&mut app, 0);
+    app.hold();
+    app.player_mut().details_read(2, Some((None, XRI, GUANO)));
+    let rows = screen::details_row_count(&app);
+    assert!(rows > layout::INFO_ROWS);
+    app.wheel(100);
+    assert_eq!(app.player().details_top, rows - layout::INFO_ROWS);
+    app.wheel(-3);
+    assert_eq!(app.player().details_top, rows - layout::INFO_ROWS - 3);
+    app.wheel(-100);
+    assert_eq!(app.player().details_top, 0);
+}
+
+#[test]
+fn xri_fields_split_at_semicolons_and_the_first_equals() {
+    let fields: Vec<_> = crate::player::xri_fields(XRI).collect();
+    assert_eq!(fields[0], ("T", "XRI 008a"));
+    assert_eq!(fields[5], ("SOURCE", "3:EXT MIC,4:EXT MIC"));
+    assert_eq!(fields.len(), 9, "the trailing comma is not a field: {fields:?}");
+}
