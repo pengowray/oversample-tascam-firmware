@@ -421,6 +421,13 @@ impl PeakShift {
             count += usize::from((w[1] > threshold) & (w[1] > w[0]) & (w[1] >= w[2]));
         }
 
+        // Each peak's frequency, in place of its power: peaks are at least 2
+        // bins apart, so no later peak reads that power.
+        for &k in &self.peaks[..count] {
+            let k = k as usize;
+            self.power[k] = k as f32 + peak_offset(self.power[k - 1], self.power[k], self.power[k + 1]);
+        }
+
         // Bins `lowest` to HALF - 1 (not DC or Nyquist). Bins within reach of
         // a peak move with it; the others move in fixed blocks.
         let mut next = lowest;
@@ -430,7 +437,7 @@ impl PeakShift {
             let core_from = next.max(k.saturating_sub(PEAK_REACH));
             let core_to = hi.min(k + PEAK_REACH);
             self.move_blocks(src, dst, next, core_from);
-            let freq = k as f32 + peak_offset(self.power[k - 1], self.power[k], self.power[k + 1]);
+            let freq = self.power[k];
             self.move_bins(src, dst, core_from, core_to, k, freq, true);
             self.move_blocks(src, dst, core_to + 1, hi + 1);
             next = hi + 1;
