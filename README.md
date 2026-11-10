@@ -96,10 +96,13 @@ The tests run on the computer: `cargo test --workspace`.
 - [tools/](tools/): `x8fw.py` unpacks, checks and repacks update files; `x8patch.py` builds a
   patched update file; `make_patch_data.py` makes the patcher page's data; `fwdis.py` and
   `tools/ghidra/` help read the firmware.
-- [docs/HOMEBREW.md](docs/HOMEBREW.md): the update file format, the flash layout, the firmware map
-  and a log of every build. [docs/PHONE_REMOTE.md](docs/PHONE_REMOTE.md): the phone remote's
-  format. [docs/FEASIBILITY.md](docs/FEASIBILITY.md): the original feasibility
-  study.
+- [docs/HARDWARE.md](docs/HARDWARE.md): the X8's chips, inputs, sample rates, display and controls,
+  with the source of each fact and what is still unknown.
+- [docs/FIRMWARE.md](docs/FIRMWARE.md): the update file format, the flash layout, how the patch
+  hooks into the stock firmware, and how to build, install and go back to stock.
+- [docs/HOMEBREW.md](docs/HOMEBREW.md): the firmware map, with addresses, and a log of every build.
+- [docs/PHONE_REMOTE.md](docs/PHONE_REMOTE.md): the phone remote's format.
+- [docs/FEASIBILITY.md](docs/FEASIBILITY.md): the original feasibility study.
 
 `Tascam_X8_official/` (TASCAM's files) and `work/` (unpacked images and built update files) are
 local folders, not part of the repository.

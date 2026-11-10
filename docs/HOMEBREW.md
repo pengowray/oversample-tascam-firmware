@@ -41,8 +41,9 @@ In the layout tables, addresses and flash image offsets are hexadecimal, and the
 offset into the flash image equals the offset from the start of flash. Offsets and
 sizes in the header table are decimal bytes. Terms are explained at the end.
 
-For what the hardware can do and which features are feasible, see
-[FEASIBILITY.md](FEASIBILITY.md).
+For the hardware, see [HARDWARE.md](HARDWARE.md). For an overview of the firmware
+and how the patch fits into it, see [FIRMWARE.md](FIRMWARE.md). The original
+feasibility study is [FEASIBILITY.md](FEASIBILITY.md).
 
 ## Summary
 
