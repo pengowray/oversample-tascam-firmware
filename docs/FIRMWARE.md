@@ -127,9 +127,9 @@ patched update file.
 | Fixed addresses (`spare.rs`) | SDRAM 0x865E2000 and 0x87EB0000 onwards | No | Output ring (cached), the display buffer, TE storage, task 1's patch stack and BAT PLAYBACK's read ring (uncached). |
 
 `crates/x8-patch/x8patch.ld` is the linker script; its comments give the reasons for each range. At
-B259 the patched update file is 25,859,964 bytes, 366,428 bytes longer than the official one.
+B259 the patched update file is 25,860,684 bytes, 367,148 bytes longer than the official one.
 Free space at B259: ITCM 76.8 of 89.2 KB used, DTCM 149.2 of 152.8 KB used, and the patch region
-ends at 0x818FF5E8 of 0x81900000, 2.5 KB short of the end. DTCM is nearly full. Formatting a
+ends at 0x818FF8B8 of 0x81900000, 1.8 KB short of the end. DTCM is nearly full. Formatting a
 float with `{:.1}` and the like pulls about 19 KB of the core library's float printing into the
 patch region; the app writes numbers with `screen::Fixed` instead.
 
@@ -282,7 +282,7 @@ The rules come from [Keeping the bricking risk low](HOMEBREW.md#keeping-the-bric
 |---|---|
 | Leave the boot header, bootloader and start-up and update-mode code unchanged | Enforced by `x8fw.py pack --base`, which refuses changes to flash 0x0 to 0x1FFFF and to the known start-up and update-mode functions. The list is incomplete: it does not cover the SD card and file system code that update mode also uses. |
 | Never reach the settings sectors | Enforced by `pack`, which refuses an image long enough to reach sector 0x1FA. |
-| Do nothing in update mode | Every hook reads the system mode byte first and goes straight to the stock code unless the mode is 0 or 1. The two function-entry hooks give the stock result instead. The power-off hook does not read the mode; it changes nothing unless a bat tile opened the current app, which cannot happen in update mode. |
+| Do nothing in update mode | Every hook reads the system mode byte first and goes straight to the stock code unless the mode is 0 or 1. The two function-entry hooks give the stock result instead. The logo screen's lower image (from B259) is the exception: it is data, the same in every mode. The power-off hook does not read the mode; it changes nothing unless a bat tile opened the current app, which cannot happen in update mode. |
 | Never write to flash from patch code | Followed. The power-off hook calls the stock settings save, which writes flash the same way as before. |
 | Check every hook site | `x8patch.py` checks the stock value at every site, that each target is a Thumb address inside the patch, that the logo screen's new image and its tiles are inside the patch or the stock pixels, that the base file is an unmodified official file, that the header version matches, and that every section is inside its region. |
 | Nothing in ITCM before `load_itcm` | Enforced by `x8patch.py` (see [Fast memory](#fast-memory-itcm-and-dtcm)). |

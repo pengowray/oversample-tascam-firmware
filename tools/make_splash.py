@@ -36,7 +36,7 @@ import numpy as np
 from PIL import Image, ImageDraw, ImageFont
 
 TEXT = "Oversample Edition"
-FONT_PIXELS = 18
+FONT_PIXELS = 20
 BAT_HEIGHT = 42
 
 SCREEN_WIDTH, SCREEN_HEIGHT = 320, 480

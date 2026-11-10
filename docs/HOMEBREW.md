@@ -2360,7 +2360,7 @@ B241 or an earlier build. All the checks in `tools/x8patch.py` pass on this file
 
 ## Step 36 test file: TASCAM's logo screen back, with a bigger bat and "Oversample Edition" below (built 2026-11-10, not yet installed)
 
-`work/patch35/#PortaX8_0259.203` (B259, SHA-256 `e9172321…0b808f94`). Includes steps 11 to 35. Install this file in place of
+`work/patch35/#PortaX8_0259.203` (B259, SHA-256 `6162c7a6…10b4e188`). Includes steps 11 to 35. Install this file in place of
 any earlier build. All the checks in `tools/x8patch.py` pass on this file. Header version 19: three new header fields for
 the logo screen, and four new changes to stock code in the screen's constructor.
 
@@ -2368,7 +2368,7 @@ the logo screen, and four new changes to stock code in the screen's constructor.
 X8". The owner asked for TASCAM's logo and "Portacapture X8" to stay, with the bat 2 or 3 times bigger.
 
 **On screen.** At start-up and power-off: TASCAM's logo, "Portacapture X8", the bat (42 pixels high, twice B257's), and
-"Oversample Edition" in a smaller size than "Portacapture X8". The group is centred where the stock group was.
+"Oversample Edition" at the same 20-pixel size as in B257. The group is centred where the stock group was.
 
 **How it works.** The screen's lower item gets a new image from the patch, which reuses the stock pixels of "Portacapture X8"
 and adds the bat and the text. TASCAM's pixels and "Portacapture X8"'s pixels are no longer overwritten. See [The logo
@@ -2379,9 +2379,9 @@ new image is wrong.
 |---|---|---|---|
 | ITCM | 76.8 KB | 76.8 KB | 89.2 KB |
 | DTCM | 149.2 KB | 149.2 KB | 152.8 KB |
-| `.noinit`, the end of the patch's memory | ends at 0x818fe178 | ends at 0x818ff5e8 | 0x81900000 |
+| `.noinit`, the end of the patch's memory | ends at 0x818fe178 | ends at 0x818ff8b8 | 0x81900000 |
 
-The patch region has 2.5 KB left.
+The patch region has 1.8 KB left.
 
 **What to check.**
 
@@ -2451,7 +2451,7 @@ character of the GUANO text on every frame; and whether 0.6 s feels right.
 6. With a file playing, open the view for a file with a long GUANO Note and note `draw` on the debug line.
 7. Hold HOME on FILE INFORMATION, then open BAT PLAYBACK again: does it open on the list or the player, not on the view?
 
-## Step 34 test file: phone commands for the clock and listening mode, a Phone tab with a QR code, BROWSE's order, the logo screen (built 2026-11-10, not yet installed)
+## Step 34 test file: phone commands for the clock and listening mode, a Phone tab with a QR code, BROWSE's order, the logo screen (built 2026-11-10, install not recorded)
 
 `work/patch33/#PortaX8_0257.203` (B257, SHA-256 `79c4e79e…a0c803882`). Includes steps 11 to 33. Install this file in place of
 any earlier build. All the checks in `tools/x8patch.py` pass on this file. No new stock hook site (header version 18). The
@@ -3175,9 +3175,9 @@ table and no free-text row, so a GUANO page needs new QML. A file information vi
 ## The logo screen (2026-11-10)
 
 **Result.** The screen with TASCAM's logo above "Portacapture X8" on white can be changed. It is a Qt screen in the main
-application, and its two images are 8-bit alpha masks stored in the main application's data. B257 wrote the Oversample bat
+application, and its two images are 8-bit alpha masks stored in the main application's data. B257 and B258 write the Oversample bat
 and "Oversample Edition" over those masks' pixels, at the same addresses and with the same sizes; the owner saw it on the
-unit and asked for TASCAM's logo and "Portacapture X8" back, with the bat bigger. From B259 the screen shows TASCAM's logo
+unit with B258 installed and asked for TASCAM's logo and "Portacapture X8" back, with the bat bigger. From B259 the screen shows TASCAM's logo
 and "Portacapture X8" as stock, then the bat, 42 pixels high, and "Oversample Edition" below them. The lower image is a new
 image in the patch, so B259 changes a literal and three `movs` instructions in the screen's constructor (see [The
 change](#the-change)).
@@ -3243,18 +3243,18 @@ top left corner of their image.
 ### The change
 
 **B257 and B258: pixels only.** `x8patch.py` wrote new bytes over the three stock pixel runs: the bat, 24 x 21, in place of
-TASCAM's logo, and "Oversample Edition" in place of "Portacapture X8". No code or descriptor changed. This was installed and
-shown on the unit.
+TASCAM's logo, and "Oversample Edition" in place of "Portacapture X8". No code or descriptor changed. B258 was installed
+and showed it on the unit.
 
 **From B259: a new lower image.** TASCAM's logo is unchanged, apart from its item's y. The lower image's item gets a new
-image, `LOWER_IMAGE` in `crates/x8-patch/src/patch/logo.rs`, 243 x 118, with four tiles:
+image, `LOWER_IMAGE` in `crates/x8-patch/src/patch/logo.rs`, 243 x 120, with four tiles:
 
 | Tile | Pixels | Size | Position in the image |
 |---|---|---|---|
 | The descender of the p | Stock, 0x81766F5C | 6 x 7 | x 116, y 18, flags 2, trim 0x01010101 (as stock) |
 | "Portacapture X8" without the descender | Stock, 0x812F4F44 | 245 x 21 | x -1, y -1, flags 2, trim 0x01010101 (as stock) |
 | The bat | Patch | 48 x 42 | x 97, y 48 |
-| "Oversample Edition", Open Sans Semibold 18 px, cropped to its ink | Patch | 169 x 18 | x 37, y 100 |
+| "Oversample Edition", Open Sans Semibold 20 px, cropped to its ink | Patch | 188 x 20 | x 27, y 100 |
 
 The image and its tiles are static data in the patch, with the layout (0x1E498) and colour (0xFF3E3E3E) set in the data, as
 the launcher glyphs do; no patch code runs for this screen. `tools/x8patch.py` makes four changes in `FUN_81259484`, each
@@ -3263,12 +3263,12 @@ after checking the stock value:
 | Address | Stock | B259 |
 |---|---|---|
 | 0x81259B88, the literal holding the address of the lower image's handle | 0x819A040C | `LOWER_HANDLE` in the patch, a word holding `LOWER_IMAGE`'s address |
-| 0x81259754, `movs r0, #24`: the lower item's height | 24 | 118, the new image's height |
-| 0x81259784, `movs r0, #254`: the lower item's y | 254 | 207 |
-| 0x8125971C, `movs r0, #190`: the upper item's y | 190 | 143 |
+| 0x81259754, `movs r0, #24`: the lower item's height | 24 | 120, the new image's height |
+| 0x81259784, `movs r0, #254`: the lower item's y | 254 | 206 |
+| 0x8125971C, `movs r0, #190`: the upper item's y | 190 | 142 |
 
 The widths (124 and 243) are unchanged, so the x bindings still centre both items. The y positions keep the middle of the
-group where the stock group's middle was, and the bottom of the text, at y 325, is 65 pixels above the bottom of the POWER
+group where the stock group's middle was, and the bottom of the text, at y 326, is 64 pixels above the bottom of the POWER
 OFF text. Before it changes the literal, `x8patch.py` checks the new image: every descriptor and tile is inside the patch or
 is one of the two stock pixel runs (whose SHA-256 it checks), each tile has the 8-bit alpha layout, a stride equal to its
 width and at most 5,145 pixels, and each tile is inside the image. It sets the lower item's height from the image's height.
@@ -3292,22 +3292,27 @@ python3 tools/make_splash.py --preview work/patch35/#PortaX8_0259-image.bin work
   every start, and probably in update mode too (not checked), and it reads the new descriptors. A bad descriptor would
   probably hang the Qt task, and with it the screen, at every start.
 - In update mode the descriptors are in place: the bootloader copies the whole patch region into SDRAM before `main()`
-  chooses the mode, and the descriptors are initialised data stored in flash, which no code writes. The patch's own code
-  does not take part, so rule 2 of [Keeping the bricking risk low](#keeping-the-bricking-risk-low) is not needed for it.
+  chooses the mode, and the descriptors are initialised data stored in flash. No patch code writes them. The new tiles have flags 0, which
+  the launcher glyphs show the draw path leaves alone; the two copied stock tiles have flags 2, as in the stock image.
+  This change is the one exception to rule 2 of [Keeping the bricking risk low](#keeping-the-bricking-risk-low): it is
+  the same in every mode, because it is data and no patch code runs to check the mode.
   Even so, if the Qt task hung at a normal start, recovery would depend on update mode starting, and that has not been
   tried with this change.
 - What is the same as stock: the descriptor layout, which the launcher glyphs use on the unit; the two stock tiles, copied
   field for field; and tile sizes no bigger than the stock 245 x 21 tile. What is new: an image taller than any stock
-  image on this screen (118 pixels), and a constructor that reads its image from the patch region.
+  image on this screen (120 pixels), and a constructor that reads its image from the patch region.
 - Installing the official update file brings back TASCAM's screen.
 - Tested on a desktop only: `x8patch.py` applies the change to the official file, the packer's checks pass, and the picture
-  above is drawn from the patched image.
+  above is drawn from the patched image. `x8patch.py` refuses each of these: a tile's layout word set to 0, a tile moved
+  outside the image, a pixel pointer outside the patch and the stock runs, a stock pixel pointer moved by one byte, the
+  wrong colour, no tiles, a handle outside the patch, a wrong stock word at the literal or at a `movs`, and changed stock
+  pixels.
 
 ### A bigger bat
 
 The bat is 42 pixels high, twice the height of TASCAM's logo. A 63-pixel bat (3 times, 72 x 63) needs 2,520 bytes more,
-and at B259 the patch region has 2,584 bytes left before 0x81900000. It would fit, but would leave the next feature no room,
-so it waits until something is moved out of the patch region.
+and at B259 the patch region has 1,864 bytes left before 0x81900000. It needs something moved out of the patch region
+first.
 
 ## Firmware map (V2.03, in progress)
 
@@ -3647,7 +3652,9 @@ reads H/W Version 1.00 Build 010 from the board or holds it as a constant has no
    mode byte (0x81969DD9 in V2.03) and goes straight back to the original code
    unless the mode is 0 or 1 (normal start). This matters most for input and
    screen hooks: the button scan, the event mailbox, the key handler slot and
-   the Qt task all run in update mode too.
+   the Qt task all run in update mode too. The one exception is the logo screen's
+   lower image from B259, a data change that is the same in every mode (see [The
+   logo screen](#the-logo-screen-2026-11-10), "Risk").
 3. Turn the bat app on only when a particular file (for example `BAT.CFG`) is on the
    SD card. If the bat app crashes the unit, take the card out, delete the file on a
    computer, and the unit starts as stock.
