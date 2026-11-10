@@ -243,7 +243,8 @@ mod tests {
         // The inverse ignores DC and Nyquist.
         spec[0] = Complex32::new(0.0, 0.0);
         let mean = x.iter().sum::<f32>() / x.len() as f32;
-        let alternating = x.iter().enumerate().map(|(n, v)| if n % 2 == 0 { *v } else { -*v }).sum::<f32>() / x.len() as f32;
+        let alternating =
+            x.iter().enumerate().map(|(n, v)| if n % 2 == 0 { *v } else { -*v }).sum::<f32>() / x.len() as f32;
         let mut seen = [false; INV];
         inverse_rfft_256(&mut spec, &[1.0; INV], |k, z| {
             seen[k] = true;

@@ -1007,7 +1007,10 @@ mod measurements {
             let r: f64 = y.iter().zip(&y[lag..]).map(|(a, b)| *a as f64 * *b as f64).sum::<f64>() / e;
             worst_r = worst_r.max(r.abs());
         }
-        std::println!("noise: gain {:.2} dB, worst correlation at 1 to 3 hops or 1 frame {worst_r:.3}", db(rms(y) / rms(&x)));
+        std::println!(
+            "noise: gain {:.2} dB, worst correlation at 1 to 3 hops or 1 frame {worst_r:.3}",
+            db(rms(y) / rms(&x))
+        );
     }
     #[test]
     #[ignore]
