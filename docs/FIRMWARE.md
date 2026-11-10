@@ -127,9 +127,9 @@ patched update file.
 | Fixed addresses (`spare.rs`) | SDRAM 0x865E2000 and 0x87EB0000 onwards | No | Output ring (cached), the display buffer, TE storage, task 1's patch stack and BAT PLAYBACK's read ring (uncached). |
 
 `crates/x8-patch/x8patch.ld` is the linker script; its comments give the reasons for each range. At
-B258 the patched update file is 25,854,732 bytes, 361,196 bytes longer than the official one.
-Free space at B258: ITCM 76.8 of 89.2 KB used, DTCM 149.2 of 152.8 KB used, and the patch region
-ends at 0x818FE178 of 0x81900000, 7.6 KB short of the end. DTCM is nearly full. Formatting a
+B259 the patched update file is 25,859,964 bytes, 366,428 bytes longer than the official one.
+Free space at B259: ITCM 76.8 of 89.2 KB used, DTCM 149.2 of 152.8 KB used, and the patch region
+ends at 0x818FF5E8 of 0x81900000, 2.5 KB short of the end. DTCM is nearly full. Formatting a
 float with `{:.1}` and the like pulls about 19 KB of the core library's float printing into the
 patch region; the app writes numbers with `screen::Fixed` instead.
 
@@ -138,7 +138,8 @@ The memory ranges and their sizes are in [HARDWARE.md](HARDWARE.md#memory-free-f
 ### The patch header
 
 The patch starts with a header, `X8_PATCH_HEADER` in `crates/x8-patch/src/patch.rs`: the magic
-`BATX`, a header version (18 at B256), the addresses of 31 entry points, and a build number.
+`BATX`, a header version (19 at B259), the addresses of 31 entry points, the address of the logo screen's lower image
+handle and the y positions of that screen's two images, and a build number.
 `tools/x8patch.py` reads the entry points from the header, so the stock firmware's hook sites
 always point at the right functions after a rebuild. The build field is 0 in the ELF file;
 `x8patch.py` writes the update file's build number into it, and the CPU test shows it.
@@ -267,6 +268,7 @@ and "Launcher icons" and "USER SETTINGS tiles" in the [firmware map](HOMEBREW.md
 | GUANO metadata | `guano_hook` replaces a call made right after the stock code rewrites a WAV header at the end of a take or a split. For a take from BAT DETECTOR with the GUANO switch on (the default), it appends a GUANO chunk after the audio, on task 4, if at least 2 KB of stack is free. See [GUANO metadata](HOMEBREW.md#guano-metadata-2026-11-08). |
 | Location log | The same hook appends the phone's location to `BAT_LOCATIONS.CSV` beside the takes, if 8 KB of stack is free. |
 | Pauses | REC is kept from pausing a bat take unless the app's switch allows it; pauses that do happen are counted for GUANO. |
+| Logo screen | From B259 the start-up and power-off screen shows TASCAM's logo and "Portacapture X8", then the Oversample bat and "Oversample Edition". The literal that the screen's constructor reads the lower image's handle from points at an image in the patch, and three `movs` in the constructor set that item's height and both items' y. Data only: no patch code runs. See [The logo screen](HOMEBREW.md#the-logo-screen-2026-11-10). |
 | Clock | The DSP task gives task 4 the stock commands that read and set the clock (75 and 76), only while the recorder is stopped, and reads the clock back to check. See [Setting the clock](HOMEBREW.md#setting-the-clock-locations-and-pauses-2026-11-08). |
 | Card reads | BAT PLAYBACK's reader uses the file system's core calls with absolute UTF-16 paths, never changes folder, and keeps at most one folder and two files open. See [Reading files from the card](HOMEBREW.md#reading-files-from-the-card-2026-11-09). |
 
@@ -282,7 +284,7 @@ The rules come from [Keeping the bricking risk low](HOMEBREW.md#keeping-the-bric
 | Never reach the settings sectors | Enforced by `pack`, which refuses an image long enough to reach sector 0x1FA. |
 | Do nothing in update mode | Every hook reads the system mode byte first and goes straight to the stock code unless the mode is 0 or 1. The two function-entry hooks give the stock result instead. The power-off hook does not read the mode; it changes nothing unless a bat tile opened the current app, which cannot happen in update mode. |
 | Never write to flash from patch code | Followed. The power-off hook calls the stock settings save, which writes flash the same way as before. |
-| Check every hook site | `x8patch.py` checks the stock value at every site, that each target is a Thumb address inside the patch, that the base file is an unmodified official file, that the header version matches, and that every section is inside its region. |
+| Check every hook site | `x8patch.py` checks the stock value at every site, that each target is a Thumb address inside the patch, that the logo screen's new image and its tiles are inside the patch or the stock pixels, that the base file is an unmodified official file, that the header version matches, and that every section is inside its region. |
 | Nothing in ITCM before `load_itcm` | Enforced by `x8patch.py` (see [Fast memory](#fast-memory-itcm-and-dtcm)). |
 | Turn the patch on only when a file is on the card | Not built. The hooks are installed in every normal start. To get rid of a misbehaving patch, install the official file. |
 

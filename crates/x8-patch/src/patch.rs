@@ -21,6 +21,10 @@ mod keys;
 mod launcher;
 /// Keeps the phone's location from chimes for GUANO metadata, and logs it to the card.
 mod location;
+/// The logo screen's lower image: "Portacapture X8", the bat and "Oversample Edition".
+mod logo;
+/// The logo screen's layout and new masks, from tools/make_splash.py.
+mod logo_pixels;
 /// Leaves the MIX file out of takes from a bat tile, when the app's switch is off.
 mod mix_file;
 /// Keeps REC from pausing bat takes unless allowed, and counts the pauses that happen.
@@ -29,6 +33,8 @@ mod pauses;
 mod play_glyph;
 /// BAT PLAYBACK's player, in the DSP task: passes requests to the card reader and plays the file.
 mod playback;
+/// Qt for MCUs image descriptors.
+mod qt;
 /// BAT PLAYBACK's card reader task: lists the WAV files, reads their headers and the file playing.
 mod reader;
 /// Carries out the phone remote's commands by posting button presses to task 1.
@@ -104,6 +110,11 @@ pub struct Header {
     file_mask_hook: Handler,
     /// Replaces the WAV header rewrite's call to the file size function, at the end of a take or a split.
     guano_hook: Handler,
+    /// The handle that the logo screen's lower image item gets, and the y positions of its upper and
+    /// lower items. tools/x8patch.py reads the lower item's height from the image.
+    logo_lower: &'static &'static qt::QtImage,
+    logo_upper_y: u32,
+    logo_lower_y: u32,
     /// The build number on the update screen. 0 here: `tools/x8patch.py` writes it into the
     /// update file, so read it with [`patch_build`].
     build: u32,
@@ -113,7 +124,7 @@ pub struct Header {
 #[unsafe(link_section = ".header")]
 pub static X8_PATCH_HEADER: Header = Header {
     magic: *b"BATX",
-    version: 18,
+    version: 19,
     key_hook,
     rec_key_hook,
     touch_hook,
@@ -135,6 +146,9 @@ pub static X8_PATCH_HEADER: Header = Header {
     open_take_hook,
     file_mask_hook,
     guano_hook,
+    logo_lower: &logo::LOWER_HANDLE,
+    logo_upper_y: logo_pixels::UPPER_Y,
+    logo_lower_y: logo_pixels::LOWER_Y,
     build: 0,
 };
 

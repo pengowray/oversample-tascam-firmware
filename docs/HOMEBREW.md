@@ -2358,7 +2358,38 @@ B241 or an earlier build. All the checks in `tools/x8patch.py` pass on this file
 1. **Start and stop.** With Phone remote on and the phone page reloaded, do `Start recording` and `Stop recording` work as before?
 2. **Old phone page.** If a phone still has the old page cached, its commands should do nothing at all. Reload the page.
 
-## Step 35 test file: file information in BAT PLAYBACK (built 2026-11-10, not yet installed)
+## Step 36 test file: TASCAM's logo screen back, with a bigger bat and "Oversample Edition" below (built 2026-11-10, not yet installed)
+
+`work/patch35/#PortaX8_0259.203` (B259, SHA-256 `e9172321…0b808f94`). Includes steps 11 to 35. Install this file in place of
+any earlier build. All the checks in `tools/x8patch.py` pass on this file. Header version 19: three new header fields for
+the logo screen, and four new changes to stock code in the screen's constructor.
+
+**Result of B257.** The bat and "Oversample Edition" showed on the logo screen in place of TASCAM's logo and "Portacapture
+X8". The owner asked for TASCAM's logo and "Portacapture X8" to stay, with the bat 2 or 3 times bigger.
+
+**On screen.** At start-up and power-off: TASCAM's logo, "Portacapture X8", the bat (42 pixels high, twice B257's), and
+"Oversample Edition" in a smaller size than "Portacapture X8". The group is centred where the stock group was.
+
+**How it works.** The screen's lower item gets a new image from the patch, which reuses the stock pixels of "Portacapture X8"
+and adds the bat and the text. TASCAM's pixels and "Portacapture X8"'s pixels are no longer overwritten. See [The logo
+screen](#the-logo-screen-2026-11-10), "The change" and "Risk": unlike B257's, this change can stop the unit starting if the
+new image is wrong.
+
+| Item | B258 | B259 | Limit |
+|---|---|---|---|
+| ITCM | 76.8 KB | 76.8 KB | 89.2 KB |
+| DTCM | 149.2 KB | 149.2 KB | 152.8 KB |
+| `.noinit`, the end of the patch's memory | ends at 0x818fe178 | ends at 0x818ff5e8 | 0x81900000 |
+
+The patch region has 2.5 KB left.
+
+**What to check.**
+
+1. Start-up: TASCAM's logo, "Portacapture X8", the bat and "Oversample Edition". Does the unit reach the LAUNCHER as before?
+2. Power-off: the same screen, with POWER OFF below "Oversample Edition" and clear of it.
+3. Update mode (HOME and REC at power-on): does UPDATE MODE still show? Does the logo screen show first?
+
+## Step 35 test file: file information in BAT PLAYBACK (built 2026-11-10, installed)
 
 `work/patch34/#PortaX8_0258.203` (B258, SHA-256 `723ac97a…765f26c9`). Includes steps 11 to 34. Install this file in place of
 any earlier build. All the checks in `tools/x8patch.py` pass on this file. No new stock hook site (header version 18).
@@ -3143,14 +3174,15 @@ table and no free-text row, so a GUANO page needs new QML. A file information vi
 
 ## The logo screen (2026-11-10)
 
-**Result.** The screen with TASCAM's logo above "Portacapture X8" on white can be changed safely. It is a Qt screen in the
-main application, and its two images are 8-bit alpha masks stored in the main application's data. `tools/x8patch.py` now
-writes the Oversample bat and "Oversample Edition" over those masks' pixels, at the same addresses and with the same sizes.
-No code changes, and no image descriptor changes. The bat can be at most 21 pixels high, the height of TASCAM's logo. The
-change is in `tools/x8patch.py` from 10 November 2026, so the first numbered build after B256 includes it. It has not been
-installed on a unit.
+**Result.** The screen with TASCAM's logo above "Portacapture X8" on white can be changed. It is a Qt screen in the main
+application, and its two images are 8-bit alpha masks stored in the main application's data. B257 wrote the Oversample bat
+and "Oversample Edition" over those masks' pixels, at the same addresses and with the same sizes; the owner saw it on the
+unit and asked for TASCAM's logo and "Portacapture X8" back, with the bat bigger. From B259 the screen shows TASCAM's logo
+and "Portacapture X8" as stock, then the bat, 42 pixels high, and "Oversample Edition" below them. The lower image is a new
+image in the patch, so B259 changes a literal and three `movs` instructions in the screen's constructor (see [The
+change](#the-change)).
 
-![The logo screen after the change, drawn from a patched flash image](screens/logo.png)
+![The logo screen in B259, drawn from the patched flash image](screens/logo.png)
 
 The same screen shows at start-up and at power-off, so both change. At power-off the screen also shows the text POWER OFF,
 which is unchanged.
@@ -3210,60 +3242,72 @@ top left corner of their image.
 
 ### The change
 
-`BUILDS` in `tools/x8patch.py` has a `pixels` list for V2.03 build 217: the three pixel addresses above, the SHA-256 of
-each stock run of bytes, and the new bytes. `x8patch.py` refuses to build if the stock bytes differ, then overwrites them with
-the same number of bytes. The new bytes are in `tools/splash_pixels.py`, which `tools/make_splash.py` writes from the
-Oversample logo (`about-icon.png`) and the Open Sans Semibold font:
+**B257 and B258: pixels only.** `x8patch.py` wrote new bytes over the three stock pixel runs: the bat, 24 x 21, in place of
+TASCAM's logo, and "Oversample Edition" in place of "Portacapture X8". No code or descriptor changed. This was installed and
+shown on the unit.
 
-- Upper image: the bat from the Oversample logo, the same drawing as BAT DETECTOR's launcher glyph, 24 x 21 pixels and
-  centred. Each pixel's alpha is the logo's opacity multiplied by how dark the logo is at that pixel, so the logo's black
-  outlines and eyes are dark grey on the screen and its pale yellow ears are light grey.
-- Lower image, main tile: "Oversample Edition" in Open Sans Semibold at 20 pixels, 188 x 20 pixels of ink, centred. The ink
-  is in columns 1 to 243 and rows 1 to 20 of the 245 x 21 tile, counting from 0, which is the same area that the stock text
-  fills. Column 0, column 244 and row 0 are a transparent border in the stock tile.
-- Lower image, second tile: all zero, so transparent.
+**From B259: a new lower image.** TASCAM's logo is unchanged, apart from its item's y. The lower image's item gets a new
+image, `LOWER_IMAGE` in `crates/x8-patch/src/patch/logo.rs`, 243 x 118, with four tiles:
 
-`splash_pixels.py` is committed, so a build does not depend on the Pillow or FreeType version. To draw the logo screen from
-a flash image, use the image from `x8fw.py unpack`, or the `-image.bin` file that `x8patch.py` writes next to the update
-file:
+| Tile | Pixels | Size | Position in the image |
+|---|---|---|---|
+| The descender of the p | Stock, 0x81766F5C | 6 x 7 | x 116, y 18, flags 2, trim 0x01010101 (as stock) |
+| "Portacapture X8" without the descender | Stock, 0x812F4F44 | 245 x 21 | x -1, y -1, flags 2, trim 0x01010101 (as stock) |
+| The bat | Patch | 48 x 42 | x 97, y 48 |
+| "Oversample Edition", Open Sans Semibold 18 px, cropped to its ink | Patch | 169 x 18 | x 37, y 100 |
+
+The image and its tiles are static data in the patch, with the layout (0x1E498) and colour (0xFF3E3E3E) set in the data, as
+the launcher glyphs do; no patch code runs for this screen. `tools/x8patch.py` makes four changes in `FUN_81259484`, each
+after checking the stock value:
+
+| Address | Stock | B259 |
+|---|---|---|
+| 0x81259B88, the literal holding the address of the lower image's handle | 0x819A040C | `LOWER_HANDLE` in the patch, a word holding `LOWER_IMAGE`'s address |
+| 0x81259754, `movs r0, #24`: the lower item's height | 24 | 118, the new image's height |
+| 0x81259784, `movs r0, #254`: the lower item's y | 254 | 207 |
+| 0x8125971C, `movs r0, #190`: the upper item's y | 190 | 143 |
+
+The widths (124 and 243) are unchanged, so the x bindings still centre both items. The y positions keep the middle of the
+group where the stock group's middle was, and the bottom of the text, at y 325, is 65 pixels above the bottom of the POWER
+OFF text. Before it changes the literal, `x8patch.py` checks the new image: every descriptor and tile is inside the patch or
+is one of the two stock pixel runs (whose SHA-256 it checks), each tile has the 8-bit alpha layout, a stride equal to its
+width and at most 5,145 pixels, and each tile is inside the image. It sets the lower item's height from the image's height.
+
+`tools/make_splash.py` writes the bat and the text, and the layout, to `crates/x8-patch/src/patch/logo_pixels.rs` from the
+Oversample logo (`about-icon.png`) and the Open Sans Semibold font. The bat is drawn from the logo's full-size image, not
+scaled up from the 21-pixel bat. Each pixel's alpha is the logo's opacity multiplied by how dark the logo is at that pixel,
+so the logo's black outlines and eyes are dark grey on the screen and its pale yellow ears are light grey.
+`logo_pixels.rs` is committed, so a build does not depend on the Pillow or FreeType version. `make_splash.py --preview`
+draws the screen from a flash image by following the constructor's literals and `movs` values to the descriptors, so it
+also draws the stock screen from a stock image. Use the image from `x8fw.py unpack`, or the `-image.bin` file that
+`x8patch.py` writes next to the update file:
 
 ```bash
-python3 tools/make_splash.py --preview work/v203-patched.bin work/logo.png
+python3 tools/make_splash.py --preview work/patch35/#PortaX8_0259-image.bin work/logo.png
 ```
 
 ### Risk
 
-- The change is data only: 7,791 bytes of alpha values (2,604 + 5,145 + 42), at the stock addresses and with the stock
-  sizes. Every byte value is a valid alpha value, and the firmware reads these bytes only while it draws the logo screen.
-  Descriptors, sizes, pointers and code are all unchanged, so a mistake can only make the logo look wrong. It cannot stop
-  the unit starting or stop update mode.
-- The bytes are in the main application, not in the bootloader's sector, and outside the start-up and update-mode code
-  that `x8fw.py pack --base` refuses to change. Every update rewrites the main application, so installing the official update
-  file brings back TASCAM's logo.
-- Not tested on a unit. Tested on a desktop: `x8patch.py` applies the change to the official file and refuses an image whose
-  pixels are not the stock ones. `x8fw.py pack --base` reports changes only inside the three pixel runs and at the patch's
-  existing hook addresses, and the header and trailer checksums match. The picture above is drawn from that patched image.
+- B257's change was data only and could only make the logo look wrong. B259's can stop the unit: the constructor runs at
+  every start, and probably in update mode too (not checked), and it reads the new descriptors. A bad descriptor would
+  probably hang the Qt task, and with it the screen, at every start.
+- In update mode the descriptors are in place: the bootloader copies the whole patch region into SDRAM before `main()`
+  chooses the mode, and the descriptors are initialised data stored in flash, which no code writes. The patch's own code
+  does not take part, so rule 2 of [Keeping the bricking risk low](#keeping-the-bricking-risk-low) is not needed for it.
+  Even so, if the Qt task hung at a normal start, recovery would depend on update mode starting, and that has not been
+  tried with this change.
+- What is the same as stock: the descriptor layout, which the launcher glyphs use on the unit; the two stock tiles, copied
+  field for field; and tile sizes no bigger than the stock 245 x 21 tile. What is new: an image taller than any stock
+  image on this screen (118 pixels), and a constructor that reads its image from the patch region.
+- Installing the official update file brings back TASCAM's screen.
+- Tested on a desktop only: `x8patch.py` applies the change to the official file, the packer's checks pass, and the picture
+  above is drawn from the patched image.
 
-### A bigger bat (not built)
+### A bigger bat
 
-A bat taller than 21 pixels needs code changes, so it has more risk than the data-only change. It would need:
-
-- New image and tile descriptors in the patch region, pointing at bigger masks. A hand-made descriptor must set its layout
-  (0x1E498) and colour itself, because the stock static constructors set only the stock descriptors. A tile descriptor
-  without its layout hangs the Qt task at the draw path's `textureLayout` assert (see "Launcher icons" in the firmware
-  map).
-- A new handle for the upper image: either the literal at 0x81259B80 changed to the new handle's address, or a hook on the
-  call in `FUN_81259484` that turns the handle into an image. The upper image's width, height and y, which are constants in
-  that constructor, change too.
-- A check that the PXP blend handles a large mask. For areas of 50 pixels or more, the CPU copies the mask into a scratch
-  buffer at 0x20200000 that is 0x4C80 bytes long. The stock 245 x 21 tile (5,145 pixels) is drawn, so the copy probably
-  works in parts, but `FUN_80E03294` has not been read to confirm it. Splitting a big mask into tiles of at most 5,145
-  pixels, as the stock images do, avoids relying on that.
-
-`FUN_81259484` runs at every start-up, and probably in update mode too. It runs after `main()` has set the system mode, so a
-hook there can follow rule 2 of [Keeping the bricking risk low](#keeping-the-bricking-risk-low) and return the stock image in
-update mode. Even so, if such a hook hung the Qt task during a normal start, recovery would depend on update mode, which
-these notes expect to work but which would not yet have been tested with that change.
+The bat is 42 pixels high, twice the height of TASCAM's logo. A 63-pixel bat (3 times, 72 x 63) needs 2,520 bytes more,
+and at B259 the patch region has 2,584 bytes left before 0x81900000. It would fit, but would leave the next feature no room,
+so it waits until something is moved out of the patch region.
 
 ## Firmware map (V2.03, in progress)
 

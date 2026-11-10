@@ -73,28 +73,27 @@ def region(address):
     return "ram"
 
 
-def main(argv):
-    image_path, out_dir = argv
-    image = open(image_path, "rb").read()
+def init_table(image):
+    """Read IAR's init table from a flash image. Returns the table's flash offset, the zeroed
+    ranges as (address, size), the unpacked runs as (address, data, flash offset, packed size),
+    and the flash offset of the constructors routine."""
     at = image.find(INIT_CORE, APP_AT)
     if at < 0:
-        print("__iar_init_core not found in the application")
-        return 1
+        raise ValueError("__iar_init_core not found in the application")
     table = at + len(INIT_CORE)
     word = lambda o: struct.unpack_from("<I", image, o)[0]
     sword = lambda o: struct.unpack_from("<i", image, o)[0]
-    addr = lambda o: o - APP_AT + APP_BASE
-    os.makedirs(out_dir, exist_ok=True)
-    lines = [f"init table at 0x{addr(table):08x} (flash offset 0x{table:x})"]
 
     # Zero ranges: routine, then (size, destination) pairs ended by a size of 0.
+    zeroed = []
     p = table + 4
     while word(p) != 0:
-        lines.append(f"zero  0x{word(p + 4):08x} +0x{word(p):x}")
+        zeroed.append((word(p + 4), word(p)))
         p += 8
     p += 4
 
     # Three packed runs, back to back in flash.
+    runs = []
     for _ in range(3):
         sources, dests = word(p + 4) >> 1, word(p + 8) >> 1
         q = p + 12
@@ -109,13 +108,29 @@ def main(argv):
         (start, packed_len), (dest, length) = src[0], dst[0]
         data = lz77(image[start:start + packed_len])
         if len(data) != length:
-            print(f"run at flash 0x{start:x} unpacked to {len(data)} bytes, expected {length}")
-            return 1
+            raise ValueError(f"run at flash 0x{start:x} unpacked to {len(data)} bytes, expected {length}")
+        runs.append((dest, data, start, packed_len))
+        p = q
+    return table, zeroed, runs, p
+
+
+def main(argv):
+    image_path, out_dir = argv
+    image = open(image_path, "rb").read()
+    try:
+        table, zeroed, runs, ctors = init_table(image)
+    except ValueError as e:
+        print(e)
+        return 1
+    addr = lambda o: o - APP_AT + APP_BASE
+    os.makedirs(out_dir, exist_ok=True)
+    lines = [f"init table at 0x{addr(table):08x} (flash offset 0x{table:x})"]
+    lines += [f"zero  0x{dest:08x} +0x{size:x}" for dest, size in zeroed]
+    for dest, data, start, packed_len in runs:
         name = f"{region(dest)}-{dest:08x}.bin"
         open(os.path.join(out_dir, name), "wb").write(data)
-        lines.append(f"lz77  0x{dest:08x} +0x{length:x} from flash 0x{start:x} ({packed_len} packed) -> {name}")
-        p = q
-    lines.append(f"ctors routine entry at 0x{addr(p):08x}")
+        lines.append(f"lz77  0x{dest:08x} +0x{len(data):x} from flash 0x{start:x} ({packed_len} packed) -> {name}")
+    lines.append(f"ctors routine entry at 0x{addr(ctors):08x}")
     open(os.path.join(out_dir, "map.txt"), "w").write("\n".join(lines) + "\n")
     print("\n".join(lines))
     return 0

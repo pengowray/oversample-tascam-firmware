@@ -10,8 +10,8 @@ the patch at flash 0x1850000, straight after the stock image (which ends with
 its checksum at 0x184ffff), puts it at that address before the application
 starts. The tool then points the stock firmware's hook words, tail calls,
 calls and two function entries at the patch's entry points, all read from the
-patch's header (see BUILDS), writes the bat and "Oversample Edition" over the
-logo screen's two images (tools/make_splash.py), and packs the result with `x8fw.py pack --base`,
+patch's header (see BUILDS), gives the logo screen the patch's lower image, with the bat and
+"Oversample Edition" (tools/make_splash.py), and packs the result with `x8fw.py pack --base`,
 which refuses changes to the bootloader and the known start-up and update-mode
 code, and refuses an image long enough to reach the settings sectors.
 
@@ -24,7 +24,6 @@ import struct
 import sys
 
 sys.path.insert(0, os.path.dirname(__file__))
-import splash_pixels  # noqa: E402
 import x8fw  # noqa: E402
 
 PATCH_BASE = 0x81830000
@@ -47,8 +46,12 @@ def flash(address):
 # entries: the first 4 bytes of a stock function (whole instructions, given as
 #   two halfwords), replaced by a `b.w` to a header field's function, which
 #   does the stock function's whole job.
-# pixels: stock image pixels, checked by the SHA-256 of the stock bytes and
-#   overwritten with the same number of bytes. Image descriptors are unchanged.
+# stock_pixels: stock image pixels that the patch's own images point at, checked by the
+#   SHA-256 of the stock bytes and left alone.
+# handles: a literal holding the address of a stock image handle, replaced by a header field
+#   that is the address of a handle in the patch. The image it leads to is checked (see
+#   check_image) and its height is the header field's name with "_height" added.
+# immediates: a `movs r0, #value` (16 bits), whose value is replaced by a header field's.
 BUILDS = {
     (203, 217): {
         "words": [
@@ -131,16 +134,26 @@ BUILDS = {
             # read by the apps' save screens: `ldr.w ip,[pc,#0x2e4]`.
             ("first free slot", 0x80D6A252, (0xF8DF, 0xC2E4), "free_slot_hook"),
         ],
-        "pixels": [
-            # The logo screen's 8-bit alpha masks, shown at start-up and at power-off
-            # (docs/HOMEBREW.md, "The logo screen"). Each is read only through its tile
-            # descriptor in the SDRAM data (0x819a0410, 0x819a03d4 and 0x819a03b0).
-            ("logo: TASCAM, 124 x 21", 0x8132EA64,
-             "125a9981cbf64976a86c729b1ceb789e7586a1cb2119781346284e9d4c3916d2", splash_pixels.UPPER),
-            ("logo: Portacapture X8, 245 x 21", 0x812F4F44,
-             "c2647a76e971f4e261f7f4ca2a494911317ff9a5e2fefaa13369ab8be85a054b", splash_pixels.LOWER),
-            ("logo: descender of the p, 6 x 7", 0x81766F5C,
-             "2feccdbb579fa6448d567c10338fea9add41e39778c893cdd496e8e187d89984", splash_pixels.DESCENDER),
+        "stock_pixels": [
+            # The logo screen's 8-bit alpha masks for "Portacapture X8" (docs/HOMEBREW.md,
+            # "The logo screen"), 245 x 21 and 6 x 7. TASCAM's logo is left as it is.
+            ("logo: Portacapture X8", 0x812F4F44, 245 * 21,
+             "c2647a76e971f4e261f7f4ca2a494911317ff9a5e2fefaa13369ab8be85a054b"),
+            ("logo: descender of the p", 0x81766F5C, 6 * 7,
+             "2feccdbb579fa6448d567c10338fea9add41e39778c893cdd496e8e187d89984"),
+        ],
+        "handles": [
+            # The literal that the logo screen's constructor, FUN_81259484, reads the lower
+            # image's handle address from. Nothing else reads it.
+            ("logo screen lower image", 0x81259B88, 0x819A040C, "logo_lower"),
+        ],
+        "immediates": [
+            # The y of the logo screen's two items, and the height of the lower one, in
+            # FUN_81259484. The widths, 124 and 243, are unchanged, so each item is still
+            # centred by its x binding.
+            ("logo screen upper item y", 0x8125971C, 190, "logo_upper_y"),
+            ("logo screen lower item y", 0x81259784, 254, "logo_lower_y"),
+            ("logo screen lower item height", 0x81259754, 24, "logo_lower_height"),
         ],
     },
 }
@@ -150,11 +163,12 @@ HEADER_FIELDS = ["magic", "version", "key_hook", "rec_key_hook", "touch_hook", "
                  "line5_hook", "line6_hook", "label_hook", "title_y_hook", "delete_mode_hook", "delete_hook",
                  "badge2_hook", "badge3_hook", "icon2_hook", "icon3_hook", "icon_image2_hook", "icon_image3_hook",
                  "icon_height2_hook", "icon_height3_hook", "icon_width2_hook", "icon_width3_hook",
-                 "power_off_save_hook", "open_take_hook", "file_mask_hook", "guano_hook", "build"]
-HEADER_FORMAT = "<4s33I"
+                 "power_off_save_hook", "open_take_hook", "file_mask_hook", "guano_hook", "logo_lower",
+                 "logo_upper_y", "logo_lower_y", "build"]
+HEADER_FORMAT = "<4s36I"
 # The packer writes the update file's build number here, for the CPU test to show.
 BUILD_OFFSET = struct.calcsize(HEADER_FORMAT) - 4
-HEADER_VERSION = 18
+HEADER_VERSION = 19
 
 B_W, BL = 0x9000, 0xD000   # bits 15, 14 and 12 of the second halfword
 
@@ -230,13 +244,79 @@ def apply(image, patch, fields, build):
         put_half(address + 2, hw2)
         print(f"{name}: entry 0x{address:08x} -> b.w 0x{target & ~1:08x}")
 
-    for name, address, stock_sha256, pixels in build["pixels"]:
+    for name, address, size, stock_sha256 in build["stock_pixels"]:
         at = flash(address)
-        if hashlib.sha256(image[at:at + len(pixels)]).hexdigest() != stock_sha256:
-            return f"{name}: the {len(pixels)} bytes at 0x{address:08x} are not the stock pixels"
-        image[at:at + len(pixels)] = pixels
-        print(f"{name}: {len(pixels)} bytes at 0x{address:08x}")
+        if hashlib.sha256(image[at:at + size]).hexdigest() != stock_sha256:
+            return f"{name}: the {size} bytes at 0x{address:08x} are not the stock pixels"
+
+    stock_pixels = {address: size for _, address, size, _ in build["stock_pixels"]}
+    for name, address, stock, field in build["handles"]:
+        handle = fields[field]
+        if word(address) != stock:
+            return f"{name} at 0x{address:08x} holds 0x{word(address):08x}, expected 0x{stock:08x}"
+        if handle & 3 or not in_patch(handle):
+            return f"{field} = 0x{handle:08x} is not a word inside the patch"
+        height, error = check_image(patch, struct.unpack_from("<I", patch, handle - PATCH_BASE)[0], stock_pixels)
+        if error:
+            return f"{name}: {error}"
+        fields[field + "_height"] = height
+        put_word(address, handle)
+        print(f"{name}: handle 0x{stock:08x} -> 0x{handle:08x}")
+
+    for name, address, stock, field in build["immediates"]:
+        value = fields[field]
+        if half(address) != MOVS_R0 | stock:
+            return f"{name}: no movs r0, #{stock} at 0x{address:08x}"
+        if not 0 <= value <= 0xFF:
+            return f"{field} = {value} does not fit a movs"
+        put_half(address, MOVS_R0 | value)
+        print(f"{name}: movs r0, #{stock} -> #{value}")
     return None
+
+
+MOVS_R0 = 0x2000
+ALPHA8_LAYOUT = 0x1E498
+LOGO_COLOUR = 0xFF3E3E3E
+# The stock screens draw tiles of up to 5,145 pixels (245 x 21) through the PXP blend's scratch
+# buffer; no bigger tile has been tried.
+MAX_TILE_PIXELS = 245 * 21
+
+
+def check_image(patch, descriptor, stock_pixels):
+    """Check an alpha mask image of the patch's that a stock screen will draw: every descriptor and
+    every pixel it reads is inside the patch or is a whole run of `stock_pixels` (address: size),
+    and it has the stock layout and colour. Returns (the image's height, None) or (None, error)."""
+    def read(address, size):
+        if not (PATCH_BASE <= address and address + size <= PATCH_BASE + len(patch)):
+            raise ValueError(f"0x{address:08x} is not inside the patch")
+        return patch[address - PATCH_BASE:address - PATCH_BASE + size]
+    try:
+        colour, width, height, tile_count, tiles = struct.unpack("<5I", read(descriptor, 20))
+        if colour != LOGO_COLOUR or not 0 < tile_count <= 8:
+            return None, f"image at 0x{descriptor:08x}: colour 0x{colour:08x}, {tile_count} tiles"
+        for k in range(tile_count):
+            at = tiles + 36 * k
+            pixels, layout, flags, offset, size, stride, trim, cache_size, cache_entry = \
+                struct.unpack("<9I", read(at, 36))
+            x, y = struct.unpack("<hh", struct.pack("<I", offset))
+            tile_width, tile_height = size & 0xFFFF, size >> 16
+            if layout != ALPHA8_LAYOUT or cache_size or cache_entry or stride != tile_width:
+                return None, f"tile at 0x{at:08x} is not a plain 8-bit alpha tile"
+            if tile_width * tile_height > MAX_TILE_PIXELS:
+                return None, f"tile at 0x{at:08x} is {tile_width} x {tile_height}"
+            if (flags, trim) == (0, 0):
+                inner = (x, y, x + tile_width, y + tile_height)
+            elif (flags, trim) == (2, 0x01010101):
+                inner = (x + 1, y + 1, x + tile_width - 1, y + tile_height - 1)
+            else:
+                return None, f"tile at 0x{at:08x} has flags {flags} and trim 0x{trim:08x}"
+            if inner[0] < 0 or inner[1] < 0 or inner[2] > width or inner[3] > height:
+                return None, f"tile at 0x{at:08x} is outside its {width} x {height} image"
+            if stock_pixels.get(pixels) != tile_width * tile_height:
+                read(pixels, tile_width * tile_height)
+    except ValueError as e:
+        return None, str(e)
+    return height, None
 
 
 def elf_symbols(data, shoff, shentsize, shnum):

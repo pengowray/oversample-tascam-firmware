@@ -132,6 +132,13 @@ pub const CHANNEL_MUTED_STEP: usize = 0x14;
 /// The layout word for an 8-bit alpha image: what `FUN_80e06310` returns and
 /// the launcher icons' static constructors store in each tile (ITCM).
 pub const ALPHA8_LAYOUT: *const u8 = 0x0001_e498 as *const u8;
+/// The logo screen's pixels for "Portacapture X8" without the descender of the p (245 x 21), and
+/// for that descender (6 x 7): 8-bit alpha masks in the main application, each read only through
+/// its stock tile descriptor. tools/x8patch.py checks that they are the stock bytes.
+pub const LOGO_PORTACAPTURE_PIXELS: *const u8 = 0x812f_4f44 as *const u8;
+pub const LOGO_DESCENDER_PIXELS: *const u8 = 0x8176_6f5c as *const u8;
+/// The dark grey that static constructors store in the logo screen's two images.
+pub const LOGO_COLOUR: u32 = 0xff3e_3e3e;
 /// The colour that those constructors store in each launcher icon: opaque white.
 pub const ICON_COLOUR: u32 = 0xffff_ffff;
 /// `FUN_80e05870(property, &value)`: sets a Qt property (Thumb address).

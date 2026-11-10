@@ -1,6 +1,7 @@
 use core::ptr;
 use core::sync::atomic::{Ordering::Relaxed, Ordering::Release};
 
+use super::qt::{QtImage, QtTile};
 use super::state::{BLOCKS, LAUNCH_AT, LAUNCH_FROM, LAUNCHING, PLAYBACK, SCREEN_APP};
 use super::{Handler, app_byte, bat_glyph, play_glyph, stock, system_mode};
 
@@ -243,57 +244,11 @@ pub(super) unsafe extern "C" fn icon_hook<const TILE: usize>(binding: usize, roo
     unsafe { binding_fn(binding, root, c, d) }
 }
 
-/// A Qt for MCUs image as the launcher's icons are stored (for example
-/// lc_manual.png, whose descriptor is at 0x819a188c). Static constructors fill
-/// in the stock images' colour and their tiles' layout at start-up, so a dump
-/// of the data before they run shows both as 0; these statics must set them
-/// here. An image pointer with no flag bits set is not reference counted.
-#[repr(C, align(4))]
-struct QtImage {
-    /// 0xAARRGGBB, which the alpha mask is drawn in.
-    colour: u32,
-    width: u32,
-    height: u32,
-    tile_count: u32,
-    tiles: *const QtTile,
-}
-
-/// One tile of an image. The draw path asserts that `layout` is set, and with
-/// `flags`, `cache_size` and `cache_entry` 0 nothing writes to this.
-#[repr(C)]
-struct QtTile {
-    pixels: *const u8,
-    layout: *const u8,
-    flags: u32,
-    /// y << 16 | x within the image.
-    offset: u32,
-    /// height << 16 | width.
-    size: u32,
-    stride: u32,
-    trim: u32,
-    cache_size: u32,
-    cache_entry: u32,
-}
-
-// SAFETY: read only, and the pointers are to statics and stock data.
-unsafe impl Sync for QtImage {}
-unsafe impl Sync for QtTile {}
-
 // The icon height and width hooks give one size for both tiles.
 const _: () = assert!(bat_glyph::WIDTH == play_glyph::WIDTH && bat_glyph::HEIGHT == play_glyph::HEIGHT);
 
 const fn glyph_tile(pixels: *const u8) -> QtTile {
-    QtTile {
-        pixels,
-        layout: stock::ALPHA8_LAYOUT,
-        flags: 0,
-        offset: 0,
-        size: bat_glyph::HEIGHT << 16 | bat_glyph::WIDTH,
-        stride: bat_glyph::WIDTH,
-        trim: 0,
-        cache_size: 0,
-        cache_entry: 0,
-    }
+    QtTile::alpha8(pixels, 0, 0, bat_glyph::WIDTH, bat_glyph::HEIGHT)
 }
 
 const fn glyph_image(tile: *const QtTile) -> QtImage {
