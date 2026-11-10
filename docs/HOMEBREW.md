@@ -3645,7 +3645,7 @@ Two teardown videos are public: [What Dennis Does](https://www.youtube.com/watch
 - **A still photo of the logic board** (2026-11-10, thought to be a frame of the What Dennis Does video). One SDRAM chip
   is marked ESMT M52D5121632A (512 Mbit), the flash chip has a logo that looks like Macronix's, and a Seiko MS621
   rechargeable coin cell is next to a 560 Ω resistor and a diode. Two oscillators are marked 24.576 and 22.579, beside a TI
-  SN74AHCU04 hex inverter. The board-to-board connector has 80 pins. [HARDWARE.md](HARDWARE.md#main-parts) has the details.
+  SN74AHCU04 hex inverter. An 80-pin board-to-board connector is in the photo. [HARDWARE.md](HARDWARE.md#main-parts) has the details.
 - **Test points.** The logic board has many labelled test points (TP2, TP80, TP83 and
   others are visible in the video). Neither video identifies SWD, JTAG or UART pads.
   No schematic or service manual is published.
