@@ -1,9 +1,9 @@
 use core::ptr;
-use core::sync::atomic::{Ordering::Relaxed, Ordering::Release};
+use core::sync::atomic::{Ordering::Acquire, Ordering::Relaxed, Ordering::Release};
 
 use super::qt::{QtImage, QtTile};
-use super::state::{BLOCKS, LAUNCH_AT, LAUNCH_FROM, LAUNCHING, PLAYBACK, SCREEN_APP};
-use super::{Handler, app_byte, bat_glyph, play_glyph, stock, system_mode};
+use super::state::{BLOCKS, LAUNCH_AT, LAUNCH_FROM, LAUNCHING, PLAYBACK, PLAYBACK_OPENING, SCREEN_APP};
+use super::{Handler, app_byte, bat_glyph, blocks_per_second, play_glyph, stock, system_mode};
 
 /// The bat tiles, in USER SETTINGS slots 2 and 3 (slots 0 to 2 in the
 /// firmware's numbering). Slot 1 stays a USER SETTINGS preset.
@@ -54,6 +54,7 @@ pub(super) unsafe extern "C" fn tile_hook(bridge: usize, slot: usize, c: usize, 
     PLAYBACK.store(tile == 1, Relaxed);
     LAUNCH_FROM.store(app_byte() as u32, Relaxed);
     LAUNCH_AT.store(BLOCKS.load(Relaxed), Relaxed);
+    PLAYBACK_OPENING.store(tile == 1, Release);
     LAUNCHING.store(true, Release);
     // SAFETY: the bridge setter, called as the MANUAL tile calls it.
     let set: Handler = unsafe { core::mem::transmute(stock::BRIDGE_SET) };
@@ -90,6 +91,40 @@ pub(super) unsafe extern "C" fn power_off_save_hook(a: usize, b: usize, c: usize
         ptr::write_volatile(stock::APP as *mut u8, stock::C_LAUNCHER);
         let result = save(a, b, c, d);
         ptr::write_volatile(stock::APP as *mut u8, app);
+        result
+    }
+}
+
+/// How long after a tap on BAT PLAYBACK the app change can still come.
+const PLAYBACK_OPENING_S: u32 = 5;
+
+/// Replaces the app change's call to `FUN_80dc565c`, which turns phantom power off (in the system
+/// task, after the opening app's stored inputs with phantom power have been marked as pending).
+/// When BAT PLAYBACK opens MANUAL, the file player needs no phantom power, so the question is not
+/// asked: the pending marks are cleared, and MANUAL's stored phantom power, which the stock call
+/// writes 0 to, is put back, so MANUAL and BAT DETECTOR still ask when they next open. In the
+/// stock firmware only YES puts it back. Phantom power stays off, as after NO.
+pub(super) unsafe extern "C" fn phantom_off_hook(a: usize, b: usize, c: usize, d: usize) -> usize {
+    // SAFETY: the stock function the app change called, with its arguments.
+    let all_off: Handler = unsafe { core::mem::transmute(stock::PHANTOM_ALL_OFF) };
+    let since_tap = BLOCKS.load(Relaxed).wrapping_sub(LAUNCH_AT.load(Relaxed));
+    let quiet = PLAYBACK_OPENING.swap(false, Acquire)
+        && app_byte() == stock::C_MANUAL
+        && system_mode() <= 1
+        && since_tap < PLAYBACK_OPENING_S * blocks_per_second();
+    if !quiet {
+        return unsafe { all_off(a, b, c, d) };
+    }
+    // SAFETY: MANUAL's four stored phantom bytes and the pending flags (see `stock`), which the
+    // system task writes, and this runs in the system task. Byte access: the four bytes are not
+    // word aligned.
+    unsafe {
+        let stored: [u8; 4] = core::array::from_fn(|i| ptr::read_volatile(stock::MANUAL_PHANTOM.add(i)));
+        let result = all_off(a, b, c, d);
+        for (i, &on) in stored.iter().enumerate() {
+            ptr::write_volatile(stock::MANUAL_PHANTOM.add(i), on);
+        }
+        ptr::write_volatile(stock::PHANTOM_PENDING, 0);
         result
     }
 }

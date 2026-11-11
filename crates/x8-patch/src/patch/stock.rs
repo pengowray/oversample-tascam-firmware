@@ -147,6 +147,15 @@ pub const SET_PROPERTY: usize = 0x80e0_5871;
 pub const APP: *const u8 = 0x81e8_ca90 as *const u8;
 pub const C_LAUNCHER: u8 = 0;
 pub const C_MANUAL: u8 = 2;
+/// `FUN_80dc565c()`: turns phantom power off on inputs 3 to 6, writing 0 to the live phantom
+/// bytes and to the open app's stored copy (Thumb address). Opening an app calls it after
+/// marking the app's stored inputs with phantom power as pending, and then asks about them.
+pub const PHANTOM_ALL_OFF: usize = 0x80dc_565d;
+/// MANUAL's stored phantom power bytes for inputs 3 to 6 (settings + 0x33C + 0xCE).
+pub const MANUAL_PHANTOM: *mut u8 = 0x81e8_cc86 as *mut u8;
+/// The phantom power pending flags for inputs 3 to 6, one byte each. Any set after
+/// `PHANTOM_ALL_OFF` brings up the phantom power question.
+pub const PHANTOM_PENDING: *mut u32 = 0x81e8_6864 as *mut u32;
 /// `FUN_80da2778(defaults)`: with 0, saves the settings record, the app byte
 /// among them, to the next slot in flash (Thumb address). The next start
 /// opens the app the saved byte names.

@@ -63,7 +63,7 @@ use guano_file::guano_hook;
 use keys::{key_hook, rec_key_hook, touch_hook};
 use launcher::{
     badge_hook, delete_hook, delete_mode_hook, free_slot_hook, icon_height_hook, icon_hook, icon_image_hook,
-    icon_width_hook, power_off_save_hook, slot_hook, text_hook, tile_hook, title_y_hook,
+    icon_width_hook, phantom_off_hook, power_off_save_hook, slot_hook, text_hook, tile_hook, title_y_hook,
 };
 use mix_file::{file_mask_hook, open_take_hook};
 use usb::{usb_alt_hook, usb_init_hook};
@@ -119,6 +119,8 @@ pub struct Header {
     usb_init_hook: Handler,
     /// Replaces the device callback's call to interface 2's SET_INTERFACE handler.
     usb_alt_hook: Handler,
+    /// Replaces the app change's call that turns phantom power off.
+    phantom_off_hook: Handler,
     /// The handle that the logo screen's lower image item gets, and the y positions of its upper and
     /// lower items. tools/x8patch.py reads the lower item's height from the image.
     logo_lower: &'static &'static qt::QtImage,
@@ -133,7 +135,7 @@ pub struct Header {
 #[unsafe(link_section = ".header")]
 pub static X8_PATCH_HEADER: Header = Header {
     magic: *b"BATX",
-    version: 20,
+    version: 21,
     key_hook,
     rec_key_hook,
     touch_hook,
@@ -157,6 +159,7 @@ pub static X8_PATCH_HEADER: Header = Header {
     guano_hook,
     usb_init_hook,
     usb_alt_hook,
+    phantom_off_hook,
     logo_lower: &logo::LOWER_HANDLE,
     logo_upper_y: logo_pixels::UPPER_Y,
     logo_lower_y: logo_pixels::LOWER_Y,

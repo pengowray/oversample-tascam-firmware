@@ -127,6 +127,10 @@ BUILDS = {
             # The device callback's SET_INTERFACE branch calls interface 2's handler (through the
             # thunk to ITCM 0x152c8) with r2 = the alternate setting.
             ("USB interface 2 alternate setting", 0x80DC6FD8, 0x80DC6E48, "usb_alt_hook"),
+            # The app change (system message 0xD04 in FUN_80dbe324) turns phantom power off after
+            # marking the opening app's inputs as pending, then asks about them. Its other call
+            # to the same function, at 0x80DC17C6, is left alone.
+            ("app change, phantom power off", 0x80DC15EA, 0x80DC565C, "phantom_off_hook"),
         ],
         "facts": [
             # The veneer FUN_80e06310 goes to ITCM 0x1e484, which returns 0x1e498,
@@ -181,12 +185,12 @@ HEADER_FIELDS = ["magic", "version", "key_hook", "rec_key_hook", "touch_hook", "
                  "badge2_hook", "badge3_hook", "icon2_hook", "icon3_hook", "icon_image2_hook", "icon_image3_hook",
                  "icon_height2_hook", "icon_height3_hook", "icon_width2_hook", "icon_width3_hook",
                  "power_off_save_hook", "open_take_hook", "file_mask_hook", "guano_hook", "usb_init_hook",
-                 "usb_alt_hook", "logo_lower",
+                 "usb_alt_hook", "phantom_off_hook", "logo_lower",
                  "logo_upper_y", "logo_lower_y", "build"]
-HEADER_FORMAT = "<4s38I"
+HEADER_FORMAT = "<4s39I"
 # The packer writes the update file's build number here, for the CPU test to show.
 BUILD_OFFSET = struct.calcsize(HEADER_FORMAT) - 4
-HEADER_VERSION = 20
+HEADER_VERSION = 21
 
 B_W, BL = 0x9000, 0xD000   # bits 15, 14 and 12 of the second halfword
 

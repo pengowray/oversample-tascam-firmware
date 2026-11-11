@@ -46,6 +46,9 @@ pub(super) static LAUNCHING: AtomicBool = AtomicBool::new(false);
 /// PLAY, a short HOME press and REC go to the app, not to MANUAL.
 pub(super) static PLAYBACK: AtomicBool = AtomicBool::new(false);
 pub(super) static LAUNCH_FROM: AtomicU32 = AtomicU32::new(0);
+/// BAT PLAYBACK was tapped, and the app change it asked for has not yet reached the call that
+/// turns phantom power off (`launcher::phantom_off_hook`, in the system task).
+pub(super) static PLAYBACK_OPENING: AtomicBool = AtomicBool::new(false);
 pub(super) static LAUNCH_AT: AtomicU32 = AtomicU32::new(0);
 /// The app (C numbering) the bat screen was opened in, or NO_APP. It stays
 /// set while PLAY shows the app's own screen, and is cleared when the app
