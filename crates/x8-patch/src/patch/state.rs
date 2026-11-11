@@ -55,10 +55,12 @@ pub(super) static LAUNCH_AT: AtomicU32 = AtomicU32::new(0);
 /// changes.
 pub(super) static SCREEN_APP: AtomicU32 = AtomicU32::new(NO_APP);
 pub(super) const NO_APP: u32 = 0x100;
-/// The bat screen is dark because the stock BACKLIGHT timer dimmed the backlight (see
-/// `screen::follow_backlight`). The context running the app sets it; task 9 reads it.
-pub(super) static DARK: AtomicBool = AtomicBool::new(false);
-/// Task 9: the touch going on woke the dark screen, so it is kept from the app until it ends.
+/// The bat screen is blank: black and not drawn (see `screen::follow_backlight`). The context
+/// running the app sets it; task 9 reads it.
+pub(super) static BLANK: AtomicBool = AtomicBool::new(false);
+/// BLOCKS at the last touch (task 9), button or wheel turn (task 1), or when the bat screen opened.
+pub(super) static LAST_INPUT: AtomicU32 = AtomicU32::new(0);
+/// Task 9: the touch going on woke the blank screen, so it is kept from the app until it ends.
 pub(super) static TOUCH_WAKING: AtomicBool = AtomicBool::new(false);
 /// The DSP task gave the display back for a pop-up; task 1 takes it again
 /// once the pop-up has closed.

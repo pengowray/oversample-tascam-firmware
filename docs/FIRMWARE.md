@@ -127,9 +127,9 @@ patched update file.
 | Fixed addresses (`spare.rs`) | SDRAM 0x865E2000 and 0x87EB0000 onwards | No | Output ring (cached), the display buffer, TE storage, task 1's patch stack and BAT PLAYBACK's read ring (uncached). |
 
 `crates/x8-patch/x8patch.ld` is the linker script; its comments give the reasons for each range. At
-B267 the patched update file is 25,859,076 bytes, 365,540 bytes longer than the official one.
-Free space at B267: ITCM 80.9 of 89.2 KB used, DTCM 149.3 of 152.8 KB used, and the patch region
-ends at 0x818FF2F8 of 0x81900000, 3.3 KB short of the end. DTCM is nearly full. Formatting a
+B268 the patched update file is 25,859,316 bytes, 365,780 bytes longer than the official one.
+Free space at B268: ITCM 80.9 of 89.2 KB used, DTCM 149.3 of 152.8 KB used, and the patch region
+ends at 0x818FF3E8 of 0x81900000, 3.0 KB short of the end. DTCM is nearly full. Formatting a
 float with `{:.1}` and the like pulls about 19 KB of the core library's float printing into the
 patch region; the app writes numbers with `screen::Fixed` instead.
 
@@ -164,7 +164,7 @@ The memory ranges and their sizes are in [HARDWARE.md](HARDWARE.md#memory-free-f
 ### The patch header
 
 The patch starts with a header, `X8_PATCH_HEADER` in `crates/x8-patch/src/patch.rs`: the magic
-`BATX`, a header version (21 at B267), the addresses of 34 entry points, the address of the logo screen's lower image
+`BATX`, a header version (21 at B268), the addresses of 34 entry points, the address of the logo screen's lower image
 handle and the y positions of that screen's two images, and a build number.
 `tools/x8patch.py` reads the entry points from the header, so the stock firmware's hook sites
 always point at the right functions after a rebuild. The build field is 0 in the ELF file;
@@ -184,7 +184,7 @@ value it expects, and it refuses the build if any site differs.
 | Function entry | The first 4 bytes of a stock function become a `b.w` to a patch function that does the whole job. | The bridge's USER SETTINGS slot getter (0x80D6A238). The patch's `slot_hook` reports slots 2 and 3 as holding a MANUAL preset. |
 | Fact | A stock word the patch's constants depend on is checked and left alone. | The layout word for 8-bit alpha images, which the bat tiles' icons use. |
 
-At B267 there are 36 hook sites: 2 pointer words, 3 tail calls, 29 calls and 2 function entries,
+At B268 there are 36 hook sites: 2 pointer words, 3 tail calls, 29 calls and 2 function entries,
 plus 1 fact that is only checked. The logo screen (from B259) also changes a handle literal and 3
 `movs` immediates, and the USB audio (from B263) 3 more `movs` immediates in `FUN_80df4a24`, the
 packet sizes of the 2-channel alternate settings.
@@ -206,12 +206,12 @@ The patch also changes these at run time, from inside its hooks:
 |---|---|
 | Audio interrupt (48,000 times a second at 192 kHz) | `audio_hook`: calls the stock callback, copies the inputs the bat app listens to into the input ring, and writes the bat app's output from the output ring into the output block. It must stay short: a block at 192 kHz is about 12,500 cycles, and the stock callback uses 32% of the processor. |
 | Task 1 (stock) | The key hooks. They queue actions for the DSP task and return quickly. Opening the bat screen the first time builds the app on a separate 40 KB patch stack, because task 1's own stack is 6 KB. |
-| Task 9 (stock) | The touch hook. From B267 it keeps a touch that wakes the dark bat screen from the app until the finger lifts. |
-| System task (stock), from B267 | The phantom power hook on the app change (`launcher::phantom_off_hook`): when BAT PLAYBACK opens MANUAL, no phantom power question, and MANUAL's stored phantom power is put back. |
+| Task 9 (stock) | The touch hook. From B268 it keeps a touch that wakes the blank bat screen from the app until the finger lifts. |
+| System task (stock), from B268 | The phantom power hook on the app change (`launcher::phantom_off_hook`): when BAT PLAYBACK opens MANUAL, no phantom power question, and MANUAL's stored phantom power is put back. |
 | Qt's task (stock) | The launcher hooks: the tile, text, icon, slot and delete-mode hooks. |
 | Task 4 (stock) | The GUANO hook and the location log, at the end of a take. |
 | Task 1 (stock), from B266 | The key hooks also answer a weak USB supply by setting POWER SOURCE SELECT to BATTERY while the bat app's `Run from batteries on weak USB` switch is on, and power-off saves AUTO in its place (`patch/power.rs`). |
-| DSP task (patch, priority 16) | Processes the input ring through the bat app, draws the screen about 10 times a second (5 while recording, 2 while MANUAL's mix is muted, none while the stock BACKLIGHT timer has the light dimmed), and runs the clock, the phone remote and the BAT PLAYBACK player. Each pass stops after 30 ms and the task then sleeps 2 ms, so a mode that cannot keep up loses input instead of freezing the unit. 32 KB stack in DTCM. |
+| DSP task (patch, priority 16) | Processes the input ring through the bat app, draws the screen about 10 times a second (5 while recording, 2 while MANUAL's mix is muted, none once the screen has gone blank: 90 s, or 3 minutes in a take, after the last input with the stock BACKLIGHT timer's light dimmed), and runs the clock, the phone remote and the BAT PLAYBACK player. Each pass stops after 30 ms and the task then sleeps 2 ms, so a mode that cannot keep up loses input instead of freezing the unit. 32 KB stack in DTCM. |
 | Card reader task (patch, priority 12) | BAT PLAYBACK's card access: lists folders and WAV files and streams the chosen file into a read ring. Created with the DSP task; it touches the card only while BAT PLAYBACK is open and sleeps otherwise. 10 KB stack in DTCM. |
 
 The patch creates its tasks with `cre_tsk`, trying ids that the stock firmware leaves unused at
