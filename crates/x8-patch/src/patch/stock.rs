@@ -147,6 +147,19 @@ pub const SET_PROPERTY: usize = 0x80e0_5871;
 pub const APP: *const u8 = 0x81e8_ca90 as *const u8;
 pub const C_LAUNCHER: u8 = 0;
 pub const C_MANUAL: u8 = 2;
+/// The stock BACKLIGHT timer's flag: 1 once it has dimmed the backlight, 0 after a touch, button
+/// or wheel turn (task 1's input state + 0x10; see work/notes/backlight.md).
+pub const BACKLIGHT_DIMMED: *const u8 = 0x8196_a3f0 as *const u8;
+/// GENERAL SETTINGS > BACKLIGHT in seconds, signed (settings + 0x26): 0 OFF, below 0 ALWAYS.
+pub const BACKLIGHT_TIME: *const i16 = 0x81e8_c8a2 as *const i16;
+/// The PWM value last written to the backlight: 1 dimmed, 5, 35 or 55 for BRIGHTNESS LOW to HIGH.
+pub const BACKLIGHT_PWM: *const u8 = 0x81d0_196d as *const u8;
+/// 1 when FPGA register 2 bit 0 says there is no external power; the stock timer dims only then
+/// (task 1's input state + 0xE).
+pub const ON_CELLS_ONLY: *const u8 = 0x8196_a3ee as *const u8;
+/// `FUN_80d7058e()`: restarts the BACKLIGHT and AUTO POWER SAVE timers and turns the backlight
+/// back up, as a touch, button or wheel turn does (Thumb address).
+pub const RESTART_INPUT_TIMERS: usize = 0x80d7_058f;
 /// `FUN_80dc565c()`: turns phantom power off on inputs 3 to 6, writing 0 to the live phantom
 /// bytes and to the open app's stored copy (Thumb address). Opening an app calls it after
 /// marking the app's stored inputs with phantom power as pending, and then asks about them.

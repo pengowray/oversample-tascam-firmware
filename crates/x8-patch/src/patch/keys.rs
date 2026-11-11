@@ -7,9 +7,9 @@ use super::audio::install_audio_hook;
 use super::screen::{draw_status_strip, enter_work, follow_app, leave_bat_screen, request_enter};
 use super::state::{
     ACTION_HOME, ACTION_MARK, ACTION_PLAY, ACTION_WHEEL, ACTIONS, ACTIONS_READ, ACTIONS_WRITE, AUDIO_INSTALLED,
-    AUDIO_NOT_TRIED, AUDIO_STATE, BAT_ACTIVE, BLOCKS, CALLS, CALLS_AT_SECOND, CALLS_PER_S, DRAGGING, LAST_EVENT,
+    AUDIO_NOT_TRIED, AUDIO_STATE, BAT_ACTIVE, BLOCKS, CALLS, CALLS_AT_SECOND, CALLS_PER_S, DARK, DRAGGING, LAST_EVENT,
     LAST_SECOND, PENDING, PLAYBACK, QT_PRESSED, SCREEN_APP, TOUCH_DOWN, TOUCH_DOWN_AT, TOUCH_HELD, TOUCH_READ,
-    TOUCH_WRITE, TOUCHED_SINCE_RENDER, TOUCHES, WORK_ENTER,
+    TOUCH_WAKING, TOUCH_WRITE, TOUCHED_SINCE_RENDER, TOUCHES, WORK_ENTER,
 };
 use super::task::{on_patch_stack, task_running, tick_work};
 use super::{Handler, app_byte, blocks_per_second, read_byte, stock, system_mode};
@@ -56,6 +56,17 @@ pub(super) unsafe extern "C" fn touch_hook(x: usize, y: usize, pressed: usize, d
     if pressed == 0 && QT_PRESSED.load(Relaxed) {
         QT_PRESSED.store(false, Relaxed);
         unsafe { qt(x, y, 0, d) };
+    }
+    // A touch on the dark screen only wakes it (the stock code has just turned the backlight up):
+    // it is kept from the app until the finger lifts, so it cannot tap a control unseen.
+    if pressed != 0 && DARK.load(Relaxed) && !TOUCH_WAKING.load(Relaxed) {
+        TOUCH_WAKING.store(true, Relaxed);
+    }
+    if TOUCH_WAKING.load(Relaxed) {
+        if pressed == 0 {
+            TOUCH_WAKING.store(false, Relaxed);
+        }
+        return 0;
     }
     let write = TOUCH_WRITE.load(Relaxed);
     if write.wrapping_sub(TOUCH_READ.load(Acquire)) < TOUCHES.len() as u32 {
@@ -211,6 +222,11 @@ unsafe fn handle_message(msg: usize, via: Via) {
             // SAFETY: the kind field of the message copy.
             unsafe { ptr::write_volatile(kind_ptr, stock::KIND_SWALLOWED) };
             queue_action(ACTION_WHEEL, count as u32);
+            // Task 1 restarts the BACKLIGHT and AUTO POWER SAVE timers for a wheel turn only when
+            // the turn reaches it, so the patch does it for the turns it takes.
+            // SAFETY: the stock function, called from task 1 as task 1 calls it.
+            let restart: unsafe extern "C" fn() = unsafe { core::mem::transmute(stock::RESTART_INPUT_TIMERS) };
+            unsafe { restart() };
         }
         _ => {}
     }

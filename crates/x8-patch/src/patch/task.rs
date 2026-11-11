@@ -8,7 +8,9 @@ use super::itcm::itcm_still_ok;
 use super::keys::{apply_actions, apply_touches};
 use super::playback::{play, start_session};
 use super::remote::run_remote;
-use super::screen::{draw_frame, hide_for_popup, render, show_frame, update_mix_silence};
+use super::screen::{
+    draw_frame, follow_backlight, hide_for_popup, render, show_frame, update_mix_silence, update_status,
+};
 use super::state::{
     ACTIONS_READ, ACTIONS_WRITE, APP, BACKLOG_DROPPED, BAT_ACTIVE, BLOCKS, COPY_BLOCKS, COPY_PERMILLE, DRAW_BLOCKS,
     DRAW_PERMILLE, DSP_BLOCKS, DSP_PERMILLE, DSP_STACK, DSP_STACK_BYTES, IN_READ, IN_WRITE, LAST_RENDER, LOAD_SECOND,
@@ -283,7 +285,12 @@ extern "C" fn dsp_task(_: isize) {
         feed(app, u32::MAX, PASS_BLOCKS);
         let processed = BLOCKS.load(Relaxed);
         DSP_BLOCKS.store(DSP_BLOCKS.load(Relaxed).wrapping_add(processed.wrapping_sub(start)), Relaxed);
-        if render_due(processed, app.idle()) {
+        let dark = follow_backlight(app);
+        if render_due(processed, app.idle() || dark) && dark {
+            // The recorder's state still reaches the app: REC can be pressed while dark.
+            LAST_RENDER.store(processed, Relaxed);
+            update_status(app);
+        } else if render_due(processed, app.idle()) {
             LAST_RENDER.store(processed, Relaxed);
             TOUCHED_SINCE_RENDER.store(false, Relaxed);
             draw_frame();
@@ -337,7 +344,11 @@ pub(super) extern "C" fn tick_work() {
         process_input(app, MAX_FRAMES_PER_CALL, PASS_BLOCKS);
     }
     let now = BLOCKS.load(Relaxed);
-    if render_due(now, app.idle()) {
+    let dark = follow_backlight(app);
+    if render_due(now, app.idle() || dark) && dark {
+        LAST_RENDER.store(now, Relaxed);
+        update_status(app);
+    } else if render_due(now, app.idle()) {
         LAST_RENDER.store(now, Relaxed);
         TOUCHED_SINCE_RENDER.store(false, Relaxed);
         render();

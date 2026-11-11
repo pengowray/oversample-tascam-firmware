@@ -15,13 +15,13 @@ use super::inputs::{PLAYBACK_LEFT, PLAYBACK_RIGHT, on_tracks_muted, selected_inp
 use super::itcm::load_itcm;
 use super::state::{
     APP, APP_READY, AUDIO_INSTALLED, AUDIO_SLOT_UNEXPECTED, AUDIO_STATE, BACKLOG_DROPPED, BAT_ACTIVE, BLOCKS, BUFFERS,
-    CALLS_PER_S, COPY_PERMILLE, CYCLES_PER_S, DEBUG_SHOWN, DRAW_PERMILLE, DSP_PERMILLE, DUMMY_LCDIF, FRAME, GUANO_ON,
-    HEAR_MIX, HEARD_WORDS, HOOK_CYCLES_PER_S, HOOK_IN_ITCM, IN_DROPPED, IN_READ, IN_WAITING_MOST, IN_WRITE, ITCM_OK,
-    LAST_EVENT, LAUNCH_AT, LAUNCH_FROM, LAUNCHING, LOAD_WINDOW_START, MIX_FILE_OFF, MUTE_SEEN, MUTE_SEEN_AT, NO_APP,
-    NO_INPUT_WORDS, OUT_LAST, OUT_READ, OUT_WRITE, PENDING, PLAYBACK, POPUP_HIDDEN, PRIMED, SAVED_BUFFER,
+    CALLS_PER_S, COPY_PERMILLE, CYCLES_PER_S, DARK, DEBUG_SHOWN, DRAW_PERMILLE, DSP_PERMILLE, DUMMY_LCDIF, FRAME,
+    GUANO_ON, HEAR_MIX, HEARD_WORDS, HOOK_CYCLES_PER_S, HOOK_IN_ITCM, IN_DROPPED, IN_READ, IN_WAITING_MOST, IN_WRITE,
+    ITCM_OK, LAST_EVENT, LAUNCH_AT, LAUNCH_FROM, LAUNCHING, LOAD_WINDOW_START, MIX_FILE_OFF, MUTE_SEEN, MUTE_SEEN_AT,
+    NO_APP, NO_INPUT_WORDS, OUT_LAST, OUT_READ, OUT_WRITE, PENDING, PLAYBACK, POPUP_HIDDEN, PRIMED, SAVED_BUFFER,
     SAVED_LITERAL, SCREEN_APP, SESSION, SOURCE_PEAK, STOCK_CYCLES_PER_S, TASK, TEST_DSP_MAX, TEST_SETTINGS,
-    TEST_START_BACKLOG, TEST_START_BLOCKS, TEST_START_DRY, TEST_START_LOST, TEST_START_SKIPPED, UNDERRUNS, WORD_PEAKS,
-    WORK_ENTER,
+    TEST_START_BACKLOG, TEST_START_BLOCKS, TEST_START_DRY, TEST_START_LOST, TEST_START_SKIPPED, TOUCHED_SINCE_RENDER,
+    UNDERRUNS, WORD_PEAKS, WORK_ENTER,
 };
 use super::task::{app, start_task, task_running};
 use super::{app_byte, blocks_per_second, rate_class, read_byte, spare, stock, system_state};
@@ -70,7 +70,11 @@ pub(super) fn follow_app() {
     }
     if POPUP_HIDDEN.load(Acquire) && system_state() != stock::STATE_POPUP {
         POPUP_HIDDEN.store(false, Relaxed);
-        request_enter();
+        // Only in the app the screen was opened in. The DSP task can hide the screen for a pop-up
+        // just after the app changed, when the screen no longer belongs to any app.
+        if SCREEN_APP.load(Relaxed) == app {
+            request_enter();
+        }
     }
 }
 
@@ -124,13 +128,11 @@ pub(super) extern "C" fn enter_work() {
         (*DUMMY_LCDIF.0.get()).write([0; 32]);
         ptr::write_volatile(stock::PRESENT_LCDIF_LITERAL, DUMMY_LCDIF.0.get() as usize);
     }
+    DARK.store(false, Relaxed);
     if task_running() {
         // The DSP task may still be finishing a chunk from the last opening,
         // so it draws the first frame; until then the display is blank.
-        for i in 0..stock::WIDTH * stock::HEIGHT / 2 {
-            // SAFETY: the display buffer (see `spare`).
-            unsafe { ptr::write_volatile((spare::DISPLAY as *mut u32).add(i), 0) };
-        }
+        blank_display();
     } else {
         // SAFETY: no other context uses the app without a DSP task.
         render();
@@ -145,6 +147,7 @@ pub(super) extern "C" fn enter_work() {
 /// the card reader to close its files first, so MANUAL has the card to itself.
 pub(super) fn leave_bat_screen() {
     BAT_ACTIVE.store(false, Release);
+    DARK.store(false, Relaxed);
     super::reader::wait_until_closed();
     // ITCM is checked only while the bat screen is up.
     use_itcm_hook(false);
@@ -174,6 +177,33 @@ pub(super) fn leave_bat_screen() {
 pub(super) fn hide_for_popup() {
     leave_bat_screen();
     POPUP_HIDDEN.store(true, Release);
+}
+
+/// Fill the display buffer with black.
+fn blank_display() {
+    for i in 0..stock::WIDTH * stock::HEIGHT / 2 {
+        // SAFETY: the display buffer (see `spare`).
+        unsafe { ptr::write_volatile((spare::DISPLAY as *mut u32).add(i), 0) };
+    }
+}
+
+/// Go dark while the stock BACKLIGHT timer has the backlight dimmed (`x8_patch::backlight`), and
+/// light up again once a touch, button or wheel turn has woken it. Dark, the screen is black and
+/// is not drawn, which saves the drawing's share of the CPU; the backlight stays at the stock
+/// timer's lowest level. Returns whether the screen is dark. The context running the app.
+pub(super) fn follow_backlight(app: &BatApp<'static>) -> bool {
+    // SAFETY: the BACKLIGHT setting, a halfword in the settings record.
+    let backlight_s = unsafe { ptr::read_volatile(stock::BACKLIGHT_TIME) };
+    let dark = x8_patch::backlight::dark(read_byte(stock::BACKLIGHT_DIMMED), backlight_s, app.cpu_test_running());
+    if dark != DARK.swap(dark, Relaxed) {
+        if dark {
+            blank_display();
+        } else {
+            // Draw the woken screen at the full rate, even while the app is idle.
+            TOUCHED_SINCE_RENDER.store(true, Relaxed);
+        }
+    }
+    dark
 }
 
 /// Where automatic headphone level aims, as the output after `OUTPUT_GAIN`:
@@ -399,7 +429,7 @@ fn draw_debug(fb: &mut Rgb565Buffer<'_>, app: &BatApp<'static>) {
 /// The X8 recorder's state and take length, and the record rate, for the
 /// status bar and the wrong-rate warning. Reads only; a value may be one
 /// update old.
-fn update_status(app: &mut BatApp<'static>) {
+pub(super) fn update_status(app: &mut BatApp<'static>) {
     let transport = read_byte(stock::TRANSPORT);
     let state = match transport {
         3 => Recorder::Recording,
@@ -570,10 +600,9 @@ pub(super) fn draw_status_strip() {
         _ => "waiting for audio",
     };
     let event = LAST_EVENT.load(Relaxed);
-    let (source, power_done) = super::power::debug_state();
     let _ = write!(
         line,
-        "{audio} | rate {} | key {}/s | app {} st {} rec {} | ev {} {:x} | src {source}{power_done}",
+        "{audio} | rate {} | key {}/s | app {} st {} rec {} | ev {} {:x}",
         rate_class(),
         CALLS_PER_S.load(Relaxed),
         app_byte(),
@@ -582,9 +611,26 @@ pub(super) fn draw_status_strip() {
         event >> 16,
         event & 0xffff
     );
+    // The power figures: POWER SOURCE SELECT and what the patch did with it, then the stock
+    // BACKLIGHT timer's dimmed flag, the backlight's PWM value, and whether the timer sees the X8
+    // on its cells only (it dims only then).
+    let mut power = Line::new();
+    let (source, power_done) = super::power::debug_state();
+    // SAFETY: the BACKLIGHT setting, a halfword in the settings record.
+    let backlight_s = unsafe { ptr::read_volatile(stock::BACKLIGHT_TIME) };
+    let _ = write!(
+        power,
+        "src {source}{power_done} | backlight {backlight_s} s, dimmed {} pwm {} | cells only {}",
+        read_byte(stock::BACKLIGHT_DIMMED),
+        read_byte(stock::BACKLIGHT_PWM),
+        read_byte(stock::ON_CELLS_ONLY),
+    );
+    let background = Rgb565::new(4, 8, 4);
     for &fb in &stock::FRAMEBUFFERS {
         // SAFETY: the top rows of a framebuffer the stock firmware allocated.
-        let pixels = unsafe { core::slice::from_raw_parts_mut(fb as *mut u16, stock::WIDTH * STRIP_ROWS) };
-        draw_strip(&mut Rgb565Buffer::new(pixels, stock::WIDTH, STRIP_ROWS), 0, &line, Rgb565::new(4, 8, 4));
+        let pixels = unsafe { core::slice::from_raw_parts_mut(fb as *mut u16, stock::WIDTH * 2 * STRIP_ROWS) };
+        let mut target = Rgb565Buffer::new(pixels, stock::WIDTH, 2 * STRIP_ROWS);
+        draw_strip(&mut target, 0, &line, background);
+        draw_strip(&mut target, STRIP_ROWS as i32, &power, background);
     }
 }
