@@ -559,9 +559,10 @@ pub(super) fn draw_status_strip() {
         _ => "waiting for audio",
     };
     let event = LAST_EVENT.load(Relaxed);
+    let (source, power_done) = super::power::debug_state();
     let _ = write!(
         line,
-        "{audio} | rate {} | key {}/s | app {} st {} rec {} | ev {} {:x}",
+        "{audio} | rate {} | key {}/s | app {} st {} rec {} | ev {} {:x} | src {source}{power_done}",
         rate_class(),
         CALLS_PER_S.load(Relaxed),
         app_byte(),

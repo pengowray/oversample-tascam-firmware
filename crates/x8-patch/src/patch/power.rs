@@ -55,6 +55,19 @@ pub(super) fn on_event(kind_ptr: *mut u16, kind: u16, value: i32) {
     }
 }
 
+/// For the Debug info strip: POWER SOURCE SELECT (0 BATTERY, 1 AUTO) and what the patch has done
+/// since the start: `-` nothing, `S` set BATTERY for a weak supply, `G` went back to AUTO.
+pub(super) fn debug_state() -> (u8, char) {
+    let done = if SWITCHED.load(Relaxed) {
+        'S'
+    } else if GAVE_UP.load(Relaxed) {
+        'G'
+    } else {
+        '-'
+    };
+    (read_byte(stock::POWER_SOURCE), done)
+}
+
 /// The POWER SOURCE SELECT value to save at power-off: AUTO when the patch set BATTERY, so the
 /// next start uses USB power again.
 pub(super) fn saved_power_source() -> Option<u8> {

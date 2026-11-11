@@ -2366,7 +2366,7 @@ B241 or an earlier build. All the checks in `tools/x8patch.py` pass on this file
 
 ## Step 40 test file: the cells take over from a weak USB supply (built 2026-11-11, not yet installed)
 
-`work/patch41/#PortaX8_0265.203` (B265, SHA-256 `dabd6445…fe17ea56f8`). Includes Step 39 (B263). Install this file in
+`work/patch41/#PortaX8_0265.203` (B265, SHA-256 `07fa8a62…628c97b0a4`). Includes Step 39 (B263). Install this file in
 place of any earlier build. All the checks in `tools/x8patch.py` pass on this file, and two builds give the same file.
 No new stock hook site (header version 20). The design is in [USB power and POWER SAVE
 MODE](#usb-power-and-power-save-mode-2026-11-11). B264 was built the same day and never installed: its way back to AUTO
@@ -2379,18 +2379,21 @@ POWER/DISPLAY shows BATTERY while this lasts. When the cells fall to the stock B
 to AUTO and the stock question appears; until the X8 is turned off, the patch then leaves weak supplies to the stock
 question. There is no switch to turn this off.
 
-**Memory.** The patch region has 8.3 KB left (`.noinit` ends at 0x818fdeb8).
+**Debug info.** The strip across the top of the LAUNCHER and app screens ends with `src` and two characters: POWER SOURCE
+SELECT (0 BATTERY, 1 AUTO), then what the patch has done since the start: `-` nothing, `S` it set BATTERY for a weak
+supply, `G` it went back to AUTO when the cells failed.
+
+**Memory.** The patch region has 8.2 KB left (`.noinit` ends at 0x818fdf08).
 
 **What to check.** Before starting, turn POWER SAVE MODE off in GENERAL SETTINGS > POWER/DISPLAY: it is a saved setting,
-and an earlier No to the question leaves it on, which still blocks 96 and 192 kHz. Turn on Debug info: its last event
-shows `8` and `0` when the supply check reaches the patch. If anything goes wrong the X8 may lose power; the stock
-start-up sets AUTO again.
+and an earlier No to the question leaves it on, which still blocks 96 and 192 kHz. Turn on Debug info to see `src` on
+the strip. If anything goes wrong the X8 may lose power; the stock start-up sets AUTO again.
 
 1. **No cells first.** Take the cells out, set POWER SOURCE SELECT to AUTO, and connect a phone (or a computer port that
    gives 500 mA). The stock question must appear, as on B263. If the X8 loses power instead, the battery reading follows
    the USB rail: stop and report it.
 2. **Good cells.** Put in fresh cells, AUTO, and connect the phone with the LAUNCHER or an app screen up. Does the X8 keep
-   running with no question, and does POWER/DISPLAY show BATTERY? Is POWER SAVE MODE still off?
+   running with no question? Does the strip show `src 0S`, and POWER/DISPLAY BATTERY? Is POWER SAVE MODE still off?
 3. Unplug the phone and plug it in again: still no question, still BATTERY?
 4. Turn the X8 on with the phone already connected: does the question appear before the LAUNCHER (a sign the event came
    before the patch's hook was in place), or not at all?
