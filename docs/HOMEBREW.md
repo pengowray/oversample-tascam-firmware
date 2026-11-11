@@ -2366,9 +2366,11 @@ B241 or an earlier build. All the checks in `tools/x8patch.py` pass on this file
 
 ## Step 39 test file: 192 kHz stereo over USB (built 2026-11-11, not yet installed)
 
-`work/patch38/#PortaX8_0262.203` (B262, SHA-256 `d49a2d47…a05c44c550e7cf0d`). Includes Step 38 (B261). Install this file in
-place of any earlier build. All the checks in `tools/x8patch.py` pass on this file. Header version 20: two new call hooks
-and a new kind of change, three halfwords of stock data. The design is in [192 kHz stereo over
+`work/patch39/#PortaX8_0263.203` (B263, SHA-256 `98b24f1c…f0cea63897a0a1bd3`). Includes Step 38 (B261). Install this file in
+place of any earlier build. All the checks in `tools/x8patch.py` pass on this file, and two builds give the same file.
+Header version 20: two new call hooks, and a new kind of change, `movs` immediates with fixed values. B262 was built the
+same day and never installed: it changed the packet sizes in the descriptor data, which the stock code overwrites at
+each bus reset (see "Endpoint sizes at bus reset" in the design section). The design is in [192 kHz stereo over
 USB](#192-khz-stereo-over-usb-2026-11-11).
 
 **What changes.** With the X8 at 192 kHz, a computer or phone can record INPUT 3 (left) and INPUT 4 (right) over USB at
@@ -2378,11 +2380,11 @@ as before. In every app, at every rate, nothing else changes.
 | Change | Where |
 |---|---|
 | The rate list gains 192 kHz | `usb_init_hook`, on the USB task's call to the class init (`bl` at 0x80DC70A0). It changes nothing unless all three class callback words hold 0x14EF1 and the third sub-range holds the stock bytes; then it replaces the three words and widens the sub-range. |
-| Packet sizes for 25 frames | Three halfwords in the descriptor data: 78 to 150, 78 to 150, 104 to 200. These apply in every mode, update mode included. |
+| Packet sizes for 25 frames | Three `movs r5` immediates in `FUN_80df4a24`: 78 to 150 (interface 2 alt 2 and interface 3 alt 1) and 104 to 200 (interface 3 alt 2). These apply in every mode, update mode included. |
 | No 8-channel alternate setting above 96 kHz | `usb_alt_hook`, on the `bl` at 0x80DC6FD8: passes alternate setting 0 to the stock handler instead of 1 or 3 when the host's rate is above 96 kHz |
 | No rate above 96 kHz with 8 channels | The class callback wrapper: a SET CUR of a rate above 96 kHz while interface 2's last alternate setting (0x81918B48 + 0x2F9) is 1 or 3 becomes 96 kHz |
-| Last check | The class callback wrapper: when a packet has been sent and the next one would be more than 416 bytes, it returns without calling the stock code, so that stream stops |
-| Audio for the host | `usb::feed`, from the audio hook at rate class 2: calls `FUN_00014aa2(4)` for the rate feedback every block, and with interface 2 at alternate setting 2, writes the block's 4 frames of INPUT 3 and 4 (high-gain words 0 and 6) into the ring at 0x20000254 and sets the write offset |
+| Last check | The class callback wrapper: above 96 kHz, when a packet has been sent and the next one would be more than 416 bytes, it returns without calling the stock code, so that stream stops. At 96 kHz and below the stock code runs as before. |
+| Audio for the host | `usb::on_block`, inlined in the audio hook at rate class 2: calls `FUN_00014aa2(4)` for the rate feedback every block. With interface 2 at alternate setting 2 it calls `usb::feed` (SDRAM), which writes the block's 4 frames of INPUT 3 and 4 (high-gain words 0 and 6) into the ring at 0x20000254 and sets the write offset |
 
 Notes:
 
@@ -2394,19 +2396,25 @@ Notes:
 - The Debug info strip does not show the USB state yet.
 - Oversample cannot use this yet: its USB plugin needs the changes listed under [Oversample](#oversample).
 
-**Memory.** The patch region has 8.7 KB left (`.noinit` ends at 0x818fdd38). ITCM and DTCM are as in B261.
+**Memory.** The patch region has 8.6 KB left (`.noinit` ends at 0x818fdd68). ITCM and DTCM are as in B261.
 
-**What to check.** A Linux computer needs no new software for steps 2 to 4. In the commands, `X8` stands for the card name
-that `arecord -l` shows for the Portacapture X8.
+**What to check.** A Linux computer needs no new software for steps 3 to 6. In the commands, `X8` stands for the card name
+that `arecord -l` shows for the Portacapture X8. The rate feedback counts over about 8 s, so expect silence for up to 8 s
+after the stream starts or the rate changes, and judge each file after the first 10 s.
 
 1. Normal use: the X8 starts, BAT DETECTOR opens, and a take records as on B261.
-2. With a card in, open BAT DETECTOR (192 kHz), connect USB, then run
-   `arecord -D hw:CARD=X8 -c 2 -r 192000 -f S24_3LE -d 20 usb192.wav`. Jingle keys near the mic on INPUT 3. Does the file
-   have sound above 48 kHz in Oversample, and is it silent for more than the first few seconds?
-3. With no card in, connect USB and run the same command. Does the X8 switch itself to 192 kHz, and does the file have sound?
-4. The guard: `arecord -D hw:CARD=X8 -c 8 -r 192000 -f S24_3LE -d 5 guard.wav` should fail or give silence, and the X8
+2. The CPU test, as on B261: is `hook` the same as on B261, with USB not connected? The audio hook now calls
+   `FUN_00014aa2` every block at 192 kHz.
+3. With a card in and BAT DETECTOR open (192 kHz), connect USB. Does `arecord -l` list the X8?
+4. Run `arecord -D hw:CARD=X8 -c 2 -r 192000 -f S24_3LE -d 30 usb192.wav` and jingle keys near the mic on INPUT 3. Does
+   the file have sound above 48 kHz in Oversample after the first 10 s? If it stays silent, press REC once (record
+   standby) and try again: the manual says that with a card in, audio goes to USB only from record standby, and the code
+   for that has not been found.
+5. With no card in, connect USB and run the same command. Does the X8 switch itself to 192 kHz, and does the file have sound?
+6. The guard: `arecord -D hw:CARD=X8 -c 8 -r 192000 -f S24_3LE -d 5 guard.wav`. Linux usually sets the rate before the
+   alternate setting, so expect an I/O error, silence, or 8 channels recorded at 96 kHz; all three are a pass. The X8
    must keep running normally afterwards. Then `-c 8 -r 96000` should record as on stock firmware.
-5. On a phone, once Oversample has the changes: set GENERAL SETTINGS > POWER/DISPLAY > POWER SOURCE SELECT to BATTERY first.
+7. On a phone, once Oversample has the changes: set GENERAL SETTINGS > POWER/DISPLAY > POWER SOURCE SELECT to BATTERY first.
 
 ## Step 38 test file: PITCH cheaper again, and Mute while recording (built 2026-11-10, not yet installed)
 
@@ -3464,7 +3472,7 @@ first.
 ## 192 kHz stereo over USB (2026-11-11)
 
 Whether the patch can make the X8 a 192 kHz stereo USB mic, for a phone running Oversample. Read in V2.03 with the
-`work/ghidra-audio` project, the unpacked RAM runs in `work/ram`, and the reference manual. Built as [Step 39](#step-39-test-file-192-khz-stereo-over-usb-built-2026-11-11-not-yet-installed) (B262).
+`work/ghidra-audio` project, the unpacked RAM runs in `work/ram`, and the reference manual. Built as [Step 39](#step-39-test-file-192-khz-stereo-over-usb-built-2026-11-11-not-yet-installed) (B263).
 Confidence is marked as in `work/notes/audio.md`: high (read directly from the code), medium (one line of evidence),
 low (a guess).
 
@@ -3493,7 +3501,8 @@ association descriptors).
 | 2, 3, 4 | 127 bytes built from literals. 3 sets product 0x8069 and 44.1 kHz, 4 sets product 0x806A and 48 kHz. Each packet is (rate / 1000 + 1) x 4 bytes, which fits 16-bit stereo every 1 ms, so probably UAC1. When this configuration is used is not known | medium |
 
 `FUN_80dc72dc` chooses among them from a byte at 0x81918B48 + 0x304: 1 gives n = 1, 2 gives n = 3 or 4 by the unit's
-rate, 3 and 4 give n = 0. What sets that byte, and so when each configuration is used, is not known.
+rate, 3 and 4 give n = 0. `FUN_80dc7168` sets the byte; `FUN_80da9556` calls it with 3 for a USB mode value of 1 or 2, and
+4 for 3. The sample rate plays no part.
 
 **UAC2 audio function (n = 0).** One clock source (ID 7, internal and programmable). Interface 2 sends audio to the host
 and interface 3 receives it. The endpoints are 0x84 (interface 2), 0x03 (interface 3) and 0x83, the feedback endpoint
@@ -3509,6 +3518,13 @@ for interface 3. The last column is the address of the wMaxPacketSize field in t
 
 Each packet carries one 125 us microframe of audio. Thirteen sample frames per packet covers 96 kHz (12 frames, plus 1
 for rate matching). 192 kHz needs 25 (24 frames, plus 1).
+
+**Endpoint sizes at bus reset.** The table above is the descriptor data in the image, but it is not what the host
+sees. At each bus reset the device callback calls `FUN_80df4a24` with the bus speed. It walks the descriptor copy at
+0x2000F000 and writes each endpoint's size into both the descriptor copy and the device stack's endpoint tables at
+0x8196BB9C, which the stack uses to set up the endpoints. At high speed the sizes are constants in its code: 0x138, 0x4E
+and 0x1A0 for interface 2 alts 1 to 3 (`movs r5, #0x4e` at 0x80DF4B4A for alt 2), and 0x4E and 0x68 for interface 3 alts
+1 and 2 (`movs r5` at 0x80DF4ACC and 0x80DF4ADE). So the packet sizes have to change in that code (high).
 
 **Sample rate list.** The GET RANGE answer for the clock is 38 bytes at 0x20000214, in DTCM: a 2-byte count and 3
 sub-ranges of {minimum, maximum, resolution}: {44100, 44100, 0}, {48000, 48000, 0} and {96000, 96000, 0}. `FUN_00014350`
@@ -3557,7 +3573,7 @@ block at 192 kHz, but DSP mode 3 is only selected when the system mode byte (`FU
 | Part | Change | How |
 |---|---|---|
 | Rate list | Third sub-range at 0x2000022E from {96000, 96000, 0} to {96000, 192000, 96000} (minimum, maximum, resolution), so it lists 96 and 192 kHz. The answer stays 38 bytes, and `FUN_00014108` accepts both rates. | Run-time write from a hook that runs before the host reads the list, for example on the call to `FUN_80df48d0` |
-| Packet sizes | Interface 2 alt 2: 78 to 150. Interface 3 alt 1: 78 to 150. Interface 3 alt 2: 104 to 200. 150 bytes fits the 416-byte buffers for the host, and 150 and 200 bytes fit the 388-byte buffers for audio from the host. | Byte change in the image (0x813B69FC is outside the packed runs) |
+| Packet sizes | Interface 2 alt 2: 78 to 150. Interface 3 alt 1: 78 to 150. Interface 3 alt 2: 104 to 200. 150 bytes fits the 416-byte buffers for the host, and 150 and 200 bytes fit the 388-byte buffers for audio from the host. | The three `movs r5` immediates in `FUN_80df4a24` (SDRAM code, so a change in the image) |
 | 8-channel guard | Stop interface 2 alt 1 and alt 3 from running above 96 kHz | Call hook at 0x80DC6FD8 and a wrapper for the class callback; see below |
 | Audio at 192 kHz | In `audio_hook`, when the rate class (0x2A2CB) is 2: call `FUN_00014aa2(4)` every block, as routine 0x11380 does (it counts samples against the USB microframe counter for the rate feedback, and the callback sends silence until that count is steady). Then, when interface 2 is at alternate setting 2: for each of the 4 frames in the input block, write INPUT 3 as the left channel and INPUT 4 as the right into the ring at 0x20000254, 3 or 4 bytes a sample as USB state + 0x46 says, then call `FUN_00014b84` with the new write offset. An input frame is 12 words, and INPUT 3 and 4 are words 0 and 6 of each frame (high-gain path; see `work/notes/audio.md`). | Patch code, following what routine 0x11380 does |
 

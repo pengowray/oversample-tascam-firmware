@@ -6,7 +6,7 @@ use core::ptr;
 use core::sync::atomic::{AtomicBool, AtomicU32, Ordering::Acquire, Ordering::Relaxed, Ordering::Release};
 
 use x8_patch::usb_audio::{
-    STOCK_TOP_RANGE, WIDE_TOP_RANGE, alt_to_use, packet_fits, put_sample, rate_to_use, ring_frames,
+    STOCK_TOP_RANGE, WIDE_TOP_RANGE, alt_to_use, must_stop, put_sample, rate_to_use, ring_frames,
 };
 
 use super::{Handler, read_byte, stock, system_mode};
@@ -108,14 +108,14 @@ unsafe extern "C" fn class_callback(handle: usize, event: usize, param: usize, d
     }
     if state != 0
         && event == stock::USB_EVENT_SENT
-        && !packet_fits(
+        && must_stop(
             state_byte(state, stock::USB_CHANNELS),
             state_byte(state, stock::USB_BYTES),
             state_word(state, stock::USB_RATE),
             high_speed(),
         )
     {
-        // The stock code would build a packet bigger than its buffers: stop the stream instead.
+        // Above 96 kHz the stock code would build a packet bigger than its buffers: stop the stream.
         return 1;
     }
     // SAFETY: the stock callback, with its arguments.
@@ -124,20 +124,30 @@ unsafe extern "C" fn class_callback(handle: usize, event: usize, param: usize, d
 }
 
 /// From the audio interrupt at 192 kHz, after the stock callback: counts the block's 4 frames for
-/// the rate feedback, and with interface 2 at alternate setting 2 (2 channels), writes INPUT 3 and
-/// INPUT 4 into the ring as the stock 44.1 to 96 kHz routine writes its mix. `input` is the block's
-/// first input frame. Not inlined, so it stays in SDRAM and out of both audio hook copies.
-#[inline(never)]
-pub(super) fn feed(input: *const i32) {
-    let state = state();
-    if !USB_READY.load(Acquire) || state == 0 {
+/// the rate feedback, as the stock 44.1 to 96 kHz routine does every block, and with interface 2 at
+/// alternate setting 2 calls `feed`. `input` is the block's first input frame. Inlined into both
+/// audio hook copies, so the usual case costs no call into SDRAM.
+#[inline(always)]
+pub(super) fn on_block(input: *const i32) {
+    if !USB_READY.load(Relaxed) || state() == 0 {
         return;
     }
-    // SAFETY: the stock function, called from the audio interrupt as the stock routine calls it.
+    // SAFETY: the stock function (ITCM), called from the audio interrupt as the stock routine
+    // calls it.
     let count: Handler = unsafe { core::mem::transmute(stock::USB_COUNT_FRAMES) };
     unsafe { count(4, 0, 0, 0) };
+    if read_byte(stock::USB_ALT_IF2) == 2 {
+        feed(input);
+    }
+}
+
+/// Writes the block's 4 frames of INPUT 3 and INPUT 4 into the ring, as the stock 44.1 to 96 kHz
+/// routine writes its mix. Not inlined, so it stays in SDRAM.
+#[inline(never)]
+fn feed(input: *const i32) {
+    let state = state();
     let (channels, bytes) = (state_byte(state, stock::USB_CHANNELS), state_byte(state, stock::USB_BYTES));
-    if read_byte(stock::USB_ALT_IF2) != 2 || channels != 2 || !matches!(bytes, 3 | 4) {
+    if channels != 2 || !matches!(bytes, 3 | 4) {
         return;
     }
     let frame_bytes = 2 * bytes as u32;

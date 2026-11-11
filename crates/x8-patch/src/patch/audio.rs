@@ -229,7 +229,7 @@ unsafe fn hook_body<const ITCM: bool>(a: usize, b: usize, c: usize, d: usize) ->
         return result;
     }
     let input = (stock::INPUT_BLOCKS + index * 0x180) as *const i32;
-    super::usb::feed(input);
+    super::usb::on_block(input);
     if !BAT_ACTIVE.load(Acquire) {
         return result;
     }

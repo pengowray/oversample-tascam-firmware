@@ -58,6 +58,13 @@ pub fn packet_fits(channels: u8, bytes: u8, rate: u32, high_speed: bool) -> bool
     largest_packet(channels, bytes, rate, high_speed) <= MAX_IN_PACKET
 }
 
+/// Whether the patch stops a stream before the stock callback builds its next packet: only above
+/// 96 kHz, where the patch has made the rate possible, and only when the packet would not fit.
+/// At 96 kHz and below the stock code decides, as before.
+pub fn must_stop(channels: u8, bytes: u8, rate: u32, high_speed: bool) -> bool {
+    rate > HIGHEST_STOCK_RATE && !packet_fits(channels, bytes, rate, high_speed)
+}
+
 /// Frames in the ring for a frame of `frame_bytes`, as the stock code counts them.
 pub fn ring_frames(frame_bytes: u32) -> u32 {
     RING_BYTES / frame_bytes
@@ -138,6 +145,16 @@ mod tests {
         assert!(!packet_fits(8, 4, 192_000, true));
         // At full speed a packet holds 1 ms, so even stereo at 192 kHz does not fit.
         assert!(!packet_fits(2, 3, 192_000, false));
+    }
+
+    #[test]
+    fn streams_stop_only_above_96_khz() {
+        assert!(must_stop(8, 3, 192_000, true));
+        assert!(must_stop(2, 3, 192_000, false));
+        assert!(!must_stop(2, 3, 192_000, true));
+        // Full speed at 96 kHz would not fit either, but that is the stock code's case.
+        assert!(!must_stop(8, 3, 96_000, false));
+        assert!(!must_stop(8, 4, 96_000, true));
     }
 
     #[test]

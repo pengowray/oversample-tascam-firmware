@@ -52,8 +52,8 @@ def flash(address):
 #   that is the address of a handle in the patch. The image it leads to is checked (see
 #   check_image) and its height is the header field's name with "_height" added.
 # immediates: a `movs r0, #value` (16 bits), whose value is replaced by a header field's.
-# halfwords: a 16-bit value in stock data, checked and replaced by a fixed value (not a header
-#   field). The data is used in every mode, update mode included.
+# fixed_immediates: a `movs rN, #value` (16 bits) whose value is replaced by a fixed value, not a
+#   header field. The code runs in every mode, update mode included.
 BUILDS = {
     (203, 217): {
         "words": [
@@ -163,13 +163,14 @@ BUILDS = {
             ("logo screen lower item y", 0x81259784, 254, "logo_lower_y"),
             ("logo screen lower item height", 0x81259754, 24, "logo_lower_height"),
         ],
-        "halfwords": [
-            # wMaxPacketSize of the UAC2 endpoints of the 2-channel alternate settings, in the
-            # descriptor bytes that FUN_80df471c copies from 0x813b69fc. The stock sizes hold 13
-            # frames, enough for 96 kHz; 25 frames are needed at 192 kHz.
-            ("USB interface 2 alt 2 packet size (2 x 3 bytes)", 0x813B6AB2, 78, 150),
-            ("USB interface 3 alt 1 packet size (2 x 3 bytes)", 0x813B6B17, 78, 150),
-            ("USB interface 3 alt 2 packet size (2 x 4 bytes)", 0x813B6B4C, 104, 200),
+        "fixed_immediates": [
+            # FUN_80df4a24 runs at each bus reset and writes the UAC2 endpoints' packet sizes at
+            # high speed into both the descriptor copy at 0x2000f000 and the device stack's
+            # endpoint tables at 0x8196bb9c. These are the sizes of the 2-channel alternate
+            # settings: 13 frames, enough for 96 kHz. 25 frames are needed at 192 kHz.
+            ("USB interface 3 alt 1 packet size (2 x 3 bytes)", 0x80DF4ACC, 5, 78, 150),
+            ("USB interface 3 alt 2 packet size (2 x 4 bytes)", 0x80DF4ADE, 5, 104, 200),
+            ("USB interface 2 alt 2 packet size (2 x 3 bytes)", 0x80DF4B4A, 5, 78, 150),
         ],
     },
 }
@@ -289,11 +290,13 @@ def apply(image, patch, fields, build):
         put_half(address, MOVS_R0 | value)
         print(f"{name}: movs r0, #{stock} -> #{value}")
 
-    for name, address, stock, value in build["halfwords"]:
-        if half(address) != stock:
-            return f"{name} at 0x{address:08x} holds {half(address)}, expected {stock}"
-        put_half(address, value)
-        print(f"{name}: {stock} -> {value}")
+    for name, address, register, stock, value in build["fixed_immediates"]:
+        if half(address) != MOVS_R0 | register << 8 | stock:
+            return f"{name}: no movs r{register}, #{stock} at 0x{address:08x}"
+        if not 0 <= value <= 0xFF:
+            return f"{name}: {value} does not fit a movs"
+        put_half(address, MOVS_R0 | register << 8 | value)
+        print(f"{name}: movs r{register}, #{stock} -> #{value}")
     return None
 
 
