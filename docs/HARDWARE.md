@@ -263,6 +263,7 @@ which is how `leave_bat_screen` knows which framebuffer to show again.
 | USB supply check | A USB-C port controller on I2C, probably a TI TUSB320 or similar, reports the current the USB host or charger advertises (500, 1,500 or 3,000 mA). The processor's USB PHY also looks for a charging port (BC1.2). Below 1.5 A with POWER SOURCE SELECT at AUTO, the X8 asks whether the adapter gives 1.5 A, and No turns on POWER SAVE MODE (44.1 and 48 kHz only, no phantom power). Phones usually advertise 500 or 900 mA. | Firmware |
 | Power path | POWER SOURCE SELECT writes FPGA register 3 bit 0x04: set to run from the cells only (BATTERY), clear to take power from USB when it is there (AUTO). FPGA register 2 bit 0 clear means external power is present. Not measured. | Firmware |
 | Cell level | ADC1 result register R0, read by task 10; the firmware keeps the low byte, treats a reading under 36 as no cells, and compares it with thresholds by BATTERY TYPE (for example 102 for alkaline cells as the Battery Empty level). Units not measured. | Firmware |
+| Backlight | A PWM value written over LPSPI4 to FPGA register 0x12: 5, 35 and 55 for BRIGHTNESS LOW, MID and HIGH, and 1 when the BACKLIGHT timer dims it. The timer runs only with no external power. Whether 0 turns the light fully off is not known. | Firmware |
 | Phantom power switching | Per input (inputs 3 to 6). FPGA register 6 has one bit per input; register 3 turns on the shared supply, and registers 3 and 10 select 24 V or 48 V. The firmware mutes all inputs while the supply comes up. | Firmware |
 
 ## Physical

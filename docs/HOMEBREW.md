@@ -2364,6 +2364,61 @@ B241 or an earlier build. All the checks in `tools/x8patch.py` pass on this file
 1. **Start and stop.** With Phone remote on and the phone page reloaded, do `Start recording` and `Stop recording` work as before?
 2. **Old phone page.** If a phone still has the old page cached, its commands should do nothing at all. Reload the page.
 
+## Step 41 test file: a dark screen on batteries, and no phantom power question in BAT PLAYBACK (built 2026-11-12, not yet installed)
+
+`work/patch43/#PortaX8_0267.203` (B267, SHA-256 `6e415b33…09f2dc731e`). Includes Steps 39 and 40 (B263 and B266), whose
+checks still apply. Install this file in place of any earlier build. All the checks in `tools/x8patch.py` pass. One new
+hook site (header version 21). The owner's report on B266: quitting BAT PLAYBACK and opening BAT DETECTOR opened BAT
+PLAYBACK; BAT PLAYBACK still asked about phantom power; the waterfall seemed to run with no audio; and a way to save the
+batteries with the screen was wanted, since POWER SAVE MODE blocks 192 kHz.
+
+**What changes.**
+
+- **Each tile opens at its main screen.** The app kept the last tile's screen, so BAT DETECTOR opened on BAT PLAYBACK's
+  file list when BAT PLAYBACK was left on it. This is the cause found in the code; it was not reproduced on a unit.
+  Also, after a pop-up the bat screen now reopens only in the app it was opened in.
+- **Nothing to hear.** While MANUAL's mix is muted (stopped with REC PAUSE on, or one of MANUAL's pages open under the
+  bat screen), the app no longer analyses the silence: the waterfall stands still, the meters fall, and the screen is
+  redrawn twice a second, or at once after a touch or button. When the mix comes back, the columns missed show as no
+  data. Time expansion and the CPU test keep the app working as before.
+- **A dark screen on batteries.** GENERAL SETTINGS > BACKLIGHT (OFF, 5, 10, 15, 30 s or ALWAYS) already dims the
+  backlight to its lowest level after that time with no touch, button or wheel turn, behind the bat screen too. The bat
+  screen now goes black at the same time and stops drawing, which saves the processor time shown as `draw` on the bat
+  screen's debug lines. The patch never writes the backlight itself.
+  - A touch on the dark screen wakes it and does nothing else.
+  - Buttons wake it and act, as in the stock firmware: REC records, MARK marks.
+  - A wheel turn wakes it and tunes. The patch now restarts the stock BACKLIGHT and AUTO POWER SAVE timers for the
+    wheel turns it takes; before, a turn on the bat screen restarted neither.
+  - With BACKLIGHT at OFF (always dim) or ALWAYS, and during the CPU test, the screen does not go dark.
+  - The stock timer runs only with no external power: with a charger, a computer or a phone on USB, it never dims.
+  - How the stock timer works, and how the patch could turn the light off itself, is in `work/notes/backlight.md`.
+- **No phantom power question in BAT PLAYBACK.** Opening MANUAL marks its stored inputs with phantom power as pending,
+  writes 0 to MANUAL's stored phantom power (`FUN_80dc565c`, through the call at 0x80DC15EA in the app change, system
+  message 0xD04 in `FUN_80dbe324`), and then asks. Only YES writes the stored setting back, so in the stock firmware NO
+  turns phantom power off for MANUAL until it is turned on again. The patch replaces that call: within 5 s of a tap on
+  BAT PLAYBACK, once, it puts MANUAL's four stored bytes back after the call and clears the pending marks. No question
+  appears, phantom power stays off, and MANUAL and BAT DETECTOR ask as before. Details in `work/notes/phantom.md`.
+- **Debug info.** The strip across the top of the LAUNCHER and app screens has a second line:
+  `src 0S | backlight 10 s, dimmed 1 pwm 1 | cells only 1`. `src` is as in Step 40. Then BACKLIGHT, the stock timer's
+  dimmed flag, the backlight's PWM value (1 dimmed; 5, 35 or 55 for BRIGHTNESS LOW, MID or HIGH), and whether the timer
+  sees the X8 on its cells only (it dims only when this is 1).
+
+**Memory.** The patch region has 3.4 KB left (`.noinit` ends at 0x818ff238).
+
+**What to check.** Turn on Debug info for the strip.
+
+1. **BAT PLAYBACK.** With phantom power on for an input in MANUAL, tap BAT PLAYBACK: no phantom power question? Hold
+   HOME, then tap BAT DETECTOR: the bat detector's main screen, not the file list, and the phantom power question.
+2. Hold HOME and open MANUAL: the phantom power question, and YES turns phantom power on.
+3. **Nothing to hear.** In BAT DETECTOR, stopped with REC PAUSE on: "Press REC once to listen", and the waterfall
+   still. Press REC once: the waterfall moves within half a second.
+4. **Dark screen.** On batteries only, set BACKLIGHT to 10 s. Open BAT DETECTOR and press REC once. Touch nothing for
+   10 s: the screen goes black. Tap: it lights, and the tap changes nothing. Wait again, then turn the wheel: it lights
+   and the tuning changes. Wait again, then press REC: it lights and recording starts.
+5. With BACKLIGHT at ALWAYS: never black.
+6. **On a phone.** With a phone on USB and the X8 on its cells (`src 0S`, Step 40): what does the strip show for
+   `cells only`, and does the screen go black after the BACKLIGHT time?
+
 ## Step 40 test file: the cells take over from a weak USB supply (built 2026-11-11, not yet installed)
 
 `work/patch42/#PortaX8_0266.203` (B266, SHA-256 `a0715eaf…a4070a4817`). Includes Step 39 (B263). Install this file in
@@ -3697,12 +3752,17 @@ In the settings record at 0x81E8C87C (`FUN_80d9ff40`, see `work/notes/phantom.md
 | +0x1D8 | BATTERY TYPE: 0 alkaline, 1 Ni-MH, 2 lithium (indexes the threshold tables below) | not traced | medium |
 | +0x1D9 | POWER SOURCE SELECT: 0 BATTERY, 1 AUTO. The factory defaults (`FUN_80da7794`) write 1, and the manual says AUTO is the default. | 0xF20, which also calls `FUN_80da9614` and updates menu item 0xD | high |
 | +0x26A | POWER SAVE MODE: 0 off, 1 on | 0xF63 | high |
-| +0x26B to +0x273 | The settings POWER SAVE MODE overrides, saved while it is on: backlight (+0x26), contrast (+0x21), brightness (+0x20), indicators (+0x250), phantom power for inputs 3 to 6 (+0x254 to +0x257) and +0x189 | 0xF63 | high |
+| +0x20 | CONTRAST, 0 to 20 | 0xF61 | high |
+| +0x21 | BRIGHTNESS: 1 LOW, 2 MID, 3 HIGH (backlight PWM 5, 35 or 55) | 0xE22 | high |
+| +0x26 | BACKLIGHT, signed seconds: 0 OFF (always dim), 5, 10, 15, 30, -1 ALWAYS | 0xF60 | high |
+| +0x26B to +0x273 | The settings POWER SAVE MODE overrides, saved while it is on: BACKLIGHT (+0x26), BRIGHTNESS (+0x21), CONTRAST (+0x20), indicators (+0x250), phantom power for inputs 3 to 6 (+0x254 to +0x257) and +0x189 | 0xF63 | high |
 
-Turning POWER SAVE MODE on (0xF63 with 1) saves those settings, then sets the backlight to its fixed time, contrast 2,
-brightness 10 and indicators 1, and turns phantom power off. Turning it off puts them back. While it is on,
-`FUN_80dc72dc` refuses a USB host's rate above 48 kHz, and messages 0xF61 (brightness) and the remote's phantom command
-answer with error 0x1F.
+Turning POWER SAVE MODE on (0xF63 with 1) saves those settings, then sets BACKLIGHT to 30 s, BRIGHTNESS 2 (MID),
+CONTRAST 10 and indicators 1, and turns phantom power off. Turning it off puts them back. While it is on,
+`FUN_80dc72dc` refuses a USB host's rate above 48 kHz, and messages 0xF61 (CONTRAST) and the remote's phantom command
+answer with error 0x1F. BACKLIGHT is saved in one byte and put back zero-extended, so ALWAYS (-1) comes back as 255 s.
+(Before 2026-11-12 this section had CONTRAST and BRIGHTNESS the other way round; `work/notes/backlight.md` has the
+evidence.)
 
 ### The power path
 
