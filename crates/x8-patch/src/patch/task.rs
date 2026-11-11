@@ -8,11 +8,12 @@ use super::itcm::itcm_still_ok;
 use super::keys::{apply_actions, apply_touches};
 use super::playback::{play, start_session};
 use super::remote::run_remote;
-use super::screen::{draw_frame, hide_for_popup, render, show_frame};
+use super::screen::{draw_frame, hide_for_popup, render, show_frame, update_mix_silence};
 use super::state::{
     ACTIONS_READ, ACTIONS_WRITE, APP, BACKLOG_DROPPED, BAT_ACTIVE, BLOCKS, COPY_BLOCKS, COPY_PERMILLE, DRAW_BLOCKS,
     DRAW_PERMILLE, DSP_BLOCKS, DSP_PERMILLE, DSP_STACK, DSP_STACK_BYTES, IN_READ, IN_WRITE, LAST_RENDER, LOAD_SECOND,
     LOAD_WINDOW_START, OUT_READ, OUT_WRITE, PLAYBACK, SESSION, SESSION_SEEN, TASK, TOUCH_DOWN, TOUCH_READ, TOUCH_WRITE,
+    TOUCHED_SINCE_RENDER,
 };
 use super::{blocks_per_second, read_byte, spare, stock, system_state};
 
@@ -25,6 +26,9 @@ const RENDERS_PER_SECOND: u32 = 10;
 /// then leave the app the least time. Drawing took 21% of wall time at 10 a
 /// second (B231).
 const RENDERS_PER_SECOND_RECORDING: u32 = 5;
+/// While the app is idle (`BatApp::idle`: MANUAL's mix is muted, so the waterfall stands still),
+/// for the meters falling and the status bar. A touch or a button is drawn at the full rate.
+const RENDERS_PER_SECOND_IDLE: u32 = 2;
 const TRANSPORT_RECORDING: u8 = 3;
 /// The DSP task stops a pass after this much wall time (30 ms) even with input
 /// waiting, then draws and sleeps, so a mode that cannot keep up cannot starve
@@ -144,10 +148,12 @@ fn drop_backlog(app: &mut BatApp<'static>) {
 /// input is backing up, a redraw waits, because the drawing takes about 13 ms and
 /// the input ring would fill. It waits at most half a second, so the recording
 /// time and the meters keep moving.
-fn render_due(now: u32) -> bool {
+fn render_due(now: u32, idle: bool) -> bool {
     let since = now.wrapping_sub(LAST_RENDER.load(Relaxed));
     let rate = if read_byte(stock::TRANSPORT) == TRANSPORT_RECORDING {
         RENDERS_PER_SECOND_RECORDING
+    } else if idle && !TOUCHED_SINCE_RENDER.load(Relaxed) {
+        RENDERS_PER_SECOND_IDLE
     } else {
         RENDERS_PER_SECOND
     };
@@ -191,6 +197,7 @@ fn feed(app: &mut BatApp<'static>, budget: u32, time_blocks: u32) {
     if PLAYBACK.load(Relaxed) {
         play(app, time_blocks);
     } else {
+        update_mix_silence(app);
         process_input(app, budget, time_blocks);
         drop_backlog(app);
     }
@@ -276,8 +283,9 @@ extern "C" fn dsp_task(_: isize) {
         feed(app, u32::MAX, PASS_BLOCKS);
         let processed = BLOCKS.load(Relaxed);
         DSP_BLOCKS.store(DSP_BLOCKS.load(Relaxed).wrapping_add(processed.wrapping_sub(start)), Relaxed);
-        if render_due(processed) {
+        if render_due(processed, app.idle()) {
             LAST_RENDER.store(processed, Relaxed);
+            TOUCHED_SINCE_RENDER.store(false, Relaxed);
             draw_frame();
             let drawn = BLOCKS.load(Relaxed);
             DRAW_BLOCKS.store(DRAW_BLOCKS.load(Relaxed).wrapping_add(drawn.wrapping_sub(processed)), Relaxed);
@@ -325,11 +333,13 @@ pub(super) extern "C" fn tick_work() {
     if PLAYBACK.load(Relaxed) {
         play(app, PASS_BLOCKS);
     } else {
+        update_mix_silence(app);
         process_input(app, MAX_FRAMES_PER_CALL, PASS_BLOCKS);
     }
     let now = BLOCKS.load(Relaxed);
-    if render_due(now) {
+    if render_due(now, app.idle()) {
         LAST_RENDER.store(now, Relaxed);
+        TOUCHED_SINCE_RENDER.store(false, Relaxed);
         render();
     }
 }

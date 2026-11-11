@@ -282,6 +282,55 @@ fn listen_to_in_playback_leaves_the_live_choice_alone() {
 }
 
 #[test]
+fn a_muted_mix_stops_the_waterfall_and_the_sound() {
+    let mut storage = vec![0.0f32; FS as usize];
+    let mut app = BatApp::new(FS, &mut storage, buffers());
+    app.set_mix_available(true);
+    app.set_feed(Feed::Mix);
+    run(&mut app, &noise(0.1, FS as usize / 4), 4096);
+    app.set_mix_silence(Some(MixSilence::RecPause));
+    assert!(app.idle());
+    let waterfall = |pixels: &[u16]| -> Vec<u16> {
+        let rows = layout::WF_Y as usize..layout::WF_Y as usize + layout::WF_H;
+        rows.flat_map(|y| pixels[y * WIDTH + layout::WF_X as usize..][..layout::WF_W].to_vec()).collect()
+    };
+    let still = waterfall(&draw(&app));
+    let out = run(&mut app, &signal(), 4096);
+    assert!(out.iter().all(|&x| x == 0.0));
+    assert!(waterfall(&draw(&app)) == still, "the waterfall moved while idle");
+    // REC pressed: the mix is heard again, and the waterfall moves.
+    app.set_mix_silence(None);
+    assert!(!app.idle());
+    run(&mut app, &signal(), 4096);
+    assert!(waterfall(&draw(&app)) != still);
+}
+
+#[test]
+fn time_expansion_and_the_cpu_test_keep_the_app_busy_while_muted() {
+    let mut storage = vec![0.0f32; FS as usize];
+    let mut app = BatApp::new(FS, &mut storage, buffers());
+    app.set_mix_silence(Some(MixSilence::RecPause));
+    app.start_cpu_test();
+    assert!(!app.idle());
+}
+
+#[test]
+fn switching_tiles_opens_the_main_screen() {
+    let mut storage = vec![0.0f32; 1024];
+    let mut app = BatApp::new(FS, &mut storage, buffers());
+    app.set_input_kind(InputKind::Playback);
+    app.open_files();
+    assert_eq!(app.screen(), Screen::Files);
+    // BAT DETECTOR opened after BAT PLAYBACK was left on its file list.
+    app.set_input_kind(InputKind::Live);
+    assert_eq!(app.screen(), Screen::Main);
+    // The same tile opened again keeps its screen (PLAY swaps to MANUAL's screen and back).
+    app.open_settings();
+    app.set_input_kind(InputKind::Live);
+    assert_eq!(app.screen(), Screen::Settings);
+}
+
+#[test]
 fn listen_to_steps_from_what_is_shown_when_inputs_change() {
     let mut storage = vec![0.0f32; 1024];
     let mut app = BatApp::new(FS, &mut storage, buffers());

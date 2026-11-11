@@ -181,6 +181,9 @@ pub(super) static TOUCH_WRITE: AtomicU32 = AtomicU32::new(0);
 pub(super) static TOUCH_READ: AtomicU32 = AtomicU32::new(0);
 /// Qt has been sent a press without its release (task 9).
 pub(super) static QT_PRESSED: AtomicBool = AtomicBool::new(false);
+/// The context running the app: a touch, button or wheel turn has been applied since the last
+/// redraw, so the next one is not slowed down while the app is idle.
+pub(super) static TOUCHED_SINCE_RENDER: AtomicBool = AtomicBool::new(false);
 /// The context running the app: a finger is down, and it went down where a
 /// drag tunes.
 pub(super) static TOUCH_DOWN: AtomicBool = AtomicBool::new(false);

@@ -606,6 +606,8 @@ pub struct BatApp<'a> {
     feed: Feed,
     /// Why the host's mix is silent, if it is.
     mix_silence: Option<MixSilence>,
+    /// Frames passed to `process` while [`idle`](BatApp::idle), not yet counted as lost.
+    idle_frames: u32,
     /// Listen to while the input kind is playback, apart from the choice for
     /// live input.
     playback_source: MonitorSource,
@@ -789,6 +791,7 @@ impl<'a> BatApp<'a> {
             field!((*this).mix_available).write(false);
             field!((*this).feed).write(Feed::Inputs);
             field!((*this).mix_silence).write(None);
+            field!((*this).idle_frames).write(0);
             field!((*this).playback_source).write(MonitorSource::Both);
             field!((*this).level).write(level::AutoLevel::new(sample_rate));
             field!((*this).debug_available).write(false);
@@ -1219,7 +1222,13 @@ impl<'a> BatApp<'a> {
         self.rate_warning
     }
 
+    /// A change of kind is a change of tile (BAT DETECTOR or BAT PLAYBACK), so the app opens at
+    /// its main screen: the other tile's file list or settings page is not shown.
     pub fn set_input_kind(&mut self, kind: InputKind) {
+        if kind != self.input_kind {
+            self.screen = Screen::Main;
+            self.gesture = Gesture::NONE;
+        }
         self.input_kind = kind;
     }
 
@@ -1263,6 +1272,18 @@ impl<'a> BatApp<'a> {
 
     pub fn mix_silence(&self) -> Option<MixSilence> {
         self.mix_silence
+    }
+
+    /// The host's mix is muted (see [`set_mix_silence`](Self::set_mix_silence)) and nothing in
+    /// the app needs the input: no time-expansion capture or playback, and no CPU test. While
+    /// idle, [`process`](Self::process) only outputs silence and lets the meters fall, the
+    /// waterfall stands still, and the host can redraw less often. The frames passed meanwhile
+    /// count as lost input when processing starts again.
+    pub fn idle(&self) -> bool {
+        self.mix_silence.is_some()
+            && self.input_kind == InputKind::Live
+            && !self.cpu_test.running
+            && matches!(self.te.state(), ExpanderState::Idle)
     }
 
     /// The level automatic headphone level aims for, in the units of
@@ -2091,6 +2112,20 @@ impl<'a> BatApp<'a> {
     /// as it is, and every that-many-th sample (the file at its real speed) is analysed.
     pub fn process(&mut self, first: &[f32], second: &[f32], out_l: &mut [f32], out_r: &mut [f32]) {
         let n = first.len().min(second.len()).min(out_l.len()).min(out_r.len());
+        if self.idle() {
+            out_l[..n].fill(0.0);
+            out_r[..n].fill(0.0);
+            let seconds = n as f32 / self.sample_rate;
+            for meter in &mut self.meters {
+                meter.update(0.0, seconds);
+            }
+            self.idle_frames = self.idle_frames.saturating_add(n as u32);
+            return;
+        }
+        if self.idle_frames > 0 {
+            let frames = core::mem::take(&mut self.idle_frames);
+            self.input_lost(frames);
+        }
         let slowing = self.playback_slowing() as usize;
         let mut start = 0;
         while start < n {

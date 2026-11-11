@@ -9,7 +9,7 @@ use super::state::{
     ACTION_HOME, ACTION_MARK, ACTION_PLAY, ACTION_WHEEL, ACTIONS, ACTIONS_READ, ACTIONS_WRITE, AUDIO_INSTALLED,
     AUDIO_NOT_TRIED, AUDIO_STATE, BAT_ACTIVE, BLOCKS, CALLS, CALLS_AT_SECOND, CALLS_PER_S, DRAGGING, LAST_EVENT,
     LAST_SECOND, PENDING, PLAYBACK, QT_PRESSED, SCREEN_APP, TOUCH_DOWN, TOUCH_DOWN_AT, TOUCH_HELD, TOUCH_READ,
-    TOUCH_WRITE, TOUCHES, WORK_ENTER,
+    TOUCH_WRITE, TOUCHED_SINCE_RENDER, TOUCHES, WORK_ENTER,
 };
 use super::task::{on_patch_stack, task_running, tick_work};
 use super::{Handler, app_byte, blocks_per_second, read_byte, stock, system_mode};
@@ -89,6 +89,7 @@ pub(super) fn apply_touches(app: &mut BatApp<'static>) {
         }
         read = read.wrapping_add(1);
         TOUCH_READ.store(read, Release);
+        TOUCHED_SINCE_RENDER.store(true, Relaxed);
     }
     // The touch poll reports only changes, so the time held is checked on every pass.
     let held = BLOCKS.load(Relaxed).wrapping_sub(TOUCH_DOWN_AT.load(Relaxed));
@@ -239,5 +240,6 @@ pub(super) fn apply_actions(app: &mut BatApp<'static>) {
         }
         read = read.wrapping_add(1);
         ACTIONS_READ.store(read, Release);
+        TOUCHED_SINCE_RENDER.store(true, Relaxed);
     }
 }

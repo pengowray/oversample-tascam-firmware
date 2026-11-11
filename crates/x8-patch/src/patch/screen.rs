@@ -463,8 +463,16 @@ fn update_status(app: &mut BatApp<'static>) {
     // SAFETY: the stock file mask, read only while the take's files are open.
     let take_mask = (read_byte(stock::FILES_OPEN) != 0).then(|| unsafe { ptr::read_volatile(stock::FILE_MASK) });
     app.set_take_mix_file(take_mask.map(has_master));
+    HEAR_MIX.store(!PLAYBACK.load(Relaxed) && app.feed() == Feed::Mix, Relaxed);
+    update_mix_silence(app);
+}
+
+/// Why MANUAL's mix is silent, for the notice over the waterfall and for `BatApp::idle`. Cheap
+/// enough for every pass of the DSP task, so processing starts again as soon as REC unmutes
+/// the mix.
+pub(super) fn update_mix_silence(app: &mut BatApp<'static>) {
+    let transport = read_byte(stock::TRANSPORT);
     let hear_mix = !PLAYBACK.load(Relaxed) && app.feed() == Feed::Mix;
-    HEAR_MIX.store(hear_mix, Relaxed);
     // A page comes first: it mutes whatever REC PAUSE does, and REC does nothing
     // until it is closed.
     let page = read_byte(stock::DSP_PAGE);
