@@ -2366,30 +2366,37 @@ B241 or an earlier build. All the checks in `tools/x8patch.py` pass on this file
 
 ## Step 40 test file: the cells take over from a weak USB supply (built 2026-11-11, not yet installed)
 
-`work/patch40/#PortaX8_0264.203` (B264, SHA-256 `7e17b7cc…4b479b9cd00`). Includes Step 39 (B263). Install this file in
+`work/patch41/#PortaX8_0265.203` (B265, SHA-256 `dabd6445…fe17ea56f8`). Includes Step 39 (B263). Install this file in
 place of any earlier build. All the checks in `tools/x8patch.py` pass on this file, and two builds give the same file.
 No new stock hook site (header version 20). The design is in [USB power and POWER SAVE
-MODE](#usb-power-and-power-save-mode-2026-11-11).
+MODE](#usb-power-and-power-save-mode-2026-11-11). B264 was built the same day and never installed: its way back to AUTO
+could leave the X8 drawing full power from a phone with no question.
 
 **What changes.** With POWER SOURCE SELECT at AUTO, a USB supply that advertises less than 1.5 A (most phones) no longer
 brings up "Is the AC adapter 1.5A or more?" when the cells are good: the X8 sets POWER SOURCE SELECT to BATTERY and runs
 from its cells, with no POWER SAVE MODE, so 96 and 192 kHz and phantom power stay available. GENERAL SETTINGS >
 POWER/DISPLAY shows BATTERY while this lasts. When the cells fall to the stock Battery Empty level, the setting goes back
-to AUTO and the stock question appears. At power-off AUTO is saved.
+to AUTO and the stock question appears; until the X8 is turned off, the patch then leaves weak supplies to the stock
+question. There is no switch to turn this off.
 
-**Memory.** The patch region has 8.4 KB left (`.noinit` ends at 0x818fde78).
+**Memory.** The patch region has 8.3 KB left (`.noinit` ends at 0x818fdeb8).
 
-**What to check.** Have a spare set of cells ready. If anything goes wrong the X8 may lose power, and a start with
-BATTERY saved and no cells needs cells put in.
+**What to check.** Before starting, turn POWER SAVE MODE off in GENERAL SETTINGS > POWER/DISPLAY: it is a saved setting,
+and an earlier No to the question leaves it on, which still blocks 96 and 192 kHz. Turn on Debug info: its last event
+shows `8` and `0` when the supply check reaches the patch. If anything goes wrong the X8 may lose power; the stock
+start-up sets AUTO again.
 
 1. **No cells first.** Take the cells out, set POWER SOURCE SELECT to AUTO, and connect a phone (or a computer port that
    gives 500 mA). The stock question must appear, as on B263. If the X8 loses power instead, the battery reading follows
    the USB rail: stop and report it.
-2. **Good cells.** Put in fresh cells, AUTO, and connect the phone. Does the X8 keep running with no question, and does
-   POWER/DISPLAY show BATTERY? Is POWER SAVE MODE still off?
-3. Power off and on again: is POWER SOURCE SELECT back at AUTO?
-4. **A strong supply.** With AUTO, connect a 1.5 A charger: the X8 should use USB power and show no question, as stock.
-5. With step 2's setup, record 192 kHz over USB from a phone or computer (Step 39's checks).
+2. **Good cells.** Put in fresh cells, AUTO, and connect the phone with the LAUNCHER or an app screen up. Does the X8 keep
+   running with no question, and does POWER/DISPLAY show BATTERY? Is POWER SAVE MODE still off?
+3. Unplug the phone and plug it in again: still no question, still BATTERY?
+4. Turn the X8 on with the phone already connected: does the question appear before the LAUNCHER (a sign the event came
+   before the patch's hook was in place), or not at all?
+5. Power off and on again: is POWER SOURCE SELECT back at AUTO?
+6. **A strong supply.** With AUTO, connect a 1.5 A charger: the X8 should use USB power and show no question, as stock.
+7. With step 2's setup, record 192 kHz over USB from a phone or computer (Step 39's checks).
 
 ## Step 39 test file: 192 kHz stereo over USB (built 2026-11-11, not yet installed)
 
@@ -3662,12 +3669,12 @@ Changed in Oversample commit `b2bf6a1` (2026-11-11, not pushed). Before it, the 
 
 How the X8 decides that a USB supply is too weak, what the pop-up then changes, and how the patch runs the X8 from its
 cells instead of turning on POWER SAVE MODE. Read in V2.03 with the `work/ghidra-phantom` project. Built as [Step
-40](#step-40-test-file-the-cells-take-over-from-a-weak-usb-supply-built-2026-11-11-not-yet-installed) (B264).
+40](#step-40-test-file-the-cells-take-over-from-a-weak-usb-supply-built-2026-11-11-not-yet-installed) (B265).
 
 **Result.** The X8 reads the phone's USB-C current advertisement from a USB-C port controller on I2C. Below 1.5 A, with
 POWER SOURCE SELECT at AUTO, it asks "Is the AC adapter 1.5A or more?". Answering No turns on POWER SAVE MODE. Most phones
 advertise USB's default current (500 or 900 mA), so a phone almost always brings up the question. POWER SOURCE SELECT =
-BATTERY avoids it: the X8 then takes no power from USB and makes no check. From B264 the patch makes AUTO do the same
+BATTERY avoids it: the X8 then takes no power from USB and makes no check. From B265 the patch makes AUTO do the same
 when the supply is weak and the cells pass the stock firmware's own check.
 
 ### The settings
@@ -3698,6 +3705,10 @@ measured). `FUN_80da9582` is true when FPGA register 2 bit 0 is 0; the button po
 cell level is above the threshold for the BATTERY TYPE ({102, 102, 112} at 0x81726D6C) it keeps the cells
 (`FUN_80da9614(0)`). Otherwise it shows pop-up 0x24 ("Battery Empty / POWER SOURCE SELECT / BATTERY → AUTO") and posts
 0xF20 with 1 (AUTO). The firmware's "Battery is overheated / Change to USB power supply" path is not traced.
+
+**At start-up.** Every normal start, and a reset to factory defaults, calls `FUN_80da3de0(1)` (from `FUN_80da0164`),
+which writes 1 (AUTO) to POWER SOURCE SELECT and enables the USB power path. So POWER SOURCE SELECT is BATTERY only until
+the X8 is turned off, whatever was saved (medium-high: read from the code, not tried).
 
 ### The cell level
 
@@ -3745,24 +3756,34 @@ Two ways were weighed:
   path: the setting, the menu item and the power path agree, and the stock Battery Empty check covers the cells from then
   on. Built this way.
 
-What B264 does, in `patch/power.rs` (decisions in `x8_patch::power_source`, with host tests):
+What B265 does, in `patch/power.rs` (decisions in `x8_patch::power_source`, with host tests):
 
-- The key hooks see kind 8 with value 0. With POWER SOURCE SELECT at AUTO, a known BATTERY TYPE, and a cell level above
-  the same threshold the Battery Empty check uses (and not 0 or 0xFF), the patch swallows the event (kind 9) and posts
-  0xF20 with 0 (BATTERY). Otherwise the stock question appears, as before.
+- The key hooks see kind 8 with value 0. With a known BATTERY TYPE and a cell level above the same threshold the Battery
+  Empty check uses (and not 0 or 0xFF), the patch swallows the event (kind 9). In AUTO it also posts 0xF20 with 0
+  (BATTERY). If the setting is already the BATTERY the patch set, as after an unplug and replug, it only swallows the
+  event. Otherwise the stock question appears, as before.
 - On each kind 3 event after that, if the setting is still BATTERY and the level is no longer above the threshold, it
-  posts 0xF20 with 1 (AUTO). The stock check then runs again and asks its question.
-- At power-off, `power_off_save_hook` saves AUTO in place of the BATTERY the patch set, so the next start uses USB power
-  again. A setting the user changes is left alone: the patch only acts while the setting is still the one it set.
+  posts 0xF20 with 1 (AUTO) and clears the stock check's latch (0x819686B8, poll state + 0x54), so that the check posts
+  again and the stock question appears. Without that, the check would stay quiet and the X8 would take full power from
+  the phone. From then until the X8 is turned off, the patch leaves every weak supply to the stock question, so cells
+  that recover once unloaded do not take over again and the setting does not flip back and forth.
+- At power-off, `power_off_save_hook` saves AUTO in place of the BATTERY the patch set. The stock start-up sets AUTO
+  anyway; this keeps the saved record the same as the user's choice. A setting the user changes is left alone: the patch
+  only acts while the setting is still the one it set.
+
+B264, built the same day and never installed, went back to AUTO without clearing the latch or giving up.
 
 Limits: the key hooks see kind 8 only while the LAUNCHER, an app screen or the recording screen is up. On other screens,
 or with a pop-up open, the stock question appears. After unplugging the phone the X8 stays on its cells until power-off
 or a change of setting, so a 1.5 A charger plugged in later in the same session is not used until then. How the
 question's Yes and No reach message 0xF63 is not traced.
 
-Not measured: that the ADC reads the cells (not the USB rail) while USB power is in use. If it read the rail, a unit
-with no cells on a phone would pass the check and lose power when it switched. The stock Battery Empty check relies on
-the same reading, which suggests it reads the cells, and Step 40's checks test this first.
+Not known: whether the ADC reads the cells or the supply rail while USB power is in use. If it read the rail, a unit with
+no cells on a phone would pass the check and lose power when it switched. The Battery Empty check is no evidence either
+way, since it runs in BATTERY, where the cells feed the rail. Task 10 treats a reading under 36 as no cells, which only
+makes sense for a reading of the cells, since the rail cannot be near 0 while the firmware runs; that is the best sign so
+far (low to medium). Task 1's on-cells branch also needs its state + 0xE to be 1, set by kind 4 (input event type 7, bit
+0 of a switch byte the button poll reads); what that bit means is not known. Step 40's checks test this first.
 
 ## Firmware map (V2.03, in progress)
 

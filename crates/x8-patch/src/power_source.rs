@@ -25,9 +25,37 @@ pub fn cells_good(battery_type: u8, level: u8, thresholds: &[u8; 3]) -> bool {
     level != 0 && level != 0xff && level > threshold
 }
 
-/// Whether to answer a weak USB supply by running from the cells.
-pub fn run_from_cells(power_source: u8, battery_type: u8, level: u8, thresholds: &[u8; 3]) -> bool {
-    power_source == AUTO && cells_good(battery_type, level, thresholds)
+/// What the patch does with the stock "supply below 1.5 A" event.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum WeakSupply {
+    /// Let the stock question appear.
+    Ask,
+    /// Swallow the event and set POWER SOURCE SELECT to BATTERY.
+    SwitchToCells,
+    /// Swallow the event: the X8 already runs from the cells the patch chose.
+    StayOnCells,
+}
+
+/// The answer to a weak USB supply. `switched`: the patch set BATTERY and it is still set by the
+/// patch. `gave_up`: the patch went back to AUTO since the X8 started, so the cells failed once and
+/// the stock question decides until the next start.
+pub fn on_weak_supply(
+    power_source: u8,
+    switched: bool,
+    gave_up: bool,
+    battery_type: u8,
+    level: u8,
+    thresholds: &[u8; 3],
+) -> WeakSupply {
+    if gave_up || !cells_good(battery_type, level, thresholds) {
+        WeakSupply::Ask
+    } else if power_source == AUTO {
+        WeakSupply::SwitchToCells
+    } else if switched {
+        WeakSupply::StayOnCells
+    } else {
+        WeakSupply::Ask
+    }
 }
 
 /// Whether to go back to AUTO, after the patch set BATTERY: when the setting is still BATTERY and
@@ -42,25 +70,40 @@ mod tests {
 
     const T: [u8; 3] = STOCK_THRESHOLDS;
 
+    use WeakSupply::*;
+
+    fn answer(source: u8, switched: bool, gave_up: bool, battery_type: u8, level: u8) -> WeakSupply {
+        on_weak_supply(source, switched, gave_up, battery_type, level, &T)
+    }
+
     #[test]
     fn good_cells_take_over_from_a_weak_supply_in_auto() {
-        assert!(run_from_cells(AUTO, 0, 120, &T));
-        assert!(run_from_cells(AUTO, 2, 113, &T));
+        assert_eq!(answer(AUTO, false, false, 0, 120), SwitchToCells);
+        assert_eq!(answer(AUTO, false, false, 2, 113), SwitchToCells);
     }
 
     #[test]
     fn weak_or_missing_cells_leave_the_stock_question() {
-        assert!(!run_from_cells(AUTO, 0, 102, &T));
-        assert!(!run_from_cells(AUTO, 2, 112, &T));
-        assert!(!run_from_cells(AUTO, 0, 0, &T));
-        assert!(!run_from_cells(AUTO, 0, 0xff, &T));
-        assert!(!run_from_cells(AUTO, 0, 20, &T));
+        assert_eq!(answer(AUTO, false, false, 0, 102), Ask);
+        assert_eq!(answer(AUTO, false, false, 2, 112), Ask);
+        assert_eq!(answer(AUTO, false, false, 0, 0), Ask);
+        assert_eq!(answer(AUTO, false, false, 0, 0xff), Ask);
+        assert_eq!(answer(AUTO, false, false, 0, 20), Ask);
+        assert_eq!(answer(AUTO, false, false, 3, 120), Ask);
     }
 
+    /// After an unplug and replug the event can come again while the patch's BATTERY is set.
     #[test]
-    fn only_from_auto_and_a_known_battery_type() {
-        assert!(!run_from_cells(BATTERY, 0, 120, &T));
-        assert!(!run_from_cells(AUTO, 3, 120, &T));
+    fn stays_on_the_cells_the_patch_chose() {
+        assert_eq!(answer(BATTERY, true, false, 0, 120), StayOnCells);
+        // BATTERY set by the user: the stock code decides.
+        assert_eq!(answer(BATTERY, false, false, 0, 120), Ask);
+    }
+
+    /// Once the cells have failed, unloaded cells recovering must not take over again.
+    #[test]
+    fn after_giving_up_the_stock_question_decides() {
+        assert_eq!(answer(AUTO, false, true, 0, 120), Ask);
     }
 
     #[test]

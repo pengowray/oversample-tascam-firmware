@@ -321,6 +321,9 @@ pub const POWER_SOURCE: *mut u8 = 0x81e8_ca55 as *mut u8;
 /// Task 1's state 0x8196a3e0 + 0xd: the latest cell level from the battery task (ADC1 result,
 /// low byte; under 36 means no cells), updated with every kind 3 event.
 pub const CELL_LEVEL: *const u8 = 0x8196_a3ed as *const u8;
+/// Button poll state 0x81968664 + 0x54: set when the USB supply check has posted "below 1.5 A",
+/// so it posts once; cleared when the supply recovers or external power goes.
+pub const SUPPLY_LATCH: *mut u32 = 0x8196_86b8 as *mut u32;
 /// The stock cell level thresholds by BATTERY TYPE, used when external power appears in BATTERY.
 pub const SOURCE_THRESHOLDS: *const [u8; 3] = 0x8172_6d6c as *const [u8; 3];
 /// `FUN_80dbe2bc(code, value)`: posts a message to the system task (Thumb address).

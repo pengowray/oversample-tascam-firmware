@@ -5,12 +5,15 @@
 use core::ptr;
 use core::sync::atomic::{AtomicBool, Ordering::Relaxed};
 
-use x8_patch::power_source::{AUTO, BATTERY, back_to_auto, run_from_cells};
+use x8_patch::power_source::{AUTO, BATTERY, WeakSupply, back_to_auto, on_weak_supply};
 
 use super::{Handler, read_byte, stock};
 
 /// Set when the patch set POWER SOURCE SELECT to BATTERY, until it sets AUTO again.
 static SWITCHED: AtomicBool = AtomicBool::new(false);
+/// Set when the patch went back to AUTO because the cells failed: until the next start, the stock
+/// question decides, so cells that recover once unloaded do not take over again.
+static GAVE_UP: AtomicBool = AtomicBool::new(false);
 
 fn thresholds() -> [u8; 3] {
     // SAFETY: a constant table in the stock image.
@@ -25,21 +28,30 @@ fn post_power_source(value: u8) {
 }
 
 /// Task 1, for each input event, before the stock handling. A weak USB supply (kind 8, value 0)
-/// in AUTO with good cells: the event is swallowed and POWER SOURCE SELECT set to BATTERY. A new
-/// cell level (kind 3) after that: AUTO again if the cells are no longer good.
+/// with good cells: the event is swallowed and, in AUTO, POWER SOURCE SELECT set to BATTERY. A new
+/// cell level (kind 3) after that: AUTO again if the cells are no longer good, and the stock check
+/// asks its question.
 pub(super) fn on_event(kind_ptr: *mut u16, kind: u16, value: i32) {
     let (source, battery_type, level) =
         (read_byte(stock::POWER_SOURCE), read_byte(stock::BATTERY_TYPE), read_byte(stock::CELL_LEVEL));
-    if kind == stock::KIND_USB_SUPPLY && value == 0 && run_from_cells(source, battery_type, level, &thresholds()) {
-        // SAFETY: the kind field of the message copy.
-        unsafe { ptr::write_volatile(kind_ptr, stock::KIND_SWALLOWED) };
-        post_power_source(BATTERY);
-        SWITCHED.store(true, Relaxed);
-    } else if kind == stock::KIND_CELL_LEVEL
-        && back_to_auto(SWITCHED.load(Relaxed), source, battery_type, level, &thresholds())
-    {
+    let switched = SWITCHED.load(Relaxed);
+    if kind == stock::KIND_USB_SUPPLY && value == 0 {
+        let answer = on_weak_supply(source, switched, GAVE_UP.load(Relaxed), battery_type, level, &thresholds());
+        if answer != WeakSupply::Ask {
+            // SAFETY: the kind field of the message copy.
+            unsafe { ptr::write_volatile(kind_ptr, stock::KIND_SWALLOWED) };
+        }
+        if answer == WeakSupply::SwitchToCells {
+            post_power_source(BATTERY);
+            SWITCHED.store(true, Relaxed);
+        }
+    } else if kind == stock::KIND_CELL_LEVEL && back_to_auto(switched, source, battery_type, level, &thresholds()) {
         post_power_source(AUTO);
         SWITCHED.store(false, Relaxed);
+        GAVE_UP.store(true, Relaxed);
+        // SAFETY: the stock check's latch word; task 9 writes it too, and a lost write only
+        // delays the question by one check (50 scans).
+        unsafe { ptr::write_volatile(stock::SUPPLY_LATCH, 0) };
     }
 }
 
