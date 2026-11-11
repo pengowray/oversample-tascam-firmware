@@ -3417,6 +3417,131 @@ The bat is 42 pixels high, twice the height of TASCAM's logo. A 63-pixel bat (3 
 and at B259 the patch region has 1,864 bytes left before 0x81900000. It needs something moved out of the patch region
 first.
 
+## 192 kHz stereo over USB (2026-11-11)
+
+Whether the patch can make the X8 a 192 kHz stereo USB mic, for a phone running Oversample. Read in V2.03 with the
+`work/ghidra-audio` project, the unpacked RAM runs in `work/ram`, and the reference manual. Nothing is built yet.
+Confidence is marked as in `work/notes/audio.md`: high (read directly from the code), medium (one line of evidence),
+low (a guess).
+
+**Result.** It looks possible, in four parts: a run-time change to the sample rate list, three endpoint packet sizes in
+the image, a guard for the 8-channel alternate settings, and code in `audio_hook` that sends INPUT 3 and 4 to USB at
+192 kHz. The stock firmware refuses 192 kHz in two places (the rate list and the packet sizes), and at 192 kHz its audio
+routine sends nothing to USB. The rest of the USB code works at any rate.
+
+**Power.** Set GENERAL SETTINGS > POWER/DISPLAY > POWER SOURCE SELECT to BATTERY. The X8 then runs from its AA cells and
+takes no power from the phone; the manual gives this setting for iOS devices. With AUTO, a phone that cannot supply 1.5 A
+brings up the power pop-up, and answering No turns on POWER SAVE MODE, which allows only 44.1 and 48 kHz and turns phantom
+power off. `FUN_80dc72dc` refuses a host rate above 48 kHz while byte +0x26A of the settings record is set. That byte is
+probably POWER SAVE MODE (medium), because the same byte also forces phantom power off (see `work/notes/phantom.md`).
+
+### What the stock firmware does
+
+**USB configurations.** `FUN_80df48d0(n)` picks a configuration and `FUN_80df471c(n)` builds it at 0x2000F000. The
+table lists each value of the argument n.
+The device descriptor is at 0x81900060 (vendor 0x0644, product 0x8074, class 0xEF, which means it uses interface
+association descriptors).
+
+| n | Configuration | Confidence |
+|---|---|---|
+| 0 | 386 bytes: mass storage (interface 0) and UAC2 audio (interfaces 1 to 3). The configuration descriptor (9 bytes) and the mass storage interface (23 bytes) come from literals, then 354 bytes of audio descriptors from 0x813B69FC | high |
+| 1 | Mass storage only (SD CARD READER) | high |
+| 2, 3, 4 | 127 bytes built from literals. 3 sets product 0x8069 and 44.1 kHz, 4 sets product 0x806A and 48 kHz. Each packet is (rate / 1000 + 1) x 4 bytes, which fits 16-bit stereo every 1 ms, so probably UAC1. When this configuration is used is not known | medium |
+
+`FUN_80dc72dc` chooses among them from a byte at 0x81918B48 + 0x304: 1 gives n = 1, 2 gives n = 3 or 4 by the unit's
+rate, 3 and 4 give n = 0. What sets that byte, and so when each configuration is used, is not known.
+
+**UAC2 audio function (n = 0).** One clock source (ID 7, internal and programmable). Interface 2 sends audio to the host
+and interface 3 receives it. The endpoints are 0x84 (interface 2), 0x03 (interface 3) and 0x83, the feedback endpoint
+for interface 3. The last column is the address of the wMaxPacketSize field in the descriptor bytes in the image.
+
+| Interface, alternate setting | Format | wMaxPacketSize | Address of wMaxPacketSize |
+|---|---|---|---|
+| 2, alt 1 | 8 channels, 24-bit | 312 (13 frames) | 0x813B6A84 |
+| 2, alt 2 | 2 channels, 24-bit | 78 (13 frames) | 0x813B6AB2 |
+| 2, alt 3 | 8 channels, 32-bit | 416 (13 frames) | 0x813B6AE0 |
+| 3, alt 1 | 2 channels, 24-bit | 78 | 0x813B6B17 |
+| 3, alt 2 | 2 channels, 32-bit | 104 | 0x813B6B4C |
+
+Each packet carries one 125 us microframe of audio. Thirteen sample frames per packet covers 96 kHz (12 frames, plus 1
+for rate matching). 192 kHz needs 25 (24 frames, plus 1).
+
+**Sample rate list.** The GET RANGE answer for the clock is 38 bytes at 0x20000214, in DTCM: a 2-byte count and 3
+sub-ranges of {minimum, maximum, resolution}: {44100, 44100, 0}, {48000, 48000, 0} and {96000, 96000, 0}. `FUN_00014350`
+handles the clock requests (its event code 0x9501 is GET RANGE, 0x501 and 0x10C are SET CUR). For SET CUR,
+`FUN_00014108` checks the new rate against every rate in the list, counting from each minimum to that maximum in steps of
+the resolution. If the rate is not in the list, the X8 sets 96,000 instead (literal at 0x1544C), and GET CUR then reports
+96 kHz to the host. The table cannot grow where it
+is: 0x20000240 holds the pointer to the USB audio state, which the USB audio code reads on every request. The table is
+in the DTCM data that the start-up code unpacks from LZ77-packed flash, so it has to be changed at run time.
+
+**Following the host's rate.** `FUN_80dc72dc` compares the host's rate (USB state + 0x34) with the unit's rate
+(`FUN_80dae416`). When the two rates differ, it maps 44.1, 48, 88.2, 96, 176.4 and 192 kHz to rate indexes 0 to 5 and posts
+message 0x101 with the index, which starts the stock rate change. 176.4 and 192 kHz are in that list, so following the
+host's rate needs no change. When that branch does not run and the two rates have differed for 1 s, `FUN_80dc72dc` posts
+message 0x1A instead, probably the pop-up asking the user to set the same rate (low). Which branch runs depends on `FUN_80da959e` and +0x26A; the manual says the unit follows
+the computer's rate when no card is in, and needs the rate set by hand when a card is in.
+
+**Feedback.** `FUN_00014182` gives the rate in frames per microframe as a 16.16 number for the feedback endpoint, and
+reports an error when the whole part is 4,096 or more. 192 kHz gives 24.0 (high).
+
+**Packet buffers.** `FUN_00014ef0` is the USB audio callback.
+
+- Packets to the host are built in 4 buffers of 0x1A0 (416) bytes at 0x2000BE60. The copy length is channels x bytes per
+  sample x (rate / 8000), plus or minus one frame (`FUN_00014cc4`), and nothing limits it to the buffer size (high).
+- Packets from the host land in 4 buffers of 0x184 (388) bytes at 0x2000CB00.
+- The audio routine writes the audio for the host into a ring at 0x20000254, and the callback copies packets out of it.
+  The audio routine reads the ring's size in bytes from the word at 0x20004140; the callback's copy code uses the
+  constant 0x3400 (13,312 bytes) for the same size. `FUN_00014b84` stores the audio routine's write offset in USB
+  state + 0x5C.
+- Audio from the host goes into a second ring at 0x20004180.
+
+At 192 kHz, 2 channels of 24-bit audio need 150 bytes a packet and fit. 8 channels need 600 bytes (24-bit) or 800 bytes
+(32-bit), so a host that picks interface 2 alt 1 or 3 at 192 kHz would make the callback write past the end of the
+fourth buffer, at 0x2000C4E0.
+
+**Which audio routine fills the ring.** Routine 0x11380 (DSP modes 0 and 1, 44.1 to 96 kHz) and routine 0x12A90 (DSP
+mode 6) write the ring, through `FUN_00014b2c`, `FUN_00014b84` and `FUN_00014b92`. Ghidra also lists data references to
+those three functions' addresses from `FUN_80fa3af0` and `FUN_80fbd8ec`, two very large functions in flash. The references
+are probably constants that happen to equal the addresses (not checked). At 192 kHz a recording app runs DSP mode 2
+(routine 0x12368), which never writes the ring. Routine 0x13A68 (DSP mode 3) also writes the ring and handles 4 frames a
+block at 192 kHz, but DSP mode 3 is only selected when the system mode byte (`FUN_80d9ff36`) is 8, the factory test mode
+(`FUN_80dc77b0`). So the stock firmware has no route that sends 192 kHz audio to USB in normal use.
+
+### Patch plan
+
+| Part | Change | How |
+|---|---|---|
+| Rate list | Third sub-range at 0x2000022E from {96000, 96000, 0} to {96000, 192000, 96000} (minimum, maximum, resolution), so it lists 96 and 192 kHz. The answer stays 38 bytes, and `FUN_00014108` accepts both rates. | Run-time write from a hook that runs before the host reads the list, for example on the call to `FUN_80df48d0` |
+| Packet sizes | Interface 2 alt 2: 78 to 150. Interface 3 alt 1: 78 to 150. Interface 3 alt 2: 104 to 200. 150 bytes fits the 416-byte buffers for the host, and 150 and 200 bytes fit the 388-byte buffers for audio from the host. | Byte change in the image (0x813B69FC is outside the packed runs) |
+| 8-channel guard | Stop interface 2 alt 1 and alt 3 from running at 192 kHz | Not chosen yet; see below |
+| Audio at 192 kHz | In `audio_hook`, when the rate class (0x2A2CB) is 2, USB streaming is on and the host's rate equals the unit's: for each of the 4 frames in the input block, write INPUT 3 as the left channel and INPUT 4 as the right into the ring at 0x20000254, 3 or 4 bytes a sample as USB state + 0x46 says, then call `FUN_00014b84` with the new write offset. An input frame is 12 words, and INPUT 3 and 4 are words 0 and 6 of each frame (high-gain path; see `work/notes/audio.md`). | Patch code, following what routine 0x11380 does |
+
+Options for the 8-channel guard:
+
+- Find the SET_INTERFACE handler that sets USB state + 0x46 and + 0x47 (bytes per sample and channels), and make it
+  refuse alt 1 and alt 3 at 192 kHz. The handler is not found yet.
+- Add a patch setting for 192 kHz USB, and remove the 8-channel alternate settings while it is on. This also needs the
+  SET_INTERFACE handler, because the alternate setting numbers may be fixed in it.
+- Make the buffers bigger. The buffer offsets are in ITCM code as immediates (0x1A0, 0x340 and 0x4E0, which are 1, 2 and
+  3 times the 416-byte stride, in `FUN_00014ef0`), so this needs a run-time change to ITCM code.
+
+Still to check before a build:
+
+- What happens to audio from the host at 192 kHz, with nothing reading its ring at 0x20004180.
+- Whether INPUT 3 and 4 need gain before they go to USB. The patch would send the high-gain samples without the
+  dual-gain merge.
+- Whether a host can change the rate while a take is recording, and what the stock code does then.
+
+### Oversample
+
+`UsbAudioPlugin.kt` (in the Oversample repository) needs three changes before it can use this:
+
+- For a UAC2 device the plugin sets the channel count to 1. It needs to read bNrChannels from the AS_GENERAL descriptor.
+- The plugin needs to choose interface 2 alt 2 (2 channels, 24-bit).
+- With no rate given, the plugin asks for 384 kHz, which the X8 replaces with 96 kHz. The plugin needs to ask for 192 kHz,
+  or read the GET RANGE answer.
+
 ## Firmware map (V2.03, in progress)
 
 Found with `tools/x8ram.py` (unpacks the RAM runs) and a headless Ghidra 10.4
