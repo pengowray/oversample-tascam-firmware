@@ -127,9 +127,9 @@ patched update file.
 | Fixed addresses (`spare.rs`) | SDRAM 0x865E2000 and 0x87EB0000 onwards | No | Output ring (cached), the display buffer, TE storage, task 1's patch stack and BAT PLAYBACK's read ring (uncached). |
 
 `crates/x8-patch/x8patch.ld` is the linker script; its comments give the reasons for each range. At
-B267 the patched update file is 25,858,884 bytes, 365,348 bytes longer than the official one.
-Free space at B267: ITCM 80.8 of 89.2 KB used, DTCM 149.3 of 152.8 KB used, and the patch region
-ends at 0x818FF238 of 0x81900000, 3.4 KB short of the end. DTCM is nearly full. Formatting a
+B267 the patched update file is 25,859,076 bytes, 365,540 bytes longer than the official one.
+Free space at B267: ITCM 80.9 of 89.2 KB used, DTCM 149.3 of 152.8 KB used, and the patch region
+ends at 0x818FF2F8 of 0x81900000, 3.3 KB short of the end. DTCM is nearly full. Formatting a
 float with `{:.1}` and the like pulls about 19 KB of the core library's float printing into the
 patch region; the app writes numbers with `screen::Fixed` instead.
 

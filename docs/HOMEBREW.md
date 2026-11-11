@@ -2366,8 +2366,9 @@ B241 or an earlier build. All the checks in `tools/x8patch.py` pass on this file
 
 ## Step 41 test file: a dark screen on batteries, and no phantom power question in BAT PLAYBACK (built 2026-11-12, not yet installed)
 
-`work/patch43/#PortaX8_0267.203` (B267, SHA-256 `6e415b33…09f2dc731e`). Includes Steps 39 and 40 (B263 and B266), whose
-checks still apply. Install this file in place of any earlier build. All the checks in `tools/x8patch.py` pass. One new
+`work/patch43/#PortaX8_0267.203` (B267, SHA-256 `2f89ee6c…814b9997be`). Includes Steps 39 and 40 (B263 and B266), whose
+checks still apply. Install this file in place of any earlier build. All the checks in `tools/x8patch.py` pass, and two
+builds give the same file. One new
 hook site (header version 21). The owner's report on B266: quitting BAT PLAYBACK and opening BAT DETECTOR opened BAT
 PLAYBACK; BAT PLAYBACK still asked about phantom power; the waterfall seemed to run with no audio; and a way to save the
 batteries with the screen was wanted, since POWER SAVE MODE blocks 192 kHz.
@@ -2380,7 +2381,7 @@ batteries with the screen was wanted, since POWER SAVE MODE blocks 192 kHz.
 - **Nothing to hear.** While MANUAL's mix is muted (stopped with REC PAUSE on, or one of MANUAL's pages open under the
   bat screen), the app no longer analyses the silence: the waterfall stands still, the meters fall, and the screen is
   redrawn twice a second, or at once after a touch or button. When the mix comes back, the columns missed show as no
-  data. Time expansion and the CPU test keep the app working as before.
+  data. Time expansion, the CPU test, a phone remote beep and a notice on screen keep the app working as before.
 - **A dark screen on batteries.** GENERAL SETTINGS > BACKLIGHT (OFF, 5, 10, 15, 30 s or ALWAYS) already dims the
   backlight to its lowest level after that time with no touch, button or wheel turn, behind the bat screen too. The bat
   screen now goes black at the same time and stops drawing, which saves the processor time shown as `draw` on the bat
@@ -2403,7 +2404,7 @@ batteries with the screen was wanted, since POWER SAVE MODE blocks 192 kHz.
   dimmed flag, the backlight's PWM value (1 dimmed; 5, 35 or 55 for BRIGHTNESS LOW, MID or HIGH), and whether the timer
   sees the X8 on its cells only (it dims only when this is 1).
 
-**Memory.** The patch region has 3.4 KB left (`.noinit` ends at 0x818ff238).
+**Memory.** The patch region has 3.3 KB left (`.noinit` ends at 0x818ff2f8).
 
 **What to check.** Turn on Debug info for the strip.
 

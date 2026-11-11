@@ -1275,7 +1275,8 @@ impl<'a> BatApp<'a> {
     }
 
     /// The host's mix is muted (see [`set_mix_silence`](Self::set_mix_silence)) and nothing in
-    /// the app needs the input: no time-expansion capture or playback, and no CPU test. While
+    /// the app needs the input or the time it counts: no time-expansion capture or playback, no
+    /// CPU test, no phone remote beep, and no notice timed in samples on screen. While
     /// idle, [`process`](Self::process) only outputs silence and lets the meters fall, the
     /// waterfall stands still, and the host can redraw less often. The frames passed meanwhile
     /// count as lost input when processing starts again.
@@ -1284,6 +1285,9 @@ impl<'a> BatApp<'a> {
             && self.input_kind == InputKind::Live
             && !self.cpu_test.running
             && matches!(self.te.state(), ExpanderState::Idle)
+            && !self.remote.beeping()
+            && self.remote.result_shown(self.samples).is_none()
+            && !self.pause_refused_shown()
     }
 
     /// The level automatic headphone level aims for, in the units of

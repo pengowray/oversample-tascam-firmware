@@ -1,6 +1,7 @@
 use core::sync::atomic::{Ordering::Acquire, Ordering::Relaxed, Ordering::Release};
 
 use bat_app::BatApp;
+use x8_patch::backlight::{self, Redraw};
 
 use super::audio::{ANALYSIS_OFF_ABOVE, process_input, use_itcm_hook};
 use super::clock::run_clock;
@@ -286,11 +287,11 @@ extern "C" fn dsp_task(_: isize) {
         let processed = BLOCKS.load(Relaxed);
         DSP_BLOCKS.store(DSP_BLOCKS.load(Relaxed).wrapping_add(processed.wrapping_sub(start)), Relaxed);
         let dark = follow_backlight(app);
-        if render_due(processed, app.idle() || dark) && dark {
-            // The recorder's state still reaches the app: REC can be pressed while dark.
+        let redraw = backlight::redraw(dark, render_due(processed, true), render_due(processed, app.idle()));
+        if redraw == Redraw::StatusOnly {
             LAST_RENDER.store(processed, Relaxed);
             update_status(app);
-        } else if render_due(processed, app.idle()) {
+        } else if redraw == Redraw::Draw {
             LAST_RENDER.store(processed, Relaxed);
             TOUCHED_SINCE_RENDER.store(false, Relaxed);
             draw_frame();
@@ -345,10 +346,11 @@ pub(super) extern "C" fn tick_work() {
     }
     let now = BLOCKS.load(Relaxed);
     let dark = follow_backlight(app);
-    if render_due(now, app.idle() || dark) && dark {
+    let redraw = backlight::redraw(dark, render_due(now, true), render_due(now, app.idle()));
+    if redraw == Redraw::StatusOnly {
         LAST_RENDER.store(now, Relaxed);
         update_status(app);
-    } else if render_due(now, app.idle()) {
+    } else if redraw == Redraw::Draw {
         LAST_RENDER.store(now, Relaxed);
         TOUCHED_SINCE_RENDER.store(false, Relaxed);
         render();

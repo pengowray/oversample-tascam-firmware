@@ -20,8 +20,8 @@ use super::state::{
     ITCM_OK, LAST_EVENT, LAUNCH_AT, LAUNCH_FROM, LAUNCHING, LOAD_WINDOW_START, MIX_FILE_OFF, MUTE_SEEN, MUTE_SEEN_AT,
     NO_APP, NO_INPUT_WORDS, OUT_LAST, OUT_READ, OUT_WRITE, PENDING, PLAYBACK, POPUP_HIDDEN, PRIMED, SAVED_BUFFER,
     SAVED_LITERAL, SCREEN_APP, SESSION, SOURCE_PEAK, STOCK_CYCLES_PER_S, TASK, TEST_DSP_MAX, TEST_SETTINGS,
-    TEST_START_BACKLOG, TEST_START_BLOCKS, TEST_START_DRY, TEST_START_LOST, TEST_START_SKIPPED, TOUCHED_SINCE_RENDER,
-    UNDERRUNS, WORD_PEAKS, WORK_ENTER,
+    TEST_START_BACKLOG, TEST_START_BLOCKS, TEST_START_DRY, TEST_START_LOST, TEST_START_SKIPPED, TOUCH_WAKING,
+    TOUCHED_SINCE_RENDER, UNDERRUNS, WORD_PEAKS, WORK_ENTER,
 };
 use super::task::{app, start_task, task_running};
 use super::{app_byte, blocks_per_second, rate_class, read_byte, spare, stock, system_state};
@@ -129,6 +129,8 @@ pub(super) extern "C" fn enter_work() {
         ptr::write_volatile(stock::PRESENT_LCDIF_LITERAL, DUMMY_LCDIF.0.get() as usize);
     }
     DARK.store(false, Relaxed);
+    // A touch that woke the screen before it last closed must not swallow the next one.
+    TOUCH_WAKING.store(false, Relaxed);
     if task_running() {
         // The DSP task may still be finishing a chunk from the last opening,
         // so it draws the first frame; until then the display is blank.

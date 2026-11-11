@@ -8,6 +8,27 @@
 //! button or wheel turn, task 1 dims the backlight to its lowest level and sets the dimmed flag.
 //! The stock firmware never dims on external power.
 
+/// What a pass of the DSP task does with the screen.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Redraw {
+    Nothing,
+    /// Dark: the recorder's state still reaches the app (REC can be pressed while dark), but
+    /// nothing is drawn.
+    StatusOnly,
+    Draw,
+}
+
+/// The pass's redraw. `due_slow`: a redraw is due at the slowest rate, which a dark screen uses
+/// for the status. `due`: a redraw is due at the rate for the app's state.
+pub fn redraw(dark: bool, due_slow: bool, due: bool) -> Redraw {
+    match (dark, due_slow, due) {
+        (true, true, _) => Redraw::StatusOnly,
+        (true, false, _) => Redraw::Nothing,
+        (false, _, true) => Redraw::Draw,
+        (false, _, false) => Redraw::Nothing,
+    }
+}
+
 /// Whether the bat screen goes dark. `dimmed`: the stock dimmed flag. `backlight_s`: BACKLIGHT.
 /// With OFF the backlight is dimmed again straight after every wake, so the screen keeps drawing.
 /// The CPU test measures the drawing, so it keeps the screen too.
@@ -24,6 +45,20 @@ mod tests {
         assert!(dark(1, 30, false));
         assert!(dark(1, 255, false));
         assert!(!dark(0, 30, false));
+    }
+
+    /// In record standby a redraw is due at the full rate, 10 a second: a dark screen must still
+    /// not draw over its black frame.
+    #[test]
+    fn a_dark_screen_never_draws() {
+        for due_slow in [false, true] {
+            for due in [false, true] {
+                assert_ne!(redraw(true, due_slow, due), Redraw::Draw);
+            }
+        }
+        assert_eq!(redraw(true, true, true), Redraw::StatusOnly);
+        assert_eq!(redraw(false, false, true), Redraw::Draw);
+        assert_eq!(redraw(false, true, false), Redraw::Nothing);
     }
 
     #[test]
