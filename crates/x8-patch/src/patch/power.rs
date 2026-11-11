@@ -5,10 +5,15 @@
 use core::ptr;
 use core::sync::atomic::{AtomicBool, Ordering::Relaxed};
 
+use x8_patch::power_source::cells_good;
+
 use x8_patch::power_source::{AUTO, BATTERY, WeakSupply, back_to_auto, on_weak_supply};
 
 use super::{Handler, read_byte, stock};
 
+/// The bat app's "Run from batteries on weak USB" switch, copied on each pass of the app. On at start,
+/// as the app's setting is, so it applies before the bat screen first opens.
+pub(super) static SWITCH_ON: AtomicBool = AtomicBool::new(true);
 /// Set when the patch set POWER SOURCE SELECT to BATTERY, until it sets AUTO again.
 static SWITCHED: AtomicBool = AtomicBool::new(false);
 /// Set when the patch went back to AUTO because the cells failed: until the next start, the stock
@@ -28,15 +33,16 @@ fn post_power_source(value: u8) {
 }
 
 /// Task 1, for each input event, before the stock handling. A weak USB supply (kind 8, value 0)
-/// with good cells: the event is swallowed and, in AUTO, POWER SOURCE SELECT set to BATTERY. A new
-/// cell level (kind 3) after that: AUTO again if the cells are no longer good, and the stock check
-/// asks its question.
+/// with the switch on and good cells: the event is swallowed and, in AUTO, POWER SOURCE SELECT set
+/// to BATTERY. A new cell level (kind 3) after that: AUTO again if the cells are no longer good or
+/// the switch was turned off, and the stock check asks its question.
 pub(super) fn on_event(kind_ptr: *mut u16, kind: u16, value: i32) {
     let (source, battery_type, level) =
         (read_byte(stock::POWER_SOURCE), read_byte(stock::BATTERY_TYPE), read_byte(stock::CELL_LEVEL));
-    let switched = SWITCHED.load(Relaxed);
+    let (switch_on, switched) = (SWITCH_ON.load(Relaxed), SWITCHED.load(Relaxed));
     if kind == stock::KIND_USB_SUPPLY && value == 0 {
-        let answer = on_weak_supply(source, switched, GAVE_UP.load(Relaxed), battery_type, level, &thresholds());
+        let answer =
+            on_weak_supply(switch_on, source, switched, GAVE_UP.load(Relaxed), battery_type, level, &thresholds());
         if answer != WeakSupply::Ask {
             // SAFETY: the kind field of the message copy.
             unsafe { ptr::write_volatile(kind_ptr, stock::KIND_SWALLOWED) };
@@ -45,10 +51,16 @@ pub(super) fn on_event(kind_ptr: *mut u16, kind: u16, value: i32) {
             post_power_source(BATTERY);
             SWITCHED.store(true, Relaxed);
         }
-    } else if kind == stock::KIND_CELL_LEVEL && back_to_auto(switched, source, battery_type, level, &thresholds()) {
+    } else if kind == stock::KIND_CELL_LEVEL
+        && back_to_auto(switch_on, switched, source, battery_type, level, &thresholds())
+    {
         post_power_source(AUTO);
         SWITCHED.store(false, Relaxed);
-        GAVE_UP.store(true, Relaxed);
+        // Only failing cells end it for the session; with the switch turned on again, the next
+        // weak supply is answered again.
+        if !cells_good(battery_type, level, &thresholds()) {
+            GAVE_UP.store(true, Relaxed);
+        }
         // SAFETY: the stock check's latch word; task 9 writes it too, and a lost write only
         // delays the question by one check (50 scans).
         unsafe { ptr::write_volatile(stock::SUPPLY_LATCH, 0) };

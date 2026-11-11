@@ -11,6 +11,8 @@ const BLOCK = 4096;
 
 const wasm = await init();
 const emu = new Emulator(RATE);
+// ?x8 offers the settings the X8 patch offers, for previewing its settings pages.
+if (new URLSearchParams(location.search).has('x8')) emu.x8_host();
 const W = Emulator.width();
 const H = Emulator.height();
 

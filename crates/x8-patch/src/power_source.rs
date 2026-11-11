@@ -36,10 +36,12 @@ pub enum WeakSupply {
     StayOnCells,
 }
 
-/// The answer to a weak USB supply. `switched`: the patch set BATTERY and it is still set by the
-/// patch. `gave_up`: the patch went back to AUTO since the X8 started, so the cells failed once and
-/// the stock question decides until the next start.
+/// The answer to a weak USB supply. `switch_on`: the bat app's "Run from batteries on weak USB"
+/// switch. `switched`: the patch set BATTERY and it is still set by the patch. `gave_up`: the patch
+/// went back to AUTO since the X8 started, so the cells failed once and the stock question decides
+/// until the next start.
 pub fn on_weak_supply(
+    switch_on: bool,
     power_source: u8,
     switched: bool,
     gave_up: bool,
@@ -47,7 +49,7 @@ pub fn on_weak_supply(
     level: u8,
     thresholds: &[u8; 3],
 ) -> WeakSupply {
-    if gave_up || !cells_good(battery_type, level, thresholds) {
+    if !switch_on || gave_up || !cells_good(battery_type, level, thresholds) {
         WeakSupply::Ask
     } else if power_source == AUTO {
         WeakSupply::SwitchToCells
@@ -59,9 +61,17 @@ pub fn on_weak_supply(
 }
 
 /// Whether to go back to AUTO, after the patch set BATTERY: when the setting is still BATTERY and
-/// the cells are no longer good, as the stock firmware does when external power appears.
-pub fn back_to_auto(switched: bool, power_source: u8, battery_type: u8, level: u8, thresholds: &[u8; 3]) -> bool {
-    switched && power_source == BATTERY && !cells_good(battery_type, level, thresholds)
+/// the cells are no longer good, as the stock firmware does when external power appears, or the
+/// switch was turned off.
+pub fn back_to_auto(
+    switch_on: bool,
+    switched: bool,
+    power_source: u8,
+    battery_type: u8,
+    level: u8,
+    thresholds: &[u8; 3],
+) -> bool {
+    switched && power_source == BATTERY && (!switch_on || !cells_good(battery_type, level, thresholds))
 }
 
 #[cfg(test)]
@@ -73,7 +83,15 @@ mod tests {
     use WeakSupply::*;
 
     fn answer(source: u8, switched: bool, gave_up: bool, battery_type: u8, level: u8) -> WeakSupply {
-        on_weak_supply(source, switched, gave_up, battery_type, level, &T)
+        on_weak_supply(true, source, switched, gave_up, battery_type, level, &T)
+    }
+
+    #[test]
+    fn the_switch_off_leaves_the_stock_question() {
+        assert_eq!(on_weak_supply(false, AUTO, false, false, 0, 120, &T), Ask);
+        assert_eq!(on_weak_supply(false, BATTERY, true, false, 0, 120, &T), Ask);
+        // Turned off while on the patch's cells: back to AUTO.
+        assert!(back_to_auto(false, true, BATTERY, 0, 120, &T));
     }
 
     #[test]
@@ -108,10 +126,10 @@ mod tests {
 
     #[test]
     fn back_to_auto_only_after_the_patch_switched_and_the_cells_fade() {
-        assert!(back_to_auto(true, BATTERY, 0, 100, &T));
-        assert!(!back_to_auto(true, BATTERY, 0, 110, &T));
-        assert!(!back_to_auto(false, BATTERY, 0, 100, &T));
+        assert!(back_to_auto(true, true, BATTERY, 0, 100, &T));
+        assert!(!back_to_auto(true, true, BATTERY, 0, 110, &T));
+        assert!(!back_to_auto(true, false, BATTERY, 0, 100, &T));
         // The user set AUTO again: nothing to do.
-        assert!(!back_to_auto(true, AUTO, 0, 100, &T));
+        assert!(!back_to_auto(true, true, AUTO, 0, 100, &T));
     }
 }

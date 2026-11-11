@@ -269,13 +269,16 @@ pub enum Setting {
     /// Whether the headphones are silent while a take is being recorded: see
     /// [`BatApp::mute_while_recording`].
     MuteWhileRecording,
+    /// Whether the host runs from its cells when a USB supply is weak, instead of asking about
+    /// the supply: see [`BatApp::set_power_option_available`].
+    CellsOnWeakUsb,
     /// Whether detections of this kind are marked: a tick under the
     /// waterfall, the last-call panel, and time expansion. On or off.
     Mark(CallKind),
 }
 
 impl Setting {
-    pub const ALL: [Setting; 12] = [
+    pub const ALL: [Setting; 13] = [
         Setting::LowestBatCall,
         Setting::ListenTo,
         Setting::AutoLevel,
@@ -283,6 +286,7 @@ impl Setting {
         Setting::MixFile,
         Setting::PauseWithRec,
         Setting::MuteWhileRecording,
+        Setting::CellsOnWeakUsb,
         Setting::ClockFromRemote,
         Setting::Mark(CallKind::Bat),
         Setting::Mark(CallKind::Tone),
@@ -294,7 +298,9 @@ impl Setting {
 
     pub fn page(self) -> SettingsPage {
         match self {
-            Setting::MixFile | Setting::PauseWithRec | Setting::MuteWhileRecording => SettingsPage::Record,
+            Setting::MixFile | Setting::PauseWithRec | Setting::MuteWhileRecording | Setting::CellsOnWeakUsb => {
+                SettingsPage::Record
+            }
             Setting::ClockFromRemote => SettingsPage::Phone,
             Setting::DebugInfo => SettingsPage::Tests,
             _ => SettingsPage::Listen,
@@ -625,6 +631,9 @@ pub struct BatApp<'a> {
     pause_with_rec: bool,
     /// See [`mute_while_recording`](Self::mute_while_recording).
     mute_while_recording: bool,
+    power_option_available: bool,
+    /// See [`cells_on_weak_usb`](Self::cells_on_weak_usb).
+    cells_on_weak_usb: bool,
     /// The headphones' gain for Mute while recording: 1 heard, 0 silent, between while fading.
     listen_gain: f32,
     /// The listening modes were skipped while muted, so they start clean when the sound returns.
@@ -796,6 +805,8 @@ impl<'a> BatApp<'a> {
             field!((*this).pause_option_available).write(false);
             field!((*this).pause_with_rec).write(false);
             field!((*this).mute_while_recording).write(false);
+            field!((*this).power_option_available).write(false);
+            field!((*this).cells_on_weak_usb).write(true);
             field!((*this).listen_gain).write(1.0);
             field!((*this).modes_skipped).write(false);
             field!((*this).pause_refused_until).write(0);
@@ -923,7 +934,12 @@ impl<'a> BatApp<'a> {
     /// the QR code and the chime test.
     pub fn settings_pages(&self) -> impl Iterator<Item = SettingsPage> + '_ {
         SettingsPage::ALL.into_iter().filter(|&page| match page {
-            SettingsPage::Record => self.mix_file_available || self.guano_available || self.pause_option_available,
+            SettingsPage::Record => {
+                self.mix_file_available
+                    || self.guano_available
+                    || self.pause_option_available
+                    || self.power_option_available
+            }
             SettingsPage::Tests => self.debug_available,
             SettingsPage::Listen | SettingsPage::Phone => true,
         })
@@ -1133,6 +1149,8 @@ impl<'a> BatApp<'a> {
             Setting::PauseWithRec => {}
             Setting::MuteWhileRecording if steps != 0 => self.mute_while_recording = steps > 0,
             Setting::MuteWhileRecording => {}
+            Setting::CellsOnWeakUsb if steps != 0 => self.cells_on_weak_usb = steps > 0,
+            Setting::CellsOnWeakUsb => {}
             // Turning the wheel up switches on, down switches off.
             Setting::Mark(kind) if steps != 0 => self.set_marked(kind, steps > 0),
             Setting::Mark(_) => {}
@@ -1404,6 +1422,26 @@ impl<'a> BatApp<'a> {
         self.mute_while_recording = on;
     }
 
+    /// The host can run from its cells when a USB supply is weak (the X8 patch, in place of the
+    /// stock question that leads to POWER SAVE MODE): offer the switch.
+    pub fn set_power_option_available(&mut self, available: bool) {
+        self.power_option_available = available;
+    }
+
+    pub fn power_option_available(&self) -> bool {
+        self.power_option_available
+    }
+
+    /// Whether the host runs from its cells when a USB supply is weak. On by default, and at every
+    /// start, since the settings reset at power-off.
+    pub fn cells_on_weak_usb(&self) -> bool {
+        self.cells_on_weak_usb
+    }
+
+    pub fn set_cells_on_weak_usb(&mut self, on: bool) {
+        self.cells_on_weak_usb = on;
+    }
+
     /// Whether Mute while recording is silencing the headphones now (or fading them out).
     pub fn muted_for_take(&self) -> bool {
         self.mute_while_recording && self.input_kind == InputKind::Live && self.is_recording() && !self.cpu_test.running
@@ -1493,6 +1531,7 @@ impl<'a> BatApp<'a> {
             Setting::ClockFromRemote => self.remote.available,
             Setting::PauseWithRec => self.pause_option_available,
             Setting::MuteWhileRecording => self.input_kind == InputKind::Live,
+            Setting::CellsOnWeakUsb => self.power_option_available,
             _ => true,
         }
     }
@@ -1785,6 +1824,7 @@ impl<'a> BatApp<'a> {
                     Setting::ClockFromRemote => self.clock_from_remote = !self.clock_from_remote,
                     Setting::PauseWithRec => self.pause_with_rec = !self.pause_with_rec,
                     Setting::MuteWhileRecording => self.mute_while_recording = !self.mute_while_recording,
+                    Setting::CellsOnWeakUsb => self.cells_on_weak_usb = !self.cells_on_weak_usb,
                     _ => {}
                 }
             }

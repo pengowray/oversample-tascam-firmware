@@ -434,6 +434,7 @@ fn update_status(app: &mut BatApp<'static>) {
         app.set_remote_available(false);
         app.set_guano_available(false);
         app.set_pause_option_available(false);
+        app.set_power_option_available(true);
         MIX_FILE_OFF.store(false, Relaxed);
         app.set_inputs([Some(PLAYBACK_LEFT), Some(PLAYBACK_RIGHT)]);
     } else {
@@ -443,6 +444,7 @@ fn update_status(app: &mut BatApp<'static>) {
         app.set_remote_available(true);
         app.set_guano_available(true);
         app.set_pause_option_available(true);
+        app.set_power_option_available(true);
         // SAFETY: MANUAL's track on/off words, which the stock code writes from task 1.
         let words = stock::TRACKS_ON.map(|word| unsafe { ptr::read_volatile(word) });
         app.set_manual_mix_file(master_rec_ready(words));
@@ -453,6 +455,7 @@ fn update_status(app: &mut BatApp<'static>) {
         app.set_inputs([first, second].map(|input| input.map(|input| input.name)));
     }
     GUANO_ON.store(app.guano(), Relaxed);
+    super::power::SWITCH_ON.store(app.cells_on_weak_usb(), Relaxed);
     super::pauses::PAUSE_WITH_REC.store(app.pause_with_rec(), Relaxed);
     if super::pauses::REFUSED.swap(false, Relaxed) {
         app.pause_refused();

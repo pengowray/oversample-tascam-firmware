@@ -127,9 +127,9 @@ patched update file.
 | Fixed addresses (`spare.rs`) | SDRAM 0x865E2000 and 0x87EB0000 onwards | No | Output ring (cached), the display buffer, TE storage, task 1's patch stack and BAT PLAYBACK's read ring (uncached). |
 
 `crates/x8-patch/x8patch.ld` is the linker script; its comments give the reasons for each range. At
-B265 the patched update file is 25,853,972 bytes, 360,436 bytes longer than the official one.
-Free space at B265: ITCM 80.5 of 89.2 KB used, DTCM 149.3 of 152.8 KB used, and the patch region
-ends at 0x818FDF08 of 0x81900000, 8.2 KB short of the end. DTCM is nearly full. Formatting a
+B266 the patched update file is 25,854,644 bytes, 361,108 bytes longer than the official one.
+Free space at B266: ITCM 80.5 of 89.2 KB used, DTCM 149.3 of 152.8 KB used, and the patch region
+ends at 0x818FE1A8 of 0x81900000, 7.6 KB short of the end. DTCM is nearly full. Formatting a
 float with `{:.1}` and the like pulls about 19 KB of the core library's float printing into the
 patch region; the app writes numbers with `screen::Fixed` instead.
 
@@ -209,7 +209,7 @@ The patch also changes these at run time, from inside its hooks:
 | Task 9 (stock) | The touch hook. |
 | Qt's task (stock) | The launcher hooks: the tile, text, icon, slot and delete-mode hooks. |
 | Task 4 (stock) | The GUANO hook and the location log, at the end of a take. |
-| Task 1 (stock), from B265 | The key hooks also answer a weak USB supply by setting POWER SOURCE SELECT to BATTERY, and power-off saves AUTO in its place (`patch/power.rs`). |
+| Task 1 (stock), from B266 | The key hooks also answer a weak USB supply by setting POWER SOURCE SELECT to BATTERY while the bat app's `Run from batteries on weak USB` switch is on, and power-off saves AUTO in its place (`patch/power.rs`). |
 | DSP task (patch, priority 16) | Processes the input ring through the bat app, draws the screen about 10 times a second (5 while recording), and runs the clock, the phone remote and the BAT PLAYBACK player. Each pass stops after 30 ms and the task then sleeps 2 ms, so a mode that cannot keep up loses input instead of freezing the unit. 32 KB stack in DTCM. |
 | Card reader task (patch, priority 12) | BAT PLAYBACK's card access: lists folders and WAV files and streams the chosen file into a read ring. Created with the DSP task; it touches the card only while BAT PLAYBACK is open and sleeps otherwise. 10 KB stack in DTCM. |
 

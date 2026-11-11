@@ -28,6 +28,16 @@ impl Emulator {
         }
     }
 
+    /// Offers the settings the X8 patch offers, for previewing its settings pages.
+    pub fn x8_host(&mut self) {
+        self.app.set_mix_file_available(true);
+        self.app.set_remote_available(true);
+        self.app.set_guano_available(true);
+        self.app.set_pause_option_available(true);
+        self.app.set_power_option_available(true);
+        self.app.set_debug_available(true);
+    }
+
     pub fn width() -> usize {
         WIDTH
     }

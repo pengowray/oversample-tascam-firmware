@@ -8,7 +8,7 @@ use embedded_graphics::primitives::{PrimitiveStyle, Rectangle};
 use super::{BODY, BODY_BOLD, Fb, Fixed, LEFT, SMALL, outline_selected, rounded, switch_control, text};
 use crate::layout::{
     PHONE_CLOCK, PHONE_REMOTE, QR_MARGIN, QR_MODULE, QR_TEXT_X, RECORD_GUANO, RECORD_MIX_FILE, RECORD_MUTE,
-    RECORD_PAUSE, TESTS_CPU_TEST, TESTS_DEBUG, panel_switch, phone_time, qr_card,
+    RECORD_PAUSE, RECORD_POWER, TESTS_CPU_TEST, TESTS_DEBUG, panel_switch, phone_time, qr_card,
 };
 use crate::palette::*;
 use crate::{BatApp, Mode, RecorderCommand, RemoteCommand, RemoteResult, Setting, qr};
@@ -34,6 +34,11 @@ pub(super) const PAUSE_STATE: [&str; 2] =
 pub(super) const MUTE_NAME: &str = "Mute while recording";
 pub(super) const MUTE_STATE: [&str; 2] =
     ["Headphones keep playing during a take", "Headphones are silent during a take. Uses less CPU"];
+/// The X8 patch's answer to a USB supply under 1.5 A: POWER SOURCE SELECT to BATTERY, in place of
+/// the stock question whose No turns on POWER SAVE MODE (44.1 and 48 kHz only).
+pub(super) const POWER_NAME: &str = "Run from batteries on weak USB";
+pub(super) const POWER_STATE: [&str; 2] =
+    ["A USB supply under 1.5 A can turn on POWER SAVE MODE", "The X8 runs on its batteries, unless they are low"];
 /// In the recording bar while Mute while recording silences the headphones.
 pub(super) const MUTED_LABEL: &str = "MUTED";
 /// On the main screen when REC was kept from pausing a take.
@@ -142,6 +147,11 @@ pub(super) fn record(app: &BatApp, fb: Fb) {
         let selected = app.selected_setting() == Setting::MuteWhileRecording;
         let on = app.mute_while_recording();
         switch_panel(fb, RECORD_MUTE, MUTE_NAME, &[state(&MUTE_STATE, on)], on, selected);
+    }
+    if app.power_option_available() {
+        let selected = app.selected_setting() == Setting::CellsOnWeakUsb;
+        let on = app.cells_on_weak_usb();
+        switch_panel(fb, RECORD_POWER, POWER_NAME, &[state(&POWER_STATE, on)], on, selected);
     }
 }
 
