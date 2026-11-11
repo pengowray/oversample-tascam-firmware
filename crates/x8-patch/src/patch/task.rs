@@ -286,8 +286,8 @@ extern "C" fn dsp_task(_: isize) {
         feed(app, u32::MAX, PASS_BLOCKS);
         let processed = BLOCKS.load(Relaxed);
         DSP_BLOCKS.store(DSP_BLOCKS.load(Relaxed).wrapping_add(processed.wrapping_sub(start)), Relaxed);
-        let dark = follow_backlight(app);
-        let redraw = backlight::redraw(dark, render_due(processed, true), render_due(processed, app.idle()));
+        let blank = follow_backlight(app);
+        let redraw = backlight::redraw(blank, render_due(processed, true), render_due(processed, app.idle()));
         if redraw == Redraw::StatusOnly {
             LAST_RENDER.store(processed, Relaxed);
             update_status(app);
@@ -345,8 +345,8 @@ pub(super) extern "C" fn tick_work() {
         process_input(app, MAX_FRAMES_PER_CALL, PASS_BLOCKS);
     }
     let now = BLOCKS.load(Relaxed);
-    let dark = follow_backlight(app);
-    let redraw = backlight::redraw(dark, render_due(now, true), render_due(now, app.idle()));
+    let blank = follow_backlight(app);
+    let redraw = backlight::redraw(blank, render_due(now, true), render_due(now, app.idle()));
     if redraw == Redraw::StatusOnly {
         LAST_RENDER.store(now, Relaxed);
         update_status(app);
