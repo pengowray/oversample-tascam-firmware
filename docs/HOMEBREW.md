@@ -3514,17 +3514,37 @@ block at 192 kHz, but DSP mode 3 is only selected when the system mode byte (`FU
 |---|---|---|
 | Rate list | Third sub-range at 0x2000022E from {96000, 96000, 0} to {96000, 192000, 96000} (minimum, maximum, resolution), so it lists 96 and 192 kHz. The answer stays 38 bytes, and `FUN_00014108` accepts both rates. | Run-time write from a hook that runs before the host reads the list, for example on the call to `FUN_80df48d0` |
 | Packet sizes | Interface 2 alt 2: 78 to 150. Interface 3 alt 1: 78 to 150. Interface 3 alt 2: 104 to 200. 150 bytes fits the 416-byte buffers for the host, and 150 and 200 bytes fit the 388-byte buffers for audio from the host. | Byte change in the image (0x813B69FC is outside the packed runs) |
-| 8-channel guard | Stop interface 2 alt 1 and alt 3 from running at 192 kHz | Not chosen yet; see below |
+| 8-channel guard | Stop interface 2 alt 1 and alt 3 from running above 96 kHz | Call hook at 0x80DC6FD8 and a wrapper for the class callback; see below |
 | Audio at 192 kHz | In `audio_hook`, when the rate class (0x2A2CB) is 2, USB streaming is on and the host's rate equals the unit's: for each of the 4 frames in the input block, write INPUT 3 as the left channel and INPUT 4 as the right into the ring at 0x20000254, 3 or 4 bytes a sample as USB state + 0x46 says, then call `FUN_00014b84` with the new write offset. An input frame is 12 words, and INPUT 3 and 4 are words 0 and 6 of each frame (high-gain path; see `work/notes/audio.md`). | Patch code, following what routine 0x11380 does |
 
-Options for the 8-channel guard:
+**The 8-channel guard.** A host can choose the rate and the alternate setting in either order, so the guard has two
+checks, plus a last check before each packet.
 
-- Find the SET_INTERFACE handler that sets USB state + 0x46 and + 0x47 (bytes per sample and channels), and make it
-  refuse alt 1 and alt 3 at 192 kHz. The handler is not found yet.
-- Add a patch setting for 192 kHz USB, and remove the 8-channel alternate settings while it is on. This also needs the
-  SET_INTERFACE handler, because the alternate setting numbers may be fixed in it.
-- Make the buffers bigger. The buffer offsets are in ITCM code as immediates (0x1A0, 0x340 and 0x4E0, which are 1, 2 and
-  3 times the 416-byte stride, in `FUN_00014ef0`), so this needs a run-time change to ITCM code.
+How the stock code chooses the format (high):
+
+- SET_INTERFACE reaches the USB device callback, whose branch at 0x80DC6FB2 takes the interface number from the high
+  byte of the request's value. For interface 2 it calls the handler through a `bl` at **0x80DC6FD8** (to the thunk at
+  0x80DC6E48, then ITCM 0x152C8) with the alternate setting in r2. Interface 3 goes through the `bl` at 0x80DC6FEC to
+  ITCM 0x15450.
+- The interface 2 handler at 0x152C8 (Ghidra has no function there) sets USB state + 0x46 (bytes per sample) and + 0x47
+  (channels): alt 1 gives 3 and 8, alt 2 gives 3 and 2, alt 3 gives 4 and 8. It then clears the ring at 0x20000254
+  and queues the first 4 packets, each rate / 8000 x bytes x channels long.
+- Class requests, SET CUR for the rate among them, and the packet-done events reach the audio class callback 0x14EF0
+  through pointer words in the configuration list in `.data`, at 0x81921290, 0x8192129C and 0x819212A8 (one for each
+  audio interface).
+
+The guard:
+
+| Check | Where | What it does |
+|---|---|---|
+| Alternate setting chosen after the rate | Call hook on the `bl` at 0x80DC6FD8 | If the alternate setting is 1 or 3 and the host's rate (USB state + 0x34) is above 96 kHz, call the stock handler with alternate setting 0, so no audio is sent. |
+| Rate chosen after the alternate setting | Wrapper for the class callback; the patch writes its address into the three pointer words at start-up, before USB starts | For SET CUR of the rate (event codes 0x501 and 0x10C) above 96 kHz while USB state + 0x47 is 8, pass 96,000 to the stock code. The stock code does the same for a rate that is not in the list, so GET CUR then reports 96 kHz. |
+| Last check | The same wrapper, on event 1 (a packet to the host has been sent) | If channels x bytes x (rate / 8000 + 1) is more than 416, return without calling the stock code, so the stream stops before anything is written past the buffers. |
+
+The first check is the same kind of hook as the patch's other call hooks. The rate list and the wrapper's pointer words
+would add to the two run-time changes the patch already makes (see FIRMWARE.md, "Kinds of hook"). Like every hook, the
+wrapper has to read the system mode byte first and call the stock code unchanged in update mode. The 4 packets that the interface 2 handler queues are read from
+the buffers, not written, so they cannot overwrite memory.
 
 Still to check before a build:
 
