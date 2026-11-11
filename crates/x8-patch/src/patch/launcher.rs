@@ -69,7 +69,15 @@ pub(super) unsafe extern "C" fn tile_hook(bridge: usize, slot: usize, c: usize, 
 /// off during this call, so no task can read it. The settings save task's own
 /// call is left alone because that task runs alongside task 1, which would
 /// read the LAUNCHER as the open app and close the bat screen.
+///
+/// When the patch has set POWER SOURCE SELECT to BATTERY for a weak USB supply, the record is saved
+/// with AUTO, the user's setting.
 pub(super) unsafe extern "C" fn power_off_save_hook(a: usize, b: usize, c: usize, d: usize) -> usize {
+    if let Some(source) = super::power::saved_power_source() {
+        // SAFETY: the POWER SOURCE SELECT byte in the settings record; interrupts are off, and the
+        // X8 is powering off, so the power path that the RAM byte no longer matches does not matter.
+        unsafe { ptr::write_volatile(stock::POWER_SOURCE, source) };
+    }
     // SAFETY: the stock function the power-off sequence called, with its arguments.
     let save: Handler = unsafe { core::mem::transmute(stock::SAVE_SETTINGS) };
     let app = app_byte();

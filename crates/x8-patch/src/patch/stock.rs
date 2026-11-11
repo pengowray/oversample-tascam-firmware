@@ -312,3 +312,21 @@ pub const USB_SPEED: *const u8 = 0x8191_8e3c as *const u8;
 /// USB task state 0x81918b48 + 0x2f7 + interface: the alternate setting the host last chose,
 /// stored by the device callback before it calls the interface's handler.
 pub const USB_ALT_IF2: *const u8 = 0x8191_8e41 as *const u8;
+
+// Power (docs/HOMEBREW.md, "USB power and POWER SAVE MODE").
+/// Settings + 0x1D8, BATTERY TYPE (0 alkaline, 1 Ni-MH, 2 lithium), and + 0x1D9, POWER SOURCE
+/// SELECT (0 BATTERY, 1 AUTO).
+pub const BATTERY_TYPE: *const u8 = 0x81e8_ca54 as *const u8;
+pub const POWER_SOURCE: *mut u8 = 0x81e8_ca55 as *mut u8;
+/// Task 1's state 0x8196a3e0 + 0xd: the latest cell level from the battery task (ADC1 result,
+/// low byte; under 36 means no cells), updated with every kind 3 event.
+pub const CELL_LEVEL: *const u8 = 0x8196_a3ed as *const u8;
+/// The stock cell level thresholds by BATTERY TYPE, used when external power appears in BATTERY.
+pub const SOURCE_THRESHOLDS: *const [u8; 3] = 0x8172_6d6c as *const [u8; 3];
+/// `FUN_80dbe2bc(code, value)`: posts a message to the system task (Thumb address).
+pub const POST_SYSTEM_MESSAGE: usize = 0x80db_e2bd;
+/// The system message that sets POWER SOURCE SELECT, its menu item and the power path.
+pub const MSG_POWER_SOURCE: usize = 0xf20;
+/// Input event kinds: 3 the cell level, 8 the USB supply check (value 0: below 1.5 A).
+pub const KIND_CELL_LEVEL: u16 = 3;
+pub const KIND_USB_SUPPLY: u16 = 8;

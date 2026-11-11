@@ -150,6 +150,7 @@ unsafe fn handle_message(msg: usize, via: Via) {
         return;
     }
     LAST_EVENT.store((kind as u32) << 16 | (value as u32 & 0xffff), Relaxed);
+    super::power::on_event(kind_ptr, kind, value);
     if AUDIO_STATE.load(Relaxed) != AUDIO_INSTALLED {
         return;
     }

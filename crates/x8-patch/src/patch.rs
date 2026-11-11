@@ -33,6 +33,8 @@ mod pauses;
 mod play_glyph;
 /// BAT PLAYBACK's player, in the DSP task: passes requests to the card reader and plays the file.
 mod playback;
+/// Runs from the cells when a USB supply is weak, instead of POWER SAVE MODE.
+mod power;
 /// Qt for MCUs image descriptors.
 mod qt;
 /// BAT PLAYBACK's card reader task: lists the WAV files, reads their headers and the file playing.

@@ -7,6 +7,7 @@ pub mod card;
 pub mod clock_record;
 pub mod file_mask;
 pub mod handoff;
+pub mod power_source;
 pub mod take_guano;
 pub mod usb_audio;
 pub mod wide;
