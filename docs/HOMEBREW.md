@@ -2394,7 +2394,8 @@ Notes:
 - After the host starts the stream, or after a rate change, the rate feedback can take a few seconds to settle. Until then
   the stock code sends silence.
 - The Debug info strip does not show the USB state yet.
-- Oversample cannot use this yet: its USB plugin needs the changes listed under [Oversample](#oversample).
+- Oversample's USB plugin needed the changes listed under [Oversample](#oversample); they are in Oversample commit `b2bf6a1`
+  (not pushed, not yet run on a phone).
 
 **Memory.** The patch region has 8.6 KB left (`.noinit` ends at 0x818fdd68). ITCM and DTCM are as in B261.
 
@@ -2414,7 +2415,8 @@ after the stream starts or the rate changes, and judge each file after the first
 6. The guard: `arecord -D hw:CARD=X8 -c 8 -r 192000 -f S24_3LE -d 5 guard.wav`. Linux usually sets the rate before the
    alternate setting, so expect an I/O error, silence, or 8 channels recorded at 96 kHz; all three are a pass. The X8
    must keep running normally afterwards. Then `-c 8 -r 96000` should record as on stock firmware.
-7. On a phone, once Oversample has the changes: set GENERAL SETTINGS > POWER/DISPLAY > POWER SOURCE SELECT to BATTERY first.
+7. On a phone with an Oversample build from commit `b2bf6a1` or later: set GENERAL SETTINGS > POWER/DISPLAY > POWER SOURCE
+   SELECT to BATTERY first, set Oversample's sample rate to Auto or 192k, and choose Stereo.
 
 ## Step 38 test file: PITCH cheaper again, and Mute while recording (built 2026-11-10, not yet installed)
 
@@ -3615,12 +3617,19 @@ Still to check before a build:
 
 ### Oversample
 
-`UsbAudioPlugin.kt` (in the Oversample repository) needs three changes before it can use this:
+Changed in Oversample commit `b2bf6a1` (2026-11-11, not pushed). Before it, the USB plugin and stream could not use the X8:
 
-- For a UAC2 device the plugin sets the channel count to 1. It needs to read bNrChannels from the AS_GENERAL descriptor.
-- The plugin needs to choose interface 2 alt 2 (2 channels, 24-bit).
-- With no rate given, the plugin asks for 384 kHz, which the X8 replaces with 96 kHz. The plugin needs to ask for 192 kHz,
-  or read the GET RANGE answer.
+- For a UAC2 device the plugin set the channel count to 1. It now reads bNrChannels from the AS_GENERAL descriptor.
+- It took the input alternate setting with the highest rate. It now prefers 2 channels, then 1, so the X8 gets alt 2.
+- With no rate given it asked for 384 kHz, which the X8 replaces with 96 kHz. It now reads the GET RANGE answer and asks
+  for the requested rate or the highest listed rate below it.
+- For UAC2 it set the rate only when the class-specific endpoint descriptor's bit 0 was set, which is UAC1's meaning, so it
+  never set the X8's rate. It now uses the clock source's controls.
+- Its clock requests named interface 0 in wIndex; the X8's audio control interface is 1 (interface 0 is mass storage).
+- An output or feedback endpoint's class-specific descriptor could add an entry with the last input endpoint's address,
+  and the feedback endpoint 0x83 could be taken for audio. Both are fixed.
+- The stream read every sample as 16-bit. It now takes the bytes per sample from the descriptor and keeps the top 16 bits
+  of 3- and 4-byte samples, since Oversample writes USB recordings at 16 bits.
 
 ## Firmware map (V2.03, in progress)
 
