@@ -29,7 +29,7 @@ Tasks that matter to the patch (numbers are the RTOS's task ids):
 |---|---|---|
 | 1 | 15 | Handles UI messages: buttons, the wheel, pop-ups. Calls the current screen's key handler. |
 | 4 | not checked | Runs recorder commands one at a time, including closing a take's files and reading or setting the clock. 17 KB of stack. |
-| 9 | not checked | Polls the buttons, the wheel and the touch controller. |
+| 9 | not checked | Polls the buttons, the wheel and the touch controller, and checks the USB supply current every 50 scans (see [USB power and POWER SAVE MODE](HOMEBREW.md#usb-power-and-power-save-mode-2026-11-11)). |
 | 21 | 17 | Probably Qt (1 MB of stack). |
 
 ## Update file format

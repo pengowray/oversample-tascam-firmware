@@ -250,7 +250,7 @@ which is how `leave_bat_screen` knows which framebuffer to show again.
 |---|---|---|
 | Card | microSD (64 MB to 2 GB), microSDHC (4 to 32 GB) and microSDXC (48 to 512 GB), on the USDHC controller. FAT and exFAT. Takes go in `SOUND` and its `FOLDER_nnnn` folders; update files go in `UTILITY`. | Tascam spec, Firmware |
 | File names | UTF-16 inside the firmware's file system calls. Only 2 folder handles exist in the whole system. | Firmware |
-| USB | Type-C, USB 2.0 high speed. Mass storage (SD CARD READER), and an 8-in, 2-out USB audio interface up to 96 kHz. | Tascam spec |
+| USB | Type-C, USB 2.0 high speed. Mass storage (SD CARD READER), and an 8-in, 2-out USB audio interface up to 96 kHz. The patch adds 2-in at 192 kHz from B263 (not yet tested). | Tascam spec, Firmware |
 | Bluetooth | Port for the optional AK-BT1 adapter (Bluetooth LE), used by the Portacapture Control app and for timecode. The firmware's "TCS" stack drives it. Not tested with the patch: the owner does not have one. | Tascam spec, Firmware |
 
 ## Power
@@ -260,6 +260,8 @@ which is how `leave_bat_screen` knows which framebuffer to show again.
 | Sources | 4 AA cells (alkaline, NiMH or lithium), USB bus power, or TASCAM's PS-P520U adapter. | Tascam spec |
 | Consumption | 7.5 W maximum. | Tascam spec |
 | Battery life | About 11 hours on alkaline cells with the included mic capsules, 44.1 kHz, power save on; about 5.5 hours with phantom power on two inputs. Not measured at 192 kHz or with the bat screen open. | Tascam spec, Not confirmed (bat use) |
+| USB supply check | A USB-C port controller on I2C, probably a TI TUSB320 or similar, reports the current the USB host or charger advertises (500, 1,500 or 3,000 mA). The processor's USB PHY also looks for a charging port (BC1.2). Below 1.5 A with POWER SOURCE SELECT at AUTO, the X8 asks whether the adapter gives 1.5 A, and No turns on POWER SAVE MODE (44.1 and 48 kHz only, no phantom power). Phones usually advertise 500 or 900 mA. | Firmware |
+| Power path | POWER SOURCE SELECT writes FPGA register 3 bit 0x04: set to take power from USB (AUTO), clear to run from the cells (BATTERY). Not measured. | Firmware |
 | Phantom power switching | Per input (inputs 3 to 6). FPGA register 6 has one bit per input; register 3 turns on the shared supply, and registers 3 and 10 select 24 V or 48 V. The firmware mutes all inputs while the supply comes up. | Firmware |
 
 ## Physical

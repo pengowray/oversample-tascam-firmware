@@ -3486,8 +3486,8 @@ routine sends nothing to USB. The rest of the USB code works at any rate.
 **Power.** Set GENERAL SETTINGS > POWER/DISPLAY > POWER SOURCE SELECT to BATTERY. The X8 then runs from its AA cells and
 takes no power from the phone; the manual gives this setting for iOS devices. With AUTO, a phone that cannot supply 1.5 A
 brings up the power pop-up, and answering No turns on POWER SAVE MODE, which allows only 44.1 and 48 kHz and turns phantom
-power off. `FUN_80dc72dc` refuses a host rate above 48 kHz while byte +0x26A of the settings record is set. That byte is
-probably POWER SAVE MODE (medium), because the same byte also forces phantom power off (see `work/notes/phantom.md`).
+power off. `FUN_80dc72dc` refuses a host rate above 48 kHz while byte +0x26A of the settings record, POWER SAVE MODE, is
+set (high). How the X8 checks the USB supply is in [USB power and POWER SAVE MODE](#usb-power-and-power-save-mode-2026-11-11).
 
 ### What the stock firmware does
 
@@ -3630,6 +3630,90 @@ Changed in Oversample commit `b2bf6a1` (2026-11-11, not pushed). Before it, the 
   and the feedback endpoint 0x83 could be taken for audio. Both are fixed.
 - The stream read every sample as 16-bit. It now takes the bytes per sample from the descriptor and keeps the top 16 bits
   of 3- and 4-byte samples, since Oversample writes USB recordings at 16 bits.
+
+## USB power and POWER SAVE MODE (2026-11-11)
+
+How the X8 decides that a USB supply is too weak, what the pop-up then changes, and whether the patch could run the X8 from
+its cells instead of turning on POWER SAVE MODE. Read in V2.03 with the `work/ghidra-phantom` project. Nothing is built.
+
+**Result.** The X8 reads the phone's USB-C current advertisement from a USB-C port controller on I2C. Below 1.5 A, with
+POWER SOURCE SELECT at AUTO, it asks "Is the AC adapter 1.5A or more?". Answering No turns on POWER SAVE MODE. Most phones
+advertise USB's default current (500 or 900 mA), so a phone almost always brings up the question. POWER SOURCE SELECT =
+BATTERY avoids it: the X8 then takes no power from USB and makes no check. A patch could make AUTO do the same when the
+supply is weak, but it first needs the battery level, so that it never switches to empty or missing cells.
+
+### The settings
+
+In the settings record at 0x81E8C87C (`FUN_80d9ff40`, see `work/notes/phantom.md`):
+
+| Offset | Setting | Message that sets it | Confidence |
+|---|---|---|---|
+| +0x1D8 | BATTERY TYPE (index into a threshold table at `DAT_80d6e2b4`) | not traced | medium |
+| +0x1D9 | POWER SOURCE SELECT: 0 AUTO, 1 BATTERY | 0xF20, which also calls `FUN_80da9614` | high |
+| +0x26A | POWER SAVE MODE: 0 off, 1 on | 0xF63 | high |
+| +0x26B to +0x273 | The settings POWER SAVE MODE overrides, saved while it is on: backlight (+0x26), contrast (+0x21), brightness (+0x20), indicators (+0x250), phantom power for inputs 3 to 6 (+0x254 to +0x257) and +0x189 | 0xF63 | high |
+
+Turning POWER SAVE MODE on (0xF63 with 1) saves those settings, then sets the backlight to its fixed time, contrast 2,
+brightness 10 and indicators 1, and turns phantom power off. Turning it off puts them back. While it is on,
+`FUN_80dc72dc` refuses a USB host's rate above 48 kHz, and messages 0xF61 (brightness) and the remote's phantom command
+answer with error 0x1F.
+
+### The power path
+
+`FUN_80da9614(battery)` writes FPGA register 3 bit 0x04 through the FPGA driver table at 0x819212B4 (+0x20 writes
+register, mask and value; +0x2C reads register and mask). The bit is 1 when the argument is 0, and 0 when it is 1. Message
+0xF20 calls it with the new POWER SOURCE SELECT value, so the bit is the hardware switch between taking power from USB
+(AUTO) and running from the cells (BATTERY) (medium: the names fit, but nothing has been measured). `FUN_80da9582` reads
+FPGA register 2 bit 0 and is true when it is 0, probably "running from USB power" (low).
+
+The firmware's own messages "Battery Empty / POWER SOURCE SELECT / BATTERY → AUTO" and "Battery is overheated / Change to
+USB power supply" show that it switches between the two by itself in some cases. Those paths are not traced.
+
+### The supply check
+
+The button poll (task 9, `FUN_80dacd08`) checks the supply every 50 scans, when the system state is not 0, the system mode
+is 0, and some other conditions hold:
+
+1. If `FUN_80da9582` is true, it reads the supply current with `FUN_80df50d0`: two bytes from register 8 of I2C device 9
+   (the device's address is in a table filled at run time). If bits 7 and 6 of the second byte show something attached,
+   bits 5 and 4 of the first byte give the current: 01 is 1,500 mA, 11 is 3,000 mA, and 00 or 10 is 500 mA. This is the
+   register layout of TI's TUSB320 USB-C port controller (register 8: the current the other end advertises; register 9:
+   the attached state), so the chip is probably a TUSB320 or a part that copies it (medium).
+2. It also reads `FUN_80dc72ce`, a flag that the USB task sets when the processor's USB PHY detects a charging port
+   (BC1.2: `FUN_80dc72dc` sets USB1_CHRG_DETECT at 0x400D81B4 and waits up to 80 ms for CHRG_DETECTED in
+   USB1_CHRG_DETECT_STAT at 0x400D81D0). A phone acting as host is a standard port, so this flag stays 0.
+3. Three equal readings in a row, below 1,500 mA with no charging port, post input event type 11 (kind 8) with value 0,
+   once. When the supply is 1.5 A or more again, or `FUN_80da9582` turns false, it posts value 1.
+
+Task 1's message loop (`FUN_80d6c9f0`) handles kind 8: value 0 closes any open pop-up (`FUN_80dbd620`) and shows Qt's
+confirm dialog 4 (`FUN_80d9601c(4)`), the "Is the AC adapter 1.5A or more?" question. Value 1 posts UI event 0x26. The
+dialog's answer reaching message 0xF63 is not traced. Kind 8 was called "battery" in `work/notes/input.md`; it is this
+supply check.
+
+Also: the configuration descriptor declares the X8 self-powered with a maximum of 200 mA (bmAttributes 0xC0, bMaxPower
+0x64), whatever the power source setting.
+
+### A patch: AUTO runs from the cells when the supply is weak
+
+The patch's key hook sees every input event that reaches the app screens' handler, kind 8 included. It could swallow kind
+8 with value 0 (by setting the kind to 9, as for other swallowed events) and switch the X8 to its cells instead of asking:
+
+- **Without changing the setting:** call `FUN_80da9614(1)` to clear FPGA register 3 bit 0x04, and leave POWER SOURCE SELECT
+  at AUTO. When kind 8 comes with value 1 (a stronger supply), call `FUN_80da9614(0)` again. Nothing is saved, but stock
+  code that writes the bit (message 0xF20, the external power handler for kind 5, and `FUN_80de8d6a`, `FUN_80de9138`,
+  `FUN_80de8d98`, `FUN_80da3de0`) can undo it.
+- **Changing the setting:** post message 0xF20 with 1, as the stock code does in its kind 5 handler. That sets POWER SOURCE
+  SELECT to BATTERY, which is saved, so the user has to set AUTO again for a 1.5 A charger.
+
+Either way the patch has to check the cells first. Clearing the bit with no cells, or with flat ones, would cut the X8's
+power at once. The kind 5 handler compares a level byte (0x8196A3E0 + 0xD) with the threshold table at `DAT_80d6e2b4`
+indexed by BATTERY TYPE, which looks like that check, but which way round it works is not clear yet.
+
+Still to find before a build:
+
+- The battery level: where the button poll's battery reading goes, and its units.
+- How the dialog's Yes and No reach message 0xF63, so the patch can leave the stock dialog in place as a fall-back.
+- Whether FPGA register 3 bit 0x04 alone switches the power path, by reading register 2 bit 0 before and after on the unit.
 
 ## Firmware map (V2.03, in progress)
 
