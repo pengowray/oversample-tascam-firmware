@@ -54,6 +54,8 @@ mod state;
 mod stock;
 /// The DSP task, the patch stack and the bat app they run.
 mod task;
+/// 192 kHz stereo over USB: the rate list, INPUT 3 and 4 into the USB ring, and the 8-channel guard.
+mod usb;
 
 use guano_file::guano_hook;
 use keys::{key_hook, rec_key_hook, touch_hook};
@@ -62,6 +64,7 @@ use launcher::{
     icon_width_hook, power_off_save_hook, slot_hook, text_hook, tile_hook, title_y_hook,
 };
 use mix_file::{file_mask_hook, open_take_hook};
+use usb::{usb_alt_hook, usb_init_hook};
 
 type Handler = unsafe extern "C" fn(usize, usize, usize, usize) -> usize;
 
@@ -110,6 +113,10 @@ pub struct Header {
     file_mask_hook: Handler,
     /// Replaces the WAV header rewrite's call to the file size function, at the end of a take or a split.
     guano_hook: Handler,
+    /// Replaces the USB task's call to the device stack's class init.
+    usb_init_hook: Handler,
+    /// Replaces the device callback's call to interface 2's SET_INTERFACE handler.
+    usb_alt_hook: Handler,
     /// The handle that the logo screen's lower image item gets, and the y positions of its upper and
     /// lower items. tools/x8patch.py reads the lower item's height from the image.
     logo_lower: &'static &'static qt::QtImage,
@@ -124,7 +131,7 @@ pub struct Header {
 #[unsafe(link_section = ".header")]
 pub static X8_PATCH_HEADER: Header = Header {
     magic: *b"BATX",
-    version: 19,
+    version: 20,
     key_hook,
     rec_key_hook,
     touch_hook,
@@ -146,6 +153,8 @@ pub static X8_PATCH_HEADER: Header = Header {
     open_take_hook,
     file_mask_hook,
     guano_hook,
+    usb_init_hook,
+    usb_alt_hook,
     logo_lower: &logo::LOWER_HANDLE,
     logo_upper_y: logo_pixels::UPPER_Y,
     logo_lower_y: logo_pixels::LOWER_Y,

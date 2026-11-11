@@ -52,6 +52,8 @@ def flash(address):
 #   that is the address of a handle in the patch. The image it leads to is checked (see
 #   check_image) and its height is the header field's name with "_height" added.
 # immediates: a `movs r0, #value` (16 bits), whose value is replaced by a header field's.
+# halfwords: a 16-bit value in stock data, checked and replaced by a fixed value (not a header
+#   field). The data is used in every mode, update mode included.
 BUILDS = {
     (203, 217): {
         "words": [
@@ -119,6 +121,12 @@ BUILDS = {
             # FUN_80db216c's call to the file size function, straight after it has rewritten a WAV
             # file's header at the end of a take or a split. Its two earlier calls are left alone.
             ("WAV header rewritten", 0x80DB236A, 0x80DE77CE, "guano_hook"),
+            # The USB task's start-up FUN_80dc7064 calls the device stack's class init once, before
+            # the device starts (docs/HOMEBREW.md, "192 kHz stereo over USB").
+            ("USB class init", 0x80DC70A0, 0x80DFAE66, "usb_init_hook"),
+            # The device callback's SET_INTERFACE branch calls interface 2's handler (through the
+            # thunk to ITCM 0x152c8) with r2 = the alternate setting.
+            ("USB interface 2 alternate setting", 0x80DC6FD8, 0x80DC6E48, "usb_alt_hook"),
         ],
         "facts": [
             # The veneer FUN_80e06310 goes to ITCM 0x1e484, which returns 0x1e498,
@@ -155,6 +163,14 @@ BUILDS = {
             ("logo screen lower item y", 0x81259784, 254, "logo_lower_y"),
             ("logo screen lower item height", 0x81259754, 24, "logo_lower_height"),
         ],
+        "halfwords": [
+            # wMaxPacketSize of the UAC2 endpoints of the 2-channel alternate settings, in the
+            # descriptor bytes that FUN_80df471c copies from 0x813b69fc. The stock sizes hold 13
+            # frames, enough for 96 kHz; 25 frames are needed at 192 kHz.
+            ("USB interface 2 alt 2 packet size (2 x 3 bytes)", 0x813B6AB2, 78, 150),
+            ("USB interface 3 alt 1 packet size (2 x 3 bytes)", 0x813B6B17, 78, 150),
+            ("USB interface 3 alt 2 packet size (2 x 4 bytes)", 0x813B6B4C, 104, 200),
+        ],
     },
 }
 
@@ -163,12 +179,13 @@ HEADER_FIELDS = ["magic", "version", "key_hook", "rec_key_hook", "touch_hook", "
                  "line5_hook", "line6_hook", "label_hook", "title_y_hook", "delete_mode_hook", "delete_hook",
                  "badge2_hook", "badge3_hook", "icon2_hook", "icon3_hook", "icon_image2_hook", "icon_image3_hook",
                  "icon_height2_hook", "icon_height3_hook", "icon_width2_hook", "icon_width3_hook",
-                 "power_off_save_hook", "open_take_hook", "file_mask_hook", "guano_hook", "logo_lower",
+                 "power_off_save_hook", "open_take_hook", "file_mask_hook", "guano_hook", "usb_init_hook",
+                 "usb_alt_hook", "logo_lower",
                  "logo_upper_y", "logo_lower_y", "build"]
-HEADER_FORMAT = "<4s36I"
+HEADER_FORMAT = "<4s38I"
 # The packer writes the update file's build number here, for the CPU test to show.
 BUILD_OFFSET = struct.calcsize(HEADER_FORMAT) - 4
-HEADER_VERSION = 19
+HEADER_VERSION = 20
 
 B_W, BL = 0x9000, 0xD000   # bits 15, 14 and 12 of the second halfword
 
@@ -271,6 +288,12 @@ def apply(image, patch, fields, build):
             return f"{field} = {value} does not fit a movs"
         put_half(address, MOVS_R0 | value)
         print(f"{name}: movs r0, #{stock} -> #{value}")
+
+    for name, address, stock, value in build["halfwords"]:
+        if half(address) != stock:
+            return f"{name} at 0x{address:08x} holds {half(address)}, expected {stock}"
+        put_half(address, value)
+        print(f"{name}: {stock} -> {value}")
     return None
 
 

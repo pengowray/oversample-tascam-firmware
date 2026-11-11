@@ -272,3 +272,43 @@ pub const ATTR_HIDDEN: u8 = 0x02;
 pub const ATTR_SYSTEM: u8 = 0x04;
 pub const ATTR_VOLUME: u8 = 0x08;
 pub const ATTR_FOLDER: u8 = 0x10;
+
+// USB audio (docs/HOMEBREW.md, "192 kHz stereo over USB").
+/// `FUN_80dfae66(controller, config list, handle out)`: the USB device stack's class init, called
+/// once by the USB task's start-up `FUN_80dc7064` (Thumb address).
+pub const USB_CLASS_INIT: usize = 0x80df_ae67;
+/// The thunk to ITCM 0x152c8, interface 2's SET_INTERFACE handler `(class handle, 2, alternate
+/// setting)`. Alternate setting 0 makes it do nothing.
+pub const USB_SET_ALT_IF2: usize = 0x80dc_6e49;
+/// The class callback field of the class config list's three audio entries, each holding
+/// `USB_AUDIO_CALLBACK`. The device stack calls it for class requests and endpoint events.
+pub const USB_CALLBACK_WORDS: [*mut usize; 3] =
+    [0x8192_1290 as *mut usize, 0x8192_129c as *mut usize, 0x8192_12a8 as *mut usize];
+/// `FUN_00014ef0(handle, event, param, ?)`, the audio class callback (ITCM, Thumb address).
+pub const USB_AUDIO_CALLBACK: usize = 0x0001_4ef1;
+/// Event codes of `USB_AUDIO_CALLBACK`: 1 when a packet to the host has been sent, and the two
+/// that set the clock's rate. For a set, param + 4 points at the data, param + 8 is its length and
+/// the byte at param + 0xc is 1 for the setup stage and 0 once the data has arrived.
+pub const USB_EVENT_SENT: usize = 1;
+pub const USB_EVENT_SET_RATE: [usize; 2] = [0x501, 0x10c];
+/// The third sub-range of the clock's GET RANGE answer, 12 bytes in the DTCM data.
+pub const USB_TOP_RANGE: *mut u8 = 0x2000_022e as *mut u8;
+/// The word that holds the USB audio state's address, 0 until the USB task's start-up sets it.
+pub const USB_STATE: *const usize = 0x2000_0240 as *const usize;
+/// In the USB audio state: the host's rate (u32), interface 2's bytes per sample and channels, and
+/// the audio routine's write offset in the ring, in bytes (u32).
+pub const USB_RATE: usize = 0x34;
+pub const USB_BYTES: usize = 0x46;
+pub const USB_CHANNELS: usize = 0x47;
+pub const USB_WRITE_OFFSET: usize = 0x5c;
+/// The ring of audio for the host, which the audio class callback copies packets from.
+pub const USB_RING: *mut u8 = 0x2000_0254 as *mut u8;
+/// `FUN_00014aa2(frames)`: counts the samples the audio routine has produced against the USB
+/// microframe counter, for the rate feedback. The stock 44.1 to 96 kHz routine calls it every block,
+/// and the audio class callback sends silence until its count is steady (ITCM, Thumb address).
+pub const USB_COUNT_FRAMES: usize = 0x0001_4aa3;
+/// USB task state 0x81918b48 + 0x2f4: the bus speed, 2 for high speed.
+pub const USB_SPEED: *const u8 = 0x8191_8e3c as *const u8;
+/// USB task state 0x81918b48 + 0x2f7 + interface: the alternate setting the host last chose,
+/// stored by the device callback before it calls the interface's handler.
+pub const USB_ALT_IF2: *const u8 = 0x8191_8e41 as *const u8;

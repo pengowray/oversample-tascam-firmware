@@ -225,10 +225,14 @@ unsafe fn hook_body<const ITCM: bool>(a: usize, b: usize, c: usize, d: usize) ->
         STOCK_CYCLES_PER_S.store(STOCK_CYCLES.swap(0, Relaxed), Relaxed);
         HOOK_CYCLES_PER_S.store(HOOK_CYCLES.swap(0, Relaxed), Relaxed);
     }
-    if !BAT_ACTIVE.load(Acquire) || rate_class() != 2 {
+    if rate_class() != 2 {
         return result;
     }
     let input = (stock::INPUT_BLOCKS + index * 0x180) as *const i32;
+    super::usb::feed(input);
+    if !BAT_ACTIVE.load(Acquire) {
+        return result;
+    }
     let output = (stock::OUTPUT_BLOCKS + (index + 2) % 3 * 0x40) as *mut i32;
 
     if DEBUG_SHOWN.load(Relaxed) {

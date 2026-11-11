@@ -127,9 +127,9 @@ patched update file.
 | Fixed addresses (`spare.rs`) | SDRAM 0x865E2000 and 0x87EB0000 onwards | No | Output ring (cached), the display buffer, TE storage, task 1's patch stack and BAT PLAYBACK's read ring (uncached). |
 
 `crates/x8-patch/x8patch.ld` is the linker script; its comments give the reasons for each range. At
-B261 the patched update file is 25,852,092 bytes, 358,556 bytes longer than the official one.
-Free space at B261: ITCM 80.5 of 89.2 KB used, DTCM 149.3 of 152.8 KB used, and the patch region
-ends at 0x818FD7B0 of 0x81900000, 10.3 KB short of the end. DTCM is nearly full. Formatting a
+B262 the patched update file is 25,853,508 bytes, 359,972 bytes longer than the official one.
+Free space at B262: ITCM 80.5 of 89.2 KB used, DTCM 149.3 of 152.8 KB used, and the patch region
+ends at 0x818FDD38 of 0x81900000, 8.7 KB short of the end. DTCM is nearly full. Formatting a
 float with `{:.1}` and the like pulls about 19 KB of the core library's float printing into the
 patch region; the app writes numbers with `screen::Fixed` instead.
 
@@ -184,14 +184,21 @@ value it expects, and it refuses the build if any site differs.
 | Function entry | The first 4 bytes of a stock function become a `b.w` to a patch function that does the whole job. | The bridge's USER SETTINGS slot getter (0x80D6A238). The patch's `slot_hook` reports slots 2 and 3 as holding a MANUAL preset. |
 | Fact | A stock word the patch's constants depend on is checked and left alone. | The layout word for 8-bit alpha images, which the bat tiles' icons use. |
 
-At B256 there are 33 hook sites: 2 pointer words, 3 tail calls, 26 calls and 2 function entries,
-plus 1 fact that is only checked.
-The patch also changes two things at run time, from inside its hooks:
+At B262 there are 35 hook sites: 2 pointer words, 3 tail calls, 28 calls and 2 function entries,
+plus 1 fact that is only checked. The logo screen (from B259) also changes a handle literal and 3
+`movs` immediates, and the USB audio (from B262) 3 halfwords of descriptor data, the packet sizes
+of the 2-channel alternate settings.
+The patch also changes these at run time, from inside its hooks:
 
 - The audio callback pointer in the eDMA channel 9 handle (RAM, 0x2001024C), replaced with
   `audio_hook` once the stock audio setup has filled it in.
 - The literal that Qt's present function uses as the display controller's register address
   (0x80E2B71C), pointed at a dummy block in RAM while a bat screen is open.
+- From B262, when the USB task starts: the class callback word of the three USB audio entries in
+  the class config list (0x81921290, 0x8192129C, 0x819212A8), replaced with the patch's wrapper,
+  and the third sub-range of the USB clock's rate list (DTCM 0x2000022E), widened to 96 and
+  192 kHz. Both or neither: each is checked for its stock value first. See
+  [192 kHz stereo over USB](HOMEBREW.md#192-khz-stereo-over-usb-2026-11-11).
 
 ### Running code: tasks, stacks and timing
 
@@ -308,7 +315,7 @@ The rules come from [Keeping the bricking risk low](HOMEBREW.md#keeping-the-bric
 |---|---|
 | Leave the boot header, bootloader and start-up and update-mode code unchanged | Enforced by `x8fw.py pack --base`, which refuses changes to flash 0x0 to 0x1FFFF and to the known start-up and update-mode functions. The list is incomplete: it does not cover the SD card and file system code that update mode also uses. |
 | Never reach the settings sectors | Enforced by `pack`, which refuses an image long enough to reach sector 0x1FA. |
-| Do nothing in update mode | Every hook reads the system mode byte first and goes straight to the stock code unless the mode is 0 or 1. The two function-entry hooks give the stock result instead. The logo screen's lower image (from B259) is the exception: it is data, the same in every mode. The power-off hook does not read the mode; it changes nothing unless a bat tile opened the current app, which cannot happen in update mode. |
+| Do nothing in update mode | Every hook reads the system mode byte first and goes straight to the stock code unless the mode is 0 or 1. The two function-entry hooks give the stock result instead. The logo screen's lower image (from B259) and the USB packet sizes (from B262) are the exceptions: they are data, the same in every mode. The power-off hook does not read the mode; it changes nothing unless a bat tile opened the current app, which cannot happen in update mode. |
 | Never write to flash from patch code | Followed. The power-off hook calls the stock settings save, which writes flash the same way as before. |
 | Check every hook site | `x8patch.py` checks the stock value at every site, that each target is a Thumb address inside the patch, that the logo screen's new image and its tiles are inside the patch or the stock pixels, that the base file is an unmodified official file, that the header version matches, and that every section is inside its region. |
 | Nothing in ITCM before `load_itcm` | Enforced by `x8patch.py` (see [Fast memory](#fast-memory-itcm-and-dtcm)). |
