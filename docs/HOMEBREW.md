@@ -2429,7 +2429,8 @@ seemed to run with no audio; and a way to save the batteries with the screen was
    light comes back, the mode changes, and the waterfall is smooth again. Wait for the dim again, then turn the wheel: the
    light comes back and the tuning changes.
 5. While recording with the light dimmed: the recording time still counts every second, and with Debug info on, `draw`
-   is lower than before the dim.
+   is lower than before the dim. Do `lost`, `drop` and `skip%` stay at 0? A redraw at this rate no longer waits for
+   waiting input to clear.
 6. With BACKLIGHT at ALWAYS: the waterfall never slows.
 7. **On a phone.** With a phone on USB and the X8 on its cells (`src 0S`, Step 40): what does the strip show for
    `cells only`, and does the screen dim?
