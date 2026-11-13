@@ -14,14 +14,14 @@ use super::audio::{OUTPUT_GAIN, use_itcm_hook};
 use super::inputs::{PLAYBACK_LEFT, PLAYBACK_RIGHT, on_tracks_muted, selected_inputs, tracks_on};
 use super::itcm::load_itcm;
 use super::state::{
-    APP, APP_READY, AUDIO_INSTALLED, AUDIO_SLOT_UNEXPECTED, AUDIO_STATE, BACKLOG_DROPPED, BAT_ACTIVE, BLANK, BLOCKS,
-    BUFFERS, CALLS_PER_S, COPY_PERMILLE, CYCLES_PER_S, DEBUG_SHOWN, DRAW_PERMILLE, DSP_PERMILLE, DUMMY_LCDIF, FRAME,
-    GUANO_ON, HEAR_MIX, HEARD_WORDS, HOOK_CYCLES_PER_S, HOOK_IN_ITCM, IN_DROPPED, IN_READ, IN_WAITING_MOST, IN_WRITE,
-    ITCM_OK, LAST_EVENT, LAST_INPUT, LAUNCH_AT, LAUNCH_FROM, LAUNCHING, LOAD_WINDOW_START, MIX_FILE_OFF, MUTE_SEEN,
-    MUTE_SEEN_AT, NO_APP, NO_INPUT_WORDS, OUT_LAST, OUT_READ, OUT_WRITE, PENDING, PLAYBACK, POPUP_HIDDEN, PRIMED,
-    SAVED_BUFFER, SAVED_LITERAL, SCREEN_APP, SESSION, SOURCE_PEAK, STOCK_CYCLES_PER_S, TASK, TEST_DSP_MAX,
-    TEST_SETTINGS, TEST_START_BACKLOG, TEST_START_BLOCKS, TEST_START_DRY, TEST_START_LOST, TEST_START_SKIPPED,
-    TOUCH_WAKING, TOUCHED_SINCE_RENDER, UNDERRUNS, WORD_PEAKS, WORK_ENTER,
+    APP, APP_READY, AUDIO_INSTALLED, AUDIO_SLOT_UNEXPECTED, AUDIO_STATE, BACKLOG_DROPPED, BAT_ACTIVE, BLOCKS, BUFFERS,
+    CALLS_PER_S, COPY_PERMILLE, CYCLES_PER_S, DEBUG_SHOWN, DRAW_PERMILLE, DSP_PERMILLE, DUMMY_LCDIF, FRAME, GUANO_ON,
+    HEAR_MIX, HEARD_WORDS, HOOK_CYCLES_PER_S, HOOK_IN_ITCM, IN_DROPPED, IN_READ, IN_WAITING_MOST, IN_WRITE, ITCM_OK,
+    LAST_EVENT, LAUNCH_AT, LAUNCH_FROM, LAUNCHING, LOAD_WINDOW_START, MIX_FILE_OFF, MUTE_SEEN, MUTE_SEEN_AT, NO_APP,
+    NO_INPUT_WORDS, OUT_LAST, OUT_READ, OUT_WRITE, PENDING, PLAYBACK, POPUP_HIDDEN, PRIMED, SAVED_BUFFER,
+    SAVED_LITERAL, SCREEN_APP, SESSION, SOURCE_PEAK, STOCK_CYCLES_PER_S, TASK, TEST_DSP_MAX, TEST_SETTINGS,
+    TEST_START_BACKLOG, TEST_START_BLOCKS, TEST_START_DRY, TEST_START_LOST, TEST_START_SKIPPED, UNDERRUNS, WORD_PEAKS,
+    WORK_ENTER,
 };
 use super::task::{app, start_task, task_running};
 use super::{app_byte, blocks_per_second, rate_class, read_byte, spare, stock, system_state};
@@ -128,10 +128,6 @@ pub(super) extern "C" fn enter_work() {
         (*DUMMY_LCDIF.0.get()).write([0; 32]);
         ptr::write_volatile(stock::PRESENT_LCDIF_LITERAL, DUMMY_LCDIF.0.get() as usize);
     }
-    BLANK.store(false, Relaxed);
-    LAST_INPUT.store(BLOCKS.load(Relaxed), Relaxed);
-    // A touch that woke the screen before it last closed must not swallow the next one.
-    TOUCH_WAKING.store(false, Relaxed);
     if task_running() {
         // The DSP task may still be finishing a chunk from the last opening,
         // so it draws the first frame; until then the display is blank.
@@ -150,7 +146,6 @@ pub(super) extern "C" fn enter_work() {
 /// the card reader to close its files first, so MANUAL has the card to itself.
 pub(super) fn leave_bat_screen() {
     BAT_ACTIVE.store(false, Release);
-    BLANK.store(false, Relaxed);
     super::reader::wait_until_closed();
     // ITCM is checked only while the bat screen is up.
     use_itcm_hook(false);
@@ -188,28 +183,6 @@ fn blank_display() {
         // SAFETY: the display buffer (see `spare`).
         unsafe { ptr::write_volatile((spare::DISPLAY as *mut u32).add(i), 0) };
     }
-}
-
-/// Go blank once the stock BACKLIGHT timer has dimmed the backlight and no input has come for a
-/// while (`x8_patch::backlight::blank`), and show the screen again after a touch, button or wheel
-/// turn. Blank, the screen is black and is not drawn, which saves the drawing's share of the
-/// processor; the backlight stays at the stock timer's lowest level. Returns whether the screen
-/// is blank. The context running the app.
-pub(super) fn follow_backlight(app: &BatApp<'static>) -> bool {
-    let idle_s = BLOCKS.load(Relaxed).wrapping_sub(LAST_INPUT.load(Relaxed)) / blocks_per_second();
-    // Recording or paused (see `update_status`).
-    let take_open = matches!(read_byte(stock::TRANSPORT), 3 | 4 | 6);
-    let dimmed = read_byte(stock::BACKLIGHT_DIMMED) != 0;
-    let blank = x8_patch::backlight::blank(dimmed, idle_s, take_open, app.cpu_test_running());
-    if blank != BLANK.swap(blank, Relaxed) {
-        if blank {
-            blank_display();
-        } else {
-            // Draw the woken screen at the full rate, even while the app is idle.
-            TOUCHED_SINCE_RENDER.store(true, Relaxed);
-        }
-    }
-    blank
 }
 
 /// Where automatic headphone level aims, as the output after `OUTPUT_GAIN`:

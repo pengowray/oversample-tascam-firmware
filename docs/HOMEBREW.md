@@ -2364,14 +2364,18 @@ B241 or an earlier build. All the checks in `tools/x8patch.py` pass on this file
 1. **Start and stop.** With Phone remote on and the phone page reloaded, do `Start recording` and `Stop recording` work as before?
 2. **Old phone page.** If a phone still has the old page cached, its commands should do nothing at all. Reload the page.
 
-## Step 41 test file: a blank screen on batteries, and no phantom power question in BAT PLAYBACK (built 2026-11-12, not yet installed)
+## Step 41 test file: fewer redraws while the backlight is dimmed, and no phantom power question in BAT PLAYBACK (built 2026-11-13, not yet installed)
 
-`work/patch43/#PortaX8_0268.203` (B268, SHA-256 `6588bdd7…b19b4a8716`). Includes Steps 39 and 40 (B263 and B266), whose
+`work/patch44/#PortaX8_0269.203` (B269, SHA-256 `116252c1…c82439ddb`). Includes Steps 39 and 40 (B263 and B266), whose
 checks still apply. Install this file in place of any earlier build. All the checks in `tools/x8patch.py` pass, and two
-builds give the same file. One new hook site (header version 21). B267 was built the same day and never installed: its
-screen went black as soon as the stock timer dimmed it, and the owner finds the dimmed screen readable. The owner's report on B266: quitting BAT PLAYBACK and opening BAT DETECTOR opened BAT
-PLAYBACK; BAT PLAYBACK still asked about phantom power; the waterfall seemed to run with no audio; and a way to save the
-batteries with the screen was wanted, since POWER SAVE MODE blocks 192 kHz.
+builds give the same file. One new hook site (header version 21). B267 and B268 were built on 2026-11-12 and never
+installed. B267's screen went black as soon as the stock timer dimmed it, and the owner finds the dimmed screen readable.
+B268's went black 90 s after the last input (3 minutes in a take), with a tap that only woke it. The black screen was
+dropped on 2026-11-13: the display is an LCD, so black saves nothing at the panel, and the drawing it saved is an
+estimated 1 to 3% of battery life, most of which the slower redraw below also saves. The owner's report on B266: quitting
+BAT PLAYBACK and opening BAT DETECTOR opened BAT PLAYBACK; BAT PLAYBACK still asked about phantom power; the waterfall
+seemed to run with no audio; and a way to save the batteries with the screen was wanted, since POWER SAVE MODE blocks
+192 kHz.
 
 **What changes.**
 
@@ -2382,24 +2386,24 @@ batteries with the screen was wanted, since POWER SAVE MODE blocks 192 kHz.
   bat screen), the app no longer analyses the silence: the waterfall stands still, the meters fall, and the screen is
   redrawn twice a second, or at once after a touch or button. When the mix comes back, the columns missed show as no
   data. Time expansion, the CPU test, a phone remote beep and a notice on screen keep the app working as before.
-- **A blank screen on batteries.** GENERAL SETTINGS > BACKLIGHT (OFF, 5, 10, 15, 30 s or ALWAYS) already dims the
-  backlight to its lowest level after that time with no touch, button or wheel turn, behind the bat screen too. The
-  dimmed screen can still be read, so the bat screen keeps drawing. Once the backlight is dimmed and 90 s have passed
-  with no touch, button or wheel turn (3 minutes while recording or paused), the screen goes black and stops drawing,
-  which saves the processor time shown as `draw` on the bat screen's debug lines. The patch never writes the backlight
-  itself.
-  - A tap on the black screen only wakes it: the touch is kept from the app until the finger lifts. A tap on the
-    dimmed screen, before it goes black, works as usual.
-  - Buttons wake it and act, as in the stock firmware: REC records, MARK marks.
-  - A wheel turn wakes it and tunes. The patch now restarts the stock BACKLIGHT and AUTO POWER SAVE timers for the
-    wheel turns it takes; before, a turn on the bat screen restarted neither.
-  - BACKLIGHT at OFF keeps the light dim all the time, so the screen goes black after the 90 s. At ALWAYS, and during
-    the CPU test, it never goes black.
+- **Fewer redraws while the backlight is dimmed.** GENERAL SETTINGS > BACKLIGHT (OFF, 5, 10, 15, 30 s or ALWAYS) already
+  dims the backlight to its lowest level after that time with no touch, button or wheel turn, behind the bat screen too.
+  The dimmed screen can still be read, so the bat screen stays on. While the light is dimmed it is redrawn twice a second
+  in place of 10 times (5 while recording), which saves most of the processor time shown as `draw` on the bat screen's
+  debug lines. The patch never writes the backlight and never blanks the screen.
+  - Any touch, button or wheel turn brings the light and the full redraw rate back, and acts as usual. Nothing is kept
+    from the app.
+  - The patch now restarts the stock BACKLIGHT and AUTO POWER SAVE timers for the wheel turns it takes; before, a turn
+    on the bat screen restarted neither.
+  - BACKLIGHT at OFF keeps the light dim all the time, so the screen is redrawn twice a second except just after a
+    touch, button or wheel turn. At ALWAYS, and during the CPU test, the redraw rate stays as it was.
   - The stock timer runs only with no external power: with a charger, a computer or a phone on USB, it never dims, so
-    the screen never goes black.
+    the redraw rate stays as it was.
   - AUTO POWER SAVE is unchanged (the owner's choice): stopped with no input, the X8 turns off after 30 minutes, also
     while listening with REC PAUSE off and in BAT PLAYBACK. Record standby is never turned off.
   - How the stock timer works, and how the patch could turn the light off itself, is in `work/notes/backlight.md`.
+  - Not measured: how much of the battery the backlight and the drawing take. A USB power meter in line with a 1.5 A
+    supply, comparing BRIGHTNESS LOW with HIGH, would give the backlight's share.
 - **No phantom power question in BAT PLAYBACK.** Opening MANUAL marks its stored inputs with phantom power as pending,
   writes 0 to MANUAL's stored phantom power (`FUN_80dc565c`, through the call at 0x80DC15EA in the app change, system
   message 0xD04 in `FUN_80dbe324`), and then asks. Only YES writes the stored setting back, so in the stock firmware NO
@@ -2411,7 +2415,7 @@ batteries with the screen was wanted, since POWER SAVE MODE blocks 192 kHz.
   dimmed flag, the backlight's PWM value (1 dimmed; 5, 35 or 55 for BRIGHTNESS LOW, MID or HIGH), and whether the timer
   sees the X8 on its cells only (it dims only when this is 1).
 
-**Memory.** The patch region has 3.0 KB left (`.noinit` ends at 0x818ff3e8).
+**Memory.** The patch region has 4.4 KB left (`.noinit` ends at 0x818fee90).
 
 **What to check.** Turn on Debug info for the strip.
 
@@ -2420,14 +2424,15 @@ batteries with the screen was wanted, since POWER SAVE MODE blocks 192 kHz.
 2. Hold HOME and open MANUAL: the phantom power question, and YES turns phantom power on.
 3. **Nothing to hear.** In BAT DETECTOR, stopped with REC PAUSE on: "Press REC once to listen", and the waterfall
    still. Press REC once: the waterfall moves within half a second.
-4. **Blank screen.** On batteries only, set BACKLIGHT to 10 s. Open BAT DETECTOR and press REC once. Touch nothing: at
-   10 s the light dims and the waterfall keeps moving; at 90 s the screen goes black. Tap a mode button's place: the
-   screen lights, and the mode stays the same. Wait 90 s again, then turn the wheel: it lights and the tuning changes.
-   Wait again, then press REC: it lights and recording starts.
-5. While recording, touch nothing: black after 3 minutes, not 90 s.
-6. With BACKLIGHT at ALWAYS: never black.
+4. **Dimmed screen.** On batteries only, set BACKLIGHT to 10 s. Open BAT DETECTOR and press REC once. Touch nothing: at
+   10 s the light dims, and the waterfall moves in steps twice a second. Is the sound unchanged? Tap a mode button: the
+   light comes back, the mode changes, and the waterfall is smooth again. Wait for the dim again, then turn the wheel: the
+   light comes back and the tuning changes.
+5. While recording with the light dimmed: the recording time still counts every second, and with Debug info on, `draw`
+   is lower than before the dim.
+6. With BACKLIGHT at ALWAYS: the waterfall never slows.
 7. **On a phone.** With a phone on USB and the X8 on its cells (`src 0S`, Step 40): what does the strip show for
-   `cells only`, and does the screen dim and go black?
+   `cells only`, and does the screen dim?
 
 ## Step 40 test file: the cells take over from a weak USB supply (built 2026-11-11, not yet installed)
 

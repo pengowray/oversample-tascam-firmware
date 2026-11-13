@@ -7,9 +7,9 @@ use super::audio::install_audio_hook;
 use super::screen::{draw_status_strip, enter_work, follow_app, leave_bat_screen, request_enter};
 use super::state::{
     ACTION_HOME, ACTION_MARK, ACTION_PLAY, ACTION_WHEEL, ACTIONS, ACTIONS_READ, ACTIONS_WRITE, AUDIO_INSTALLED,
-    AUDIO_NOT_TRIED, AUDIO_STATE, BAT_ACTIVE, BLANK, BLOCKS, CALLS, CALLS_AT_SECOND, CALLS_PER_S, DRAGGING, LAST_EVENT,
-    LAST_INPUT, LAST_SECOND, PENDING, PLAYBACK, QT_PRESSED, SCREEN_APP, TOUCH_DOWN, TOUCH_DOWN_AT, TOUCH_HELD,
-    TOUCH_READ, TOUCH_WAKING, TOUCH_WRITE, TOUCHED_SINCE_RENDER, TOUCHES, WORK_ENTER,
+    AUDIO_NOT_TRIED, AUDIO_STATE, BAT_ACTIVE, BLOCKS, CALLS, CALLS_AT_SECOND, CALLS_PER_S, DRAGGING, LAST_EVENT,
+    LAST_SECOND, PENDING, PLAYBACK, QT_PRESSED, SCREEN_APP, TOUCH_DOWN, TOUCH_DOWN_AT, TOUCH_HELD, TOUCH_READ,
+    TOUCH_WRITE, TOUCHED_SINCE_RENDER, TOUCHES, WORK_ENTER,
 };
 use super::task::{on_patch_stack, task_running, tick_work};
 use super::{Handler, app_byte, blocks_per_second, read_byte, stock, system_mode};
@@ -56,18 +56,6 @@ pub(super) unsafe extern "C" fn touch_hook(x: usize, y: usize, pressed: usize, d
     if pressed == 0 && QT_PRESSED.load(Relaxed) {
         QT_PRESSED.store(false, Relaxed);
         unsafe { qt(x, y, 0, d) };
-    }
-    // A touch on the blank screen only wakes it (the stock code has just turned the backlight up):
-    // it is kept from the app until the finger lifts, so it cannot tap a control unseen.
-    if pressed != 0 && BLANK.load(Relaxed) && !TOUCH_WAKING.load(Relaxed) {
-        TOUCH_WAKING.store(true, Relaxed);
-    }
-    LAST_INPUT.store(BLOCKS.load(Relaxed), Relaxed);
-    if TOUCH_WAKING.load(Relaxed) {
-        if pressed == 0 {
-            TOUCH_WAKING.store(false, Relaxed);
-        }
-        return 0;
     }
     let write = TOUCH_WRITE.load(Relaxed);
     if write.wrapping_sub(TOUCH_READ.load(Acquire)) < TOUCHES.len() as u32 {
@@ -163,9 +151,6 @@ unsafe fn handle_message(msg: usize, via: Via) {
         return;
     }
     LAST_EVENT.store((kind as u32) << 16 | (value as u32 & 0xffff), Relaxed);
-    if matches!(kind, stock::KIND_BUTTON | stock::KIND_WHEEL) {
-        LAST_INPUT.store(BLOCKS.load(Relaxed), Relaxed);
-    }
     super::power::on_event(kind_ptr, kind, value);
     if AUDIO_STATE.load(Relaxed) != AUDIO_INSTALLED {
         return;
