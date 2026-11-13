@@ -187,6 +187,8 @@ pub(super) static QT_PRESSED: AtomicBool = AtomicBool::new(false);
 /// The context running the app: a touch, button or wheel turn has been applied since the last
 /// redraw, so the next one is not slowed down while the app is idle.
 pub(super) static TOUCHED_SINCE_RENDER: AtomicBool = AtomicBool::new(false);
+/// The recorder's transport byte at the last redraw that was due (`task::input_since_redraw`).
+pub(super) static TRANSPORT_AT_REDRAW: AtomicU32 = AtomicU32::new(0);
 /// The context running the app: a finger is down, and it went down where a
 /// drag tunes.
 pub(super) static TOUCH_DOWN: AtomicBool = AtomicBool::new(false);

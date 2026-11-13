@@ -1,7 +1,7 @@
 use core::sync::atomic::{Ordering::Acquire, Ordering::Relaxed, Ordering::Release};
 
 use bat_app::BatApp;
-use x8_patch::backlight::redraws_per_second;
+use x8_patch::redraw::{draws, redraws_per_second};
 
 use super::audio::{ANALYSIS_OFF_ABOVE, process_input, use_itcm_hook};
 use super::clock::run_clock;
@@ -9,12 +9,12 @@ use super::itcm::itcm_still_ok;
 use super::keys::{apply_actions, apply_touches};
 use super::playback::{play, start_session};
 use super::remote::run_remote;
-use super::screen::{draw_frame, hide_for_popup, render, show_frame, update_mix_silence};
+use super::screen::{draw_frame, hide_for_popup, render, show_frame, update_mix_silence, update_status};
 use super::state::{
     ACTIONS_READ, ACTIONS_WRITE, APP, BACKLOG_DROPPED, BAT_ACTIVE, BLOCKS, COPY_BLOCKS, COPY_PERMILLE, DRAW_BLOCKS,
     DRAW_PERMILLE, DSP_BLOCKS, DSP_PERMILLE, DSP_STACK, DSP_STACK_BYTES, IN_READ, IN_WRITE, LAST_RENDER, LOAD_SECOND,
     LOAD_WINDOW_START, OUT_READ, OUT_WRITE, PLAYBACK, SESSION, SESSION_SEEN, TASK, TOUCH_DOWN, TOUCH_READ, TOUCH_WRITE,
-    TOUCHED_SINCE_RENDER,
+    TOUCHED_SINCE_RENDER, TRANSPORT_AT_REDRAW,
 };
 use super::{blocks_per_second, read_byte, spare, stock, system_state};
 
@@ -135,6 +135,15 @@ fn drop_backlog(app: &mut BatApp<'static>) {
         BACKLOG_DROPPED.store(BACKLOG_DROPPED.load(Relaxed).wrapping_add(skip), Relaxed);
         app.input_lost(skip);
     }
+}
+
+/// Whether a touch, button or wheel turn has reached the app since the last redraw, or the
+/// recorder has started, paused or stopped since then (REC and a take's end reach the recorder,
+/// not the app). Clears both, so call it once for each redraw that is due.
+fn input_since_redraw() -> bool {
+    let transport = read_byte(stock::TRANSPORT) as u32;
+    let recorder_changed = TRANSPORT_AT_REDRAW.swap(transport, Relaxed) != transport;
+    TOUCHED_SINCE_RENDER.swap(false, Relaxed) || recorder_changed
 }
 
 /// Whether to redraw now, `now` being the block count. Sound comes first: while
@@ -278,22 +287,26 @@ extern "C" fn dsp_task(_: isize) {
         DSP_BLOCKS.store(DSP_BLOCKS.load(Relaxed).wrapping_add(processed.wrapping_sub(start)), Relaxed);
         if render_due(processed, app) {
             LAST_RENDER.store(processed, Relaxed);
-            TOUCHED_SINCE_RENDER.store(false, Relaxed);
-            draw_frame();
-            let drawn = BLOCKS.load(Relaxed);
-            DRAW_BLOCKS.store(DRAW_BLOCKS.load(Relaxed).wrapping_add(drawn.wrapping_sub(processed)), Relaxed);
-            // Catch up between the drawing and the copy to the display, so input
-            // does not wait for the whole frame. On B231 the two took about 60%
-            // and 40% of a frame's time: the input ring held 1,900 frames when
-            // the debug lines were drawn, just before the copy, and would hold
-            // 3,300 by the end.
-            feed(app, u32::MAX, CATCH_UP_BLOCKS);
-            let caught_up = BLOCKS.load(Relaxed);
-            DSP_BLOCKS.store(DSP_BLOCKS.load(Relaxed).wrapping_add(caught_up.wrapping_sub(drawn)), Relaxed);
-            show_frame();
-            let copy = BLOCKS.load(Relaxed).wrapping_sub(caught_up);
-            DRAW_BLOCKS.store(DRAW_BLOCKS.load(Relaxed).wrapping_add(copy), Relaxed);
-            COPY_BLOCKS.store(COPY_BLOCKS.load(Relaxed).wrapping_add(copy), Relaxed);
+            if draws(app.draw_on_input(), input_since_redraw()) {
+                draw_frame();
+                let drawn = BLOCKS.load(Relaxed);
+                DRAW_BLOCKS.store(DRAW_BLOCKS.load(Relaxed).wrapping_add(drawn.wrapping_sub(processed)), Relaxed);
+                // Catch up between the drawing and the copy to the display, so input
+                // does not wait for the whole frame. On B231 the two took about 60%
+                // and 40% of a frame's time: the input ring held 1,900 frames when
+                // the debug lines were drawn, just before the copy, and would hold
+                // 3,300 by the end.
+                feed(app, u32::MAX, CATCH_UP_BLOCKS);
+                let caught_up = BLOCKS.load(Relaxed);
+                DSP_BLOCKS.store(DSP_BLOCKS.load(Relaxed).wrapping_add(caught_up.wrapping_sub(drawn)), Relaxed);
+                show_frame();
+                let copy = BLOCKS.load(Relaxed).wrapping_sub(caught_up);
+                DRAW_BLOCKS.store(DRAW_BLOCKS.load(Relaxed).wrapping_add(copy), Relaxed);
+                COPY_BLOCKS.store(COPY_BLOCKS.load(Relaxed).wrapping_add(copy), Relaxed);
+            } else {
+                // The recorder's state still reaches the app, so REC and a take's end act as usual.
+                update_status(app);
+            }
         }
         let now = BLOCKS.load(Relaxed);
         let second = now.wrapping_sub(LOAD_SECOND.load(Relaxed));
@@ -332,7 +345,10 @@ pub(super) extern "C" fn tick_work() {
     let now = BLOCKS.load(Relaxed);
     if render_due(now, app) {
         LAST_RENDER.store(now, Relaxed);
-        TOUCHED_SINCE_RENDER.store(false, Relaxed);
-        render();
+        if draws(app.draw_on_input(), input_since_redraw()) {
+            render();
+        } else {
+            update_status(app);
+        }
     }
 }

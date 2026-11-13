@@ -251,6 +251,8 @@ pub const fn phone_time(remote_shown: bool) -> Rectangle {
 /// Tests page: the debug figures' switch, then the CPU test's button, with its help inside.
 pub const TESTS_DEBUG: Rectangle = panel(PAGE_TOP, 48);
 pub const TESTS_CPU_TEST: Rectangle = panel(PAGE_TOP + 56, 62);
+/// Last on the page: used only to measure what the drawing costs.
+pub const TESTS_DRAW: Rectangle = panel(PAGE_TOP + 126, 48);
 
 /// Panel of stepped setting `i`.
 pub fn setting_row(i: usize) -> Rectangle {
@@ -278,6 +280,7 @@ pub fn control_row(setting: Setting) -> Rectangle {
         Setting::MuteWhileRecording => panel_switch_row(RECORD_MUTE),
         Setting::CellsOnWeakUsb => panel_switch_row(RECORD_POWER),
         Setting::DebugInfo => panel_switch_row(TESTS_DEBUG),
+        Setting::DrawOnInput => panel_switch_row(TESTS_DRAW),
         Setting::Mark(kind) => {
             let j = Setting::MARKS.iter().position(|&k| k == kind).unwrap_or(0) as i32;
             Rectangle::new(
@@ -327,6 +330,7 @@ pub fn switch(setting: Setting) -> Rectangle {
         Setting::MuteWhileRecording => panel_switch(RECORD_MUTE),
         Setting::CellsOnWeakUsb => panel_switch(RECORD_POWER),
         Setting::DebugInfo => panel_switch(TESTS_DEBUG),
+        Setting::DrawOnInput => panel_switch(TESTS_DRAW),
         _ => {
             let r = control_row(setting);
             let y = r.top_left.y + (r.size.height as i32 - SWITCH_H as i32) / 2;

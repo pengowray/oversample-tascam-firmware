@@ -8,7 +8,7 @@ use embedded_graphics::primitives::{PrimitiveStyle, Rectangle};
 use super::{BODY, BODY_BOLD, Fb, Fixed, LEFT, SMALL, outline_selected, rounded, switch_control, text};
 use crate::layout::{
     PHONE_CLOCK, PHONE_REMOTE, QR_MARGIN, QR_MODULE, QR_TEXT_X, RECORD_GUANO, RECORD_MIX_FILE, RECORD_MUTE,
-    RECORD_PAUSE, RECORD_POWER, TESTS_CPU_TEST, TESTS_DEBUG, panel_switch, phone_time, qr_card,
+    RECORD_PAUSE, RECORD_POWER, TESTS_CPU_TEST, TESTS_DEBUG, TESTS_DRAW, panel_switch, phone_time, qr_card,
 };
 use crate::palette::*;
 use crate::{BatApp, Mode, RecorderCommand, RemoteCommand, RemoteResult, Setting, qr};
@@ -56,6 +56,10 @@ pub(super) const MIX_FILE_OVERRIDES: &str = "Overrides REC READY: no MIX file fo
 pub(super) const DEBUG_NAME: &str = "Debug info";
 pub(super) const DEBUG_STATE: [&str; 2] =
     ["CPU and input figures are hidden", "CPU and input figures are shown on the main screen"];
+/// For measuring what the drawing costs: see [`BatApp::draw_on_input`].
+pub(super) const DRAW_NAME: &str = "Keep the screen still";
+pub(super) const DRAW_STATE: [&str; 2] =
+    ["Screen is redrawn up to 10 times a second", "Redrawn only after a touch, button press or wheel turn"];
 pub(super) const GUANO_NAME: &str = "GUANO metadata";
 pub(super) const GUANO_STATE: [&str; 2] =
     ["No GUANO metadata. WAV files are stock X8 files", "Each WAV file gets start time, recorder model, location"];
@@ -200,6 +204,12 @@ pub(super) fn tests(app: &BatApp, fb: Fb) {
         switch_panel(fb, TESTS_DEBUG, DEBUG_NAME, &[state(&DEBUG_STATE, app.debug_info())], app.debug_info(), selected);
         test_button(fb, TESTS_CPU_TEST, CPU_TEST_NAME, &CPU_TEST_HELP);
     }
+    if app.draw_option_available() {
+        let selected = app.selected_setting() == Setting::DrawOnInput;
+        // The switch itself, not `draw_on_input`, which is off during the CPU test.
+        let on = app.draw_on_input_switch();
+        switch_panel(fb, TESTS_DRAW, DRAW_NAME, &[state(&DRAW_STATE, on)], on, selected);
+    }
 }
 
 /// The name of a phone command on the remote panel's last line.
@@ -305,12 +315,12 @@ pub(crate) fn lines_with_widths() -> std::vec::Vec<(std::string::String, i32, i3
     }
     add(&SMALL, CHIME_TEST_HELP, phone_time(true).size.width as i32 - 20);
     add(&BODY_BOLD, CHIME_TEST_NAME, phone_time(true).size.width as i32 - 20);
-    let states = [MIX_FILE_FOLLOWS, DEBUG_STATE, GUANO_STATE, PAUSE_STATE, CLOCK_FROM_REMOTE_STATE];
+    let states = [MIX_FILE_FOLLOWS, DEBUG_STATE, DRAW_STATE, GUANO_STATE, PAUSE_STATE, CLOCK_FROM_REMOTE_STATE];
     for line in states.iter().flatten().chain([&MIX_FILE_OVERRIDES, &GUANO_HELP]) {
         add(&SMALL, line, inside);
     }
     // The name's line ends at the switch.
-    for name in [REMOTE_NAME, GUANO_NAME, MIX_FILE_NAME, DEBUG_NAME, CLOCK_FROM_REMOTE_NAME, PAUSE_NAME] {
+    for name in [REMOTE_NAME, GUANO_NAME, MIX_FILE_NAME, DEBUG_NAME, DRAW_NAME, CLOCK_FROM_REMOTE_NAME, PAUSE_NAME] {
         add(&BODY, name, 240);
     }
     add(&SMALL, "Tones heard 100. Chimes read 100, failed 100.", inside);

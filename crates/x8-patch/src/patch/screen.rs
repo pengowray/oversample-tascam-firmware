@@ -20,8 +20,8 @@ use super::state::{
     LAST_EVENT, LAUNCH_AT, LAUNCH_FROM, LAUNCHING, LOAD_WINDOW_START, MIX_FILE_OFF, MUTE_SEEN, MUTE_SEEN_AT, NO_APP,
     NO_INPUT_WORDS, OUT_LAST, OUT_READ, OUT_WRITE, PENDING, PLAYBACK, POPUP_HIDDEN, PRIMED, SAVED_BUFFER,
     SAVED_LITERAL, SCREEN_APP, SESSION, SOURCE_PEAK, STOCK_CYCLES_PER_S, TASK, TEST_DSP_MAX, TEST_SETTINGS,
-    TEST_START_BACKLOG, TEST_START_BLOCKS, TEST_START_DRY, TEST_START_LOST, TEST_START_SKIPPED, UNDERRUNS, WORD_PEAKS,
-    WORK_ENTER,
+    TEST_START_BACKLOG, TEST_START_BLOCKS, TEST_START_DRY, TEST_START_LOST, TEST_START_SKIPPED, TOUCHED_SINCE_RENDER,
+    UNDERRUNS, WORD_PEAKS, WORK_ENTER,
 };
 use super::task::{app, start_task, task_running};
 use super::{app_byte, blocks_per_second, rate_class, read_byte, spare, stock, system_state};
@@ -96,6 +96,7 @@ pub(super) extern "C" fn enter_work() {
         app.set_modes(&Mode::WITHOUT_PITCH);
         app.set_recorder(Recorder::Stopped, 0);
         app.set_debug_available(true);
+        app.set_draw_option_available(true);
         app.set_host_build(super::patch_build());
         app.set_auto_level_target(AUTO_LEVEL_OUTPUT / OUTPUT_GAIN);
         app.set_mix_available(true);
@@ -128,6 +129,8 @@ pub(super) extern "C" fn enter_work() {
         (*DUMMY_LCDIF.0.get()).write([0; 32]);
         ptr::write_volatile(stock::PRESENT_LCDIF_LITERAL, DUMMY_LCDIF.0.get() as usize);
     }
+    // The first frame is drawn even with the Tests page's drawing switch on.
+    TOUCHED_SINCE_RENDER.store(true, Relaxed);
     if task_running() {
         // The DSP task may still be finishing a chunk from the last opening,
         // so it draws the first frame; until then the display is blank.

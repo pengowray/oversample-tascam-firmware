@@ -2366,10 +2366,10 @@ B241 or an earlier build. All the checks in `tools/x8patch.py` pass on this file
 
 ## Step 41 test file: fewer redraws while the backlight is dimmed, and no phantom power question in BAT PLAYBACK (built 2026-11-13, not yet installed)
 
-`work/patch44/#PortaX8_0269.203` (B269, SHA-256 `116252c1…c82439ddb`). Includes Steps 39 and 40 (B263 and B266), whose
+`work/patch45/#PortaX8_0270.203` (B270, SHA-256 `01bc9137…d38a06013c`). Includes Steps 39 and 40 (B263 and B266), whose
 checks still apply. Install this file in place of any earlier build. All the checks in `tools/x8patch.py` pass, and two
-builds give the same file. One new hook site (header version 21). B267 and B268 were built on 2026-11-12 and never
-installed. B267's screen went black as soon as the stock timer dimmed it, and the owner finds the dimmed screen readable.
+builds give the same file. One new hook site (header version 21). B267 and B268 were built on 2026-11-12, and B269
+(this step without the `Keep the screen still` switch) on 2026-11-13; none was installed. B267's screen went black as soon as the stock timer dimmed it, and the owner finds the dimmed screen readable.
 B268's went black 90 s after the last input (3 minutes in a take), with a tap that only woke it. The black screen was
 dropped on 2026-11-13: the display is an LCD, so black saves nothing at the panel, and the drawing it saved is an
 estimated 1 to 3% of battery life, most of which the slower redraw below also saves. The owner's report on B266: quitting
@@ -2402,8 +2402,13 @@ seemed to run with no audio; and a way to save the batteries with the screen was
   - AUTO POWER SAVE is unchanged (the owner's choice): stopped with no input, the X8 turns off after 30 minutes, also
     while listening with REC PAUSE off and in BAT PLAYBACK. Record standby is never turned off.
   - How the stock timer works, and how the patch could turn the light off itself, is in `work/notes/backlight.md`.
-  - Not measured: how much of the battery the backlight and the drawing take. A USB power meter in line with a 1.5 A
-    supply, comparing BRIGHTNESS LOW with HIGH, would give the backlight's share.
+- **A switch for measuring what the drawing costs.** SETTINGS > Tests > `Keep the screen still`, off by default. On, the
+  bat screen is redrawn only after a touch, button press or wheel turn, and when the recorder starts, pauses or stops;
+  at other times the last picture stays up, so the waterfall and meters stand still. Sound, detection and recording are
+  unchanged. The CPU test draws as usual. How much of the battery the backlight and the drawing take is not measured:
+  with a USB power meter in line with a supply of 1.5 A or more, BRIGHTNESS LOW against HIGH gives the backlight's share,
+  and this switch off against on gives the drawing's share. On USB power the stock timer never dims, so the redraw rate
+  with the switch off is the full one.
 - **No phantom power question in BAT PLAYBACK.** Opening MANUAL marks its stored inputs with phantom power as pending,
   writes 0 to MANUAL's stored phantom power (`FUN_80dc565c`, through the call at 0x80DC15EA in the app change, system
   message 0xD04 in `FUN_80dbe324`), and then asks. Only YES writes the stored setting back, so in the stock firmware NO
@@ -2415,7 +2420,7 @@ seemed to run with no audio; and a way to save the batteries with the screen was
   dimmed flag, the backlight's PWM value (1 dimmed; 5, 35 or 55 for BRIGHTNESS LOW, MID or HIGH), and whether the timer
   sees the X8 on its cells only (it dims only when this is 1).
 
-**Memory.** The patch region has 4.4 KB left (`.noinit` ends at 0x818fee90).
+**Memory.** The patch region has 3.7 KB left (`.noinit` ends at 0x818ff118).
 
 **What to check.** Turn on Debug info for the strip.
 
@@ -2434,6 +2439,12 @@ seemed to run with no audio; and a way to save the batteries with the screen was
 6. With BACKLIGHT at ALWAYS: the waterfall never slows.
 7. **On a phone.** With a phone on USB and the X8 on its cells (`src 0S`, Step 40): what does the strip show for
    `cells only`, and does the screen dim?
+8. **Keep the screen still.** In SETTINGS > Tests, turn it on and tap Done: the main screen appears and the waterfall
+   stands still, with the sound unchanged. Tap a mode button: the screen is redrawn once, with the new mode. Press REC:
+   the recording bar appears. With Debug info on, `draw` is near 0 after the next touch. Turn the switch off: the
+   waterfall moves again.
+9. **Power, if a USB power meter is to hand.** On a supply of 1.5 A or more, in record standby on the bat screen, note
+   the meter's reading with BRIGHTNESS at LOW and at HIGH, then with `Keep the screen still` off and on.
 
 ## Step 40 test file: the cells take over from a weak USB supply (built 2026-11-11, not yet installed)
 

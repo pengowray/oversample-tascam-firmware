@@ -935,6 +935,26 @@ fn the_debug_switch_only_works_when_the_host_has_figures() {
 }
 
 #[test]
+fn the_drawing_switch_is_offered_by_the_host_and_is_off_during_the_cpu_test() {
+    let mut storage = vec![0.0f32; 1024];
+    let mut app = BatApp::new(FS, &mut storage, buffers());
+    app.set_debug_available(true);
+    app.open_settings_page(SettingsPage::Tests);
+    let row = layout::control_row(Setting::DrawOnInput).center();
+    app.touch(row.x, row.y);
+    assert!(!app.draw_on_input(), "a host that draws all the time shows no switch");
+    app.set_draw_option_available(true);
+    app.touch(row.x, row.y);
+    assert!(app.draw_on_input());
+    // The CPU test measures the drawing, and the switch stays as it was for afterwards.
+    app.start_cpu_test();
+    assert!(!app.draw_on_input());
+    assert!(app.draw_on_input_switch());
+    // The switch's panel is below the CPU test's button and above the note over Done.
+    assert!(layout::TESTS_DRAW.top_left.y >= layout::TESTS_CPU_TEST.bottom_right().unwrap().y);
+}
+
+#[test]
 fn no_input_draws_a_notice_and_no_meters() {
     let mut storage = vec![0.0f32; 1024];
     let mut app = BatApp::new(FS, &mut storage, buffers());

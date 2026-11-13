@@ -33,6 +33,13 @@ pub fn redraws_per_second(recording: bool, idle: bool, dimmed: bool, input_since
     }
 }
 
+/// Whether a redraw that is due draws the screen. With the Tests page's switch on
+/// (`draw_on_input`, `BatApp::draw_on_input`), it draws only after a touch, button or wheel turn;
+/// at other times the recorder's state still reaches the app at the redraw rate, with no drawing.
+pub fn draws(draw_on_input: bool, input_since_redraw: bool) -> bool {
+    !draw_on_input || input_since_redraw
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -53,5 +60,13 @@ mod tests {
         assert_eq!(redraws_per_second(true, true, true, true, false), REDRAWS_PER_SECOND_RECORDING);
         assert_eq!(redraws_per_second(false, false, true, false, true), REDRAWS_PER_SECOND);
         assert_eq!(redraws_per_second(true, false, true, false, true), REDRAWS_PER_SECOND_RECORDING);
+    }
+
+    #[test]
+    fn the_tests_switch_draws_only_after_input() {
+        assert!(draws(false, false));
+        assert!(draws(false, true));
+        assert!(!draws(true, false));
+        assert!(draws(true, true));
     }
 }

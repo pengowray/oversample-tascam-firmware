@@ -30,6 +30,7 @@
 //! `MIX=stopped` or `MIX=page` also shows the notice for why it is silent (REC PAUSE
 //! on; REC PAUSE off; a settings page open). `DEBUG=1` offers the debug switch and draws the X8 patch's
 //! longest debug lines over the last-call panel, to check that they fit.
+//! `DRAW=on` or `DRAW=off` offers the Tests page's drawing switch (with `DEBUG=1`) in that state.
 //! `AUTO=on` or `AUTO=bats` sets Auto volume, for the settings screen.
 //! `GUANO=off` turns the GUANO metadata switch off, for the Record page.
 //! `MUTE=on` turns Mute while recording on, for the Record page and the main screen with
@@ -170,6 +171,10 @@ fn main() {
     }
     let debug = std::env::var("DEBUG").is_ok();
     app.set_debug_available(debug);
+    if let Ok(draw) = std::env::var("DRAW") {
+        app.set_draw_option_available(true);
+        app.set_draw_on_input(draw == "on");
+    }
     if let Ok(build) = std::env::var("BUILD") {
         app.set_host_build(build.parse().unwrap());
     }

@@ -259,6 +259,9 @@ pub enum Setting {
     AutoLevel,
     /// Whether the host shows its figures for testing.
     DebugInfo,
+    /// Whether the host redraws the screen only after a touch, button or wheel turn: see
+    /// [`BatApp::draw_on_input`].
+    DrawOnInput,
     /// Whether a take also writes the stock recorder's MIX file: see
     /// [`BatApp::set_mix_file_available`].
     MixFile,
@@ -278,11 +281,12 @@ pub enum Setting {
 }
 
 impl Setting {
-    pub const ALL: [Setting; 13] = [
+    pub const ALL: [Setting; 14] = [
         Setting::LowestBatCall,
         Setting::ListenTo,
         Setting::AutoLevel,
         Setting::DebugInfo,
+        Setting::DrawOnInput,
         Setting::MixFile,
         Setting::PauseWithRec,
         Setting::MuteWhileRecording,
@@ -302,7 +306,7 @@ impl Setting {
                 SettingsPage::Record
             }
             Setting::ClockFromRemote => SettingsPage::Phone,
-            Setting::DebugInfo => SettingsPage::Tests,
+            Setting::DebugInfo | Setting::DrawOnInput => SettingsPage::Tests,
             _ => SettingsPage::Listen,
         }
     }
@@ -636,6 +640,9 @@ pub struct BatApp<'a> {
     power_option_available: bool,
     /// See [`cells_on_weak_usb`](Self::cells_on_weak_usb).
     cells_on_weak_usb: bool,
+    draw_option_available: bool,
+    /// See [`draw_on_input`](Self::draw_on_input).
+    draw_on_input: bool,
     /// The headphones' gain for Mute while recording: 1 heard, 0 silent, between while fading.
     listen_gain: f32,
     /// The listening modes were skipped while muted, so they start clean when the sound returns.
@@ -810,6 +817,8 @@ impl<'a> BatApp<'a> {
             field!((*this).mute_while_recording).write(false);
             field!((*this).power_option_available).write(false);
             field!((*this).cells_on_weak_usb).write(true);
+            field!((*this).draw_option_available).write(false);
+            field!((*this).draw_on_input).write(false);
             field!((*this).listen_gain).write(1.0);
             field!((*this).modes_skipped).write(false);
             field!((*this).pause_refused_until).write(0);
@@ -1154,6 +1163,8 @@ impl<'a> BatApp<'a> {
             Setting::MuteWhileRecording => {}
             Setting::CellsOnWeakUsb if steps != 0 => self.cells_on_weak_usb = steps > 0,
             Setting::CellsOnWeakUsb => {}
+            Setting::DrawOnInput if steps != 0 => self.draw_on_input = steps > 0,
+            Setting::DrawOnInput => {}
             // Turning the wheel up switches on, down switches off.
             Setting::Mark(kind) if steps != 0 => self.set_marked(kind, steps > 0),
             Setting::Mark(_) => {}
@@ -1467,6 +1478,33 @@ impl<'a> BatApp<'a> {
         self.cells_on_weak_usb = on;
     }
 
+    /// The host can stop redrawing the screen (the X8 patch): offer the switch on the Tests page,
+    /// which is shown when the host has debug figures.
+    pub fn set_draw_option_available(&mut self, available: bool) {
+        self.draw_option_available = available;
+    }
+
+    pub fn draw_option_available(&self) -> bool {
+        self.debug_available && self.draw_option_available
+    }
+
+    /// Whether the host redraws the screen only after a touch, button or wheel turn, and leaves
+    /// the last frame up otherwise. For measuring what the drawing costs, in power or processor
+    /// time, against a screen that is redrawn all the time. Off by default. The CPU test measures
+    /// the drawing, so the host draws as usual while it runs.
+    pub fn draw_on_input(&self) -> bool {
+        self.draw_on_input && !self.cpu_test.running
+    }
+
+    /// The switch's own state, for the settings page.
+    pub fn draw_on_input_switch(&self) -> bool {
+        self.draw_on_input
+    }
+
+    pub fn set_draw_on_input(&mut self, on: bool) {
+        self.draw_on_input = on;
+    }
+
     /// Whether Mute while recording is silencing the headphones now (or fading them out).
     pub fn muted_for_take(&self) -> bool {
         self.mute_while_recording && self.input_kind == InputKind::Live && self.is_recording() && !self.cpu_test.running
@@ -1557,6 +1595,7 @@ impl<'a> BatApp<'a> {
             Setting::PauseWithRec => self.pause_option_available,
             Setting::MuteWhileRecording => self.input_kind == InputKind::Live,
             Setting::CellsOnWeakUsb => self.power_option_available,
+            Setting::DrawOnInput => self.draw_option_available(),
             _ => true,
         }
     }
@@ -1850,6 +1889,7 @@ impl<'a> BatApp<'a> {
                     Setting::PauseWithRec => self.pause_with_rec = !self.pause_with_rec,
                     Setting::MuteWhileRecording => self.mute_while_recording = !self.mute_while_recording,
                     Setting::CellsOnWeakUsb => self.cells_on_weak_usb = !self.cells_on_weak_usb,
+                    Setting::DrawOnInput => self.draw_on_input = !self.draw_on_input,
                     _ => {}
                 }
             }
