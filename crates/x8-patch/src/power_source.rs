@@ -60,18 +60,23 @@ pub fn on_weak_supply(
     }
 }
 
+/// Cell level readings in a row that are not good before the patch goes back to AUTO: about 7 s
+/// of the battery task's messages. The stock firmware, on its cells with no external power,
+/// counts the same number of low readings before each step towards its low battery power-off.
+/// One reading does not decide, because the patch reads the battery task's newest reading, which
+/// is not smoothed.
+pub const LOW_READINGS: u32 = 100;
+
+/// The count of readings in a row that are not good, after this one.
+pub fn low_readings(so_far: u32, battery_type: u8, level: u8, thresholds: &[u8; 3]) -> u32 {
+    if cells_good(battery_type, level, thresholds) { 0 } else { so_far.saturating_add(1) }
+}
+
 /// Whether to go back to AUTO, after the patch set BATTERY: when the setting is still BATTERY and
-/// the cells are no longer good, as the stock firmware does when external power appears, or the
-/// switch was turned off.
-pub fn back_to_auto(
-    switch_on: bool,
-    switched: bool,
-    power_source: u8,
-    battery_type: u8,
-    level: u8,
-    thresholds: &[u8; 3],
-) -> bool {
-    switched && power_source == BATTERY && (!switch_on || !cells_good(battery_type, level, thresholds))
+/// the cells have not been good for `LOW_READINGS` readings in a row, or the switch was turned
+/// off.
+pub fn back_to_auto(switch_on: bool, switched: bool, power_source: u8, low_readings: u32) -> bool {
+    switched && power_source == BATTERY && (!switch_on || low_readings >= LOW_READINGS)
 }
 
 #[cfg(test)]
@@ -90,8 +95,8 @@ mod tests {
     fn the_switch_off_leaves_the_stock_question() {
         assert_eq!(on_weak_supply(false, AUTO, false, false, 0, 120, &T), Ask);
         assert_eq!(on_weak_supply(false, BATTERY, true, false, 0, 120, &T), Ask);
-        // Turned off while on the patch's cells: back to AUTO.
-        assert!(back_to_auto(false, true, BATTERY, 0, 120, &T));
+        // Turned off while on the patch's cells: back to AUTO, with good cells too.
+        assert!(back_to_auto(false, true, BATTERY, 0));
     }
 
     #[test]
@@ -126,10 +131,29 @@ mod tests {
 
     #[test]
     fn back_to_auto_only_after_the_patch_switched_and_the_cells_fade() {
-        assert!(back_to_auto(true, true, BATTERY, 0, 100, &T));
-        assert!(!back_to_auto(true, true, BATTERY, 0, 110, &T));
-        assert!(!back_to_auto(true, false, BATTERY, 0, 100, &T));
+        assert!(back_to_auto(true, true, BATTERY, LOW_READINGS));
+        assert!(!back_to_auto(true, true, BATTERY, LOW_READINGS - 1));
+        assert!(!back_to_auto(true, false, BATTERY, LOW_READINGS));
         // The user set AUTO again: nothing to do.
-        assert!(!back_to_auto(true, true, AUTO, 0, 100, &T));
+        assert!(!back_to_auto(true, true, AUTO, LOW_READINGS));
+    }
+
+    /// A dip under load for a few readings must not end the session on the cells.
+    #[test]
+    fn low_readings_count_only_in_a_row() {
+        let mut count = 0;
+        for _ in 0..LOW_READINGS - 1 {
+            count = low_readings(count, 0, 100, &T);
+        }
+        assert!(!back_to_auto(true, true, BATTERY, count));
+        count = low_readings(count, 0, 110, &T);
+        assert_eq!(count, 0);
+        for _ in 0..LOW_READINGS {
+            count = low_readings(count, 0, 102, &T);
+        }
+        assert!(back_to_auto(true, true, BATTERY, count));
+        // No cells (a reading under 36) counts as not good too.
+        assert_eq!(low_readings(0, 0, 20, &T), 1);
+        assert_eq!(low_readings(u32::MAX, 0, 20, &T), u32::MAX);
     }
 }

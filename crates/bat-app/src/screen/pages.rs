@@ -5,7 +5,7 @@ use embedded_graphics::pixelcolor::Rgb565;
 use embedded_graphics::prelude::*;
 use embedded_graphics::primitives::{PrimitiveStyle, Rectangle};
 
-use super::{BODY, BODY_BOLD, Fb, Fixed, LEFT, SMALL, outline_selected, rounded, switch_control, text};
+use super::{BODY, BODY_BOLD, Fb, Fixed, LEFT, SMALL, hline, outline_selected, rounded, switch_control, text};
 use crate::layout::{
     PHONE_CLOCK, PHONE_REMOTE, QR_MARGIN, QR_MODULE, QR_TEXT_X, RECORD_GUANO, RECORD_MIX_FILE, RECORD_MUTE,
     RECORD_PAUSE, RECORD_POWER, TESTS_CPU_TEST, TESTS_DEBUG, TESTS_DRAW, panel_switch, phone_time, qr_card,
@@ -114,7 +114,13 @@ fn switch_panel(fb: Fb, panel: Rectangle, name: &str, lines: &[&str], on: bool, 
     }
 }
 
-/// A button that opens a test, with its help inside.
+/// The room at the right of a button that opens a screen, kept clear of its text for the arrow.
+#[cfg(test)]
+const ARROW_ROOM: i32 = 18;
+
+/// A button that opens a test's screen, with its help inside. The arrow at the right tells it
+/// from a switch's panel, which has the same shape and nearly the same grey (a reviewer who saw
+/// only the screenshots did not take the button for something to press, 2026-11-13).
 #[inline(never)]
 fn test_button(fb: Fb, button: Rectangle, name: &str, help: &[&str]) {
     rounded(fb, button, 4, BUTTON);
@@ -122,6 +128,13 @@ fn test_button(fb: Fb, button: Rectangle, name: &str, help: &[&str]) {
     text(fb, &BODY_BOLD, name, x, y + 19, LEFT, TEXT);
     for (line, y) in help.iter().zip([y + 37, y + 51]) {
         text(fb, &SMALL, *line, x, y, LEFT, TEXT_MUTED);
+    }
+    let cx = button.top_left.x + button.size.width as i32 - 13;
+    let cy = button.top_left.y + button.size.height as i32 / 2;
+    // Drawn a row at a time: a stroked line would add about 1 KB of drawing code to the X8 patch.
+    for dy in -6i32..=6 {
+        let x = cx + 3 - dy.abs();
+        hline(fb, x - 1, x, cy + dy, TEXT);
     }
 }
 
@@ -175,11 +188,7 @@ pub(super) fn phone(app: &BatApp, fb: Fb) {
     for (line, y) in QR_HELP.iter().zip([y + 50, y + 64]) {
         text(fb, &SMALL, *line, QR_TEXT_X, y, LEFT, TEXT_MUTED);
     }
-    let button = phone_time(app.remote_available());
-    rounded(fb, button, 4, BUTTON);
-    let (x, y) = (button.top_left.x + 10, button.top_left.y);
-    text(fb, &BODY_BOLD, CHIME_TEST_NAME, x, y + 19, LEFT, TEXT);
-    text(fb, &SMALL, CHIME_TEST_HELP, x, y + 37, LEFT, TEXT_MUTED);
+    test_button(fb, phone_time(app.remote_available()), CHIME_TEST_NAME, &[CHIME_TEST_HELP]);
 }
 
 /// Black modules on a white card. Square corners, so the card's edge never cuts into the quiet zone.
@@ -304,8 +313,12 @@ pub(crate) fn lines_with_widths() -> std::vec::Vec<(std::string::String, i32, i3
     let mut lines = Vec::new();
     let mut add = |font: &FontRenderer, line: &str, room: i32| lines.push((line.to_string(), width(font, line), room));
     let inside = PHONE_REMOTE.size.width as i32 - 20;
-    for line in REMOTE_HELP.iter().chain(&CPU_TEST_HELP).chain(&REMOTE_BEEPS) {
+    for line in REMOTE_HELP.iter().chain(&REMOTE_BEEPS) {
         add(&SMALL, line, inside);
+    }
+    // A button that opens a screen has its arrow at the right.
+    for line in &CPU_TEST_HELP {
+        add(&SMALL, line, inside - ARROW_ROOM);
     }
     // Right of the QR code.
     let beside_qr = 314 - QR_TEXT_X;
@@ -313,8 +326,8 @@ pub(crate) fn lines_with_widths() -> std::vec::Vec<(std::string::String, i32, i3
     for line in QR_HELP.iter().chain([&qr::ADDRESS]) {
         add(&SMALL, line, beside_qr);
     }
-    add(&SMALL, CHIME_TEST_HELP, phone_time(true).size.width as i32 - 20);
-    add(&BODY_BOLD, CHIME_TEST_NAME, phone_time(true).size.width as i32 - 20);
+    add(&SMALL, CHIME_TEST_HELP, phone_time(true).size.width as i32 - 20 - ARROW_ROOM);
+    add(&BODY_BOLD, CHIME_TEST_NAME, phone_time(true).size.width as i32 - 20 - ARROW_ROOM);
     let states = [MIX_FILE_FOLLOWS, DEBUG_STATE, DRAW_STATE, GUANO_STATE, PAUSE_STATE, CLOCK_FROM_REMOTE_STATE];
     for line in states.iter().flatten().chain([&MIX_FILE_OVERRIDES, &GUANO_HELP]) {
         add(&SMALL, line, inside);

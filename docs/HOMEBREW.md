@@ -2366,11 +2366,12 @@ B241 or an earlier build. All the checks in `tools/x8patch.py` pass on this file
 
 ## Step 41 test file: fewer redraws while the backlight is dimmed, and no phantom power question in BAT PLAYBACK (built 2026-11-13, not yet installed)
 
-`work/patch46/#PortaX8_0271.203` (B271, SHA-256 `687fd1e4…242c77824f`). Includes Steps 39 and 40 (B263 and B266), whose
+`work/patch47/#PortaX8_0272.203` (B272, SHA-256 `228a1ec5…35883910ec`). Includes Steps 39 and 40 (B263 and B266), whose
 checks still apply. Install this file in place of any earlier build. All the checks in `tools/x8patch.py` pass, and two
 builds give the same file. One new hook site (header version 21). B267 and B268 were built on 2026-11-12, and B269
-(this step without the `Freeze the screen` switch) and B270 (the switch under the name `Keep the screen still`, which
-a cold reader took for keeping the screen on) on 2026-11-13; none was installed. B267's screen went black as soon as the stock timer dimmed it, and the owner finds the dimmed screen readable.
+(this step without the `Freeze the screen` switch) B270 (the switch under the name `Keep the screen still`, which
+a cold reader took for keeping the screen on) and B271 (this step without the newest cell reading and the arrows) on
+2026-11-13; none was installed. B267's screen went black as soon as the stock timer dimmed it, and the owner finds the dimmed screen readable.
 B268's went black 90 s after the last input (3 minutes in a take), with a tap that only woke it. The black screen was
 dropped on 2026-11-13: the display is an LCD, so black saves nothing at the panel, and the drawing it saved is an
 estimated 1 to 3% of battery life, most of which the slower redraw below also saves. The owner's report on B266: quitting
@@ -2421,7 +2422,14 @@ seemed to run with no audio; and a way to save the batteries with the screen was
   dimmed flag, the backlight's PWM value (1 dimmed; 5, 35 or 55 for BRIGHTNESS LOW, MID or HIGH), and whether the timer
   sees the X8 on its cells only (it dims only when this is 1).
 
-**Memory.** The patch region has 3.7 KB left (`.noinit` ends at 0x818ff118).
+- **The cells' level is read fresh.** With a phone on USB and the X8 on its cells, the patch goes back to AUTO when the
+  cells run low. It now takes the battery task's newest reading and waits for 100 low readings in a row (about 7 s).
+  Before, it acted on one reading of a level that could be about 5 minutes old: see [The cell level task 1 keeps can be
+  5 minutes old](#the-cell-level-task-1-keeps-can-be-5-minutes-old-found-2026-11-13).
+- **An arrow on the buttons that open a screen.** `CPU test` (Tests) and `Phone time` (Phone) have an arrow at the
+  right, so they read as buttons beside the switch panels.
+
+**Memory.** The patch region has 3.0 KB left (`.noinit` ends at 0x818ff400).
 
 **What to check.** Turn on Debug info for the strip.
 
@@ -2448,6 +2456,9 @@ seemed to run with no audio; and a way to save the batteries with the screen was
    waterfall moves again.
 9. **Power, if a USB power meter is to hand.** On a supply of 1.5 A or more, in record standby on the bat screen, note
    the meter's reading with BRIGHTNESS at LOW and at HIGH, then with `Freeze the screen` off and on.
+10. **Step 40 again.** Its checks 2 and 3 (a phone on USB, good cells) pass as before: the X8 stays on its cells with no
+    question. If a set of nearly flat cells is to hand: the strip changes from `src 0S` to `src 1G` and the stock
+    question appears about 7 s after the cells fall to the Battery Empty level, with no power cut.
 
 ## Step 40 test file: the cells take over from a weak USB supply (built 2026-11-11, not yet installed)
 
@@ -3860,11 +3871,14 @@ Two ways were weighed:
 What B266 does, in `patch/power.rs` (decisions in `x8_patch::power_source`, with host tests), while the bat app's switch
 `Run from batteries on weak USB` (SETTINGS > Record) is on, as it is at every start:
 
+- The level is the low byte of the battery task's newest reading (0x8196869C) from B272; before, it was the byte task 1
+  keeps at its state + 0xD, which can be about 5 minutes old (see the next section).
 - The key hooks see kind 8 with value 0. With a known BATTERY TYPE and a cell level above the same threshold the Battery
   Empty check uses (and not 0 or 0xFF), the patch swallows the event (kind 9). In AUTO it also posts 0xF20 with 0
   (BATTERY). If the setting is already the BATTERY the patch set, as after an unplug and replug, it only swallows the
   event. Otherwise the stock question appears, as before.
-- On each kind 3 event after that, if the setting is still BATTERY and the level is no longer above the threshold, it
+- On each kind 3 event after that, it counts the events in a row whose level is not above the threshold. If the setting
+  is still BATTERY and the count reaches 100 (about 7 s; before B272, one event was enough), it
   posts 0xF20 with 1 (AUTO) and clears the stock check's latch (0x819686B8, poll state + 0x54), so that the check posts
   again and the stock question appears. Without that, the check would stay quiet and the X8 would take full power from
   the phone. From then until the X8 is turned off, the patch leaves every weak supply to the stock question, so cells
@@ -3891,10 +3905,10 @@ far (low to medium). Task 1's on-cells branch also needs its state + 0xE to be 1
 0 of a switch byte the button poll reads); what that bit means is not known. Step 40's checks test this first.
 
 
-### Not fixed: the cell level the patch checks can be 5 minutes old (found 2026-11-13)
+### The cell level task 1 keeps can be 5 minutes old (found 2026-11-13)
 
-Read in V2.03; nothing here is tried on a unit. While the patch has the X8 on its cells with a phone on USB, it goes
-back to AUTO when the cell level at task 1's state + 0xD (0x8196A3ED) is at or below the stock threshold. Task 1 stores
+Read in V2.03; nothing here is tried on a unit. Up to B271, while the patch had the X8 on its cells with a phone on USB,
+it went back to AUTO when the cell level at task 1's state + 0xD (0x8196A3ED) was at or below the stock threshold. Task 1 stores
 that byte from every kind 3 message, but the battery task (`FUN_80dacac0`, state at 0x81968664) does not always put a
 new reading in the message:
 
@@ -3909,12 +3923,17 @@ new reading in the message:
 - The newest reading is always in the battery task's state + 0x38 (0x8196869C, a halfword stored on every pass at
   0x80DACAE4), whichever branch task 1 takes.
 
-So if the Debug info strip shows `cells only 0` with a phone on USB (Step 41 check 7), the patch can be up to about 5
-minutes late in going back to AUTO, and the stock low battery power-off does not run in that state either. Cells that
+So if the Debug info strip shows `cells only 0` with a phone on USB (Step 41 check 7), a build up to B271 can be about
+5 minutes late in going back to AUTO, and the stock low battery power-off does not run in that state either. Cells that
 give out inside those minutes would cut the power, during a take if one is open. If the strip shows `cells only 1`,
-task 1 takes the first branch and none of this applies. A fix that writes nothing to the stock firmware's memory: read
-the level from 0x8196869C in place of 0x8196A3ED, and go back to AUTO only after several low readings in a row, since
-that reading is not smoothed. Not built.
+task 1 takes the first branch and none of this applies.
+
+From B272 the patch reads the level from 0x8196869C in place of 0x8196A3ED, for the weak supply's answer and for going
+back to AUTO. That reading is not smoothed (the battery task holds a posted level that moves by 1), so the patch goes
+back to AUTO only after 100 kind 3 events in a row with a level that is not above the threshold
+(`x8_patch::power_source::LOW_READINGS`, about 7 s). The stock firmware counts the same 100 before each step of its own
+low battery count. The patch writes nothing to the stock firmware's memory for this. The stock low battery power-off
+still does not run in that state: after the patch sets AUTO, the X8 takes its power from USB.
 
 ## Firmware map (V2.03, in progress)
 

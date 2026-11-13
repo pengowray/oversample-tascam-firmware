@@ -340,9 +340,12 @@ pub const USB_ALT_IF2: *const u8 = 0x8191_8e41 as *const u8;
 /// SELECT (0 BATTERY, 1 AUTO).
 pub const BATTERY_TYPE: *const u8 = 0x81e8_ca54 as *const u8;
 pub const POWER_SOURCE: *mut u8 = 0x81e8_ca55 as *mut u8;
-/// Task 1's state 0x8196a3e0 + 0xd: the latest cell level from the battery task (ADC1 result,
-/// low byte; under 36 means no cells), updated with every kind 3 event.
-pub const CELL_LEVEL: *const u8 = 0x8196_a3ed as *const u8;
+/// The battery task's newest reading (button poll state 0x81968664 + 0x38, stored on every pass
+/// at 0x80DACAE4); its low byte is the cell level (ADC1 result; under 36 means no cells). The level
+/// task 1 keeps from the battery task's messages (its state 0x8196a3e0 + 0xd) can be about 5
+/// minutes old while task 1 sees external power: docs/HOMEBREW.md, "The cell level task 1 keeps
+/// can be 5 minutes old".
+pub const CELL_LEVEL_NOW: *const u16 = 0x8196_869c as *const u16;
 /// Button poll state 0x81968664 + 0x54: set when the USB supply check has posted "below 1.5 A",
 /// so it posts once; cleared when the supply recovers or external power goes.
 pub const SUPPLY_LATCH: *mut u32 = 0x8196_86b8 as *mut u32;
