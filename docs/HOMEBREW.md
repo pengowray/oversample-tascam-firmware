@@ -3913,8 +3913,9 @@ that byte from every kind 3 message, but the battery task (`FUN_80dacac0`, state
 new reading in the message:
 
 - Task 1 handles kind 3 in one of two branches (0x80D6D8DA). With state + 0xE = 1 and state + 0xF = 0 (on cells, no
-  external power) it calls `FUN_80dac9f4(0)` and runs the stock low battery count: the level at or below the threshold
-  for about 600 messages in a row ends in the power-off sequence `FUN_80dcf588`. Otherwise it calls `FUN_80dac9f4(1)`
+  external power) it calls `FUN_80dac9f4(0)` and runs the stock low battery count: the level at or below a second,
+  lower threshold ({96, 96, 106} by BATTERY TYPE, at 0x81726D68; the patch and the Battery Empty check use {102, 102,
+  112}) for about 600 messages in a row ends in the power-off sequence `FUN_80dcf588`. Otherwise it calls `FUN_80dac9f4(1)`
   and does not count.
 - `FUN_80dac9f4` stores its argument in the battery task's state + 0xD. With 0 there, every message has a new reading.
   With 1, the task copies a new reading into the message only when the flag at its state + 0xB8 is set, and it sets
@@ -3932,7 +3933,7 @@ From B272 the patch reads the level from 0x8196869C in place of 0x8196A3ED, for 
 back to AUTO. That reading is not smoothed (the battery task holds a posted level that moves by 1), so the patch goes
 back to AUTO only after 100 kind 3 events in a row with a level that is not above the threshold
 (`x8_patch::power_source::LOW_READINGS`, about 7 s). The stock firmware counts the same 100 before each step of its own
-low battery count. The patch writes nothing to the stock firmware's memory for this. The stock low battery power-off
+low battery count, against its lower threshold, so the patch acts 6 levels before the stock power-off would start counting. The patch writes nothing to the stock firmware's memory for this. The stock low battery power-off
 still does not run in that state: after the patch sets AUTO, the X8 takes its power from USB.
 
 ## Firmware map (V2.03, in progress)
