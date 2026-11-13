@@ -57,7 +57,7 @@ pub(super) const DEBUG_NAME: &str = "Debug info";
 pub(super) const DEBUG_STATE: [&str; 2] =
     ["CPU and input figures are hidden", "CPU and input figures are shown on the main screen"];
 /// For measuring what the drawing costs: see [`BatApp::draw_on_input`].
-pub(super) const DRAW_NAME: &str = "Keep the screen still";
+pub(super) const DRAW_NAME: &str = "Freeze the screen";
 pub(super) const DRAW_STATE: [&str; 2] =
     ["Screen is redrawn up to 10 times a second", "Redrawn only after a touch, button press or wheel turn"];
 pub(super) const GUANO_NAME: &str = "GUANO metadata";

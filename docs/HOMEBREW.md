@@ -2366,10 +2366,11 @@ B241 or an earlier build. All the checks in `tools/x8patch.py` pass on this file
 
 ## Step 41 test file: fewer redraws while the backlight is dimmed, and no phantom power question in BAT PLAYBACK (built 2026-11-13, not yet installed)
 
-`work/patch45/#PortaX8_0270.203` (B270, SHA-256 `01bc9137…d38a06013c`). Includes Steps 39 and 40 (B263 and B266), whose
+`work/patch46/#PortaX8_0271.203` (B271, SHA-256 `687fd1e4…242c77824f`). Includes Steps 39 and 40 (B263 and B266), whose
 checks still apply. Install this file in place of any earlier build. All the checks in `tools/x8patch.py` pass, and two
 builds give the same file. One new hook site (header version 21). B267 and B268 were built on 2026-11-12, and B269
-(this step without the `Keep the screen still` switch) on 2026-11-13; none was installed. B267's screen went black as soon as the stock timer dimmed it, and the owner finds the dimmed screen readable.
+(this step without the `Freeze the screen` switch) and B270 (the switch under the name `Keep the screen still`, which
+a cold reader took for keeping the screen on) on 2026-11-13; none was installed. B267's screen went black as soon as the stock timer dimmed it, and the owner finds the dimmed screen readable.
 B268's went black 90 s after the last input (3 minutes in a take), with a tap that only woke it. The black screen was
 dropped on 2026-11-13: the display is an LCD, so black saves nothing at the panel, and the drawing it saved is an
 estimated 1 to 3% of battery life, most of which the slower redraw below also saves. The owner's report on B266: quitting
@@ -2402,7 +2403,7 @@ seemed to run with no audio; and a way to save the batteries with the screen was
   - AUTO POWER SAVE is unchanged (the owner's choice): stopped with no input, the X8 turns off after 30 minutes, also
     while listening with REC PAUSE off and in BAT PLAYBACK. Record standby is never turned off.
   - How the stock timer works, and how the patch could turn the light off itself, is in `work/notes/backlight.md`.
-- **A switch for measuring what the drawing costs.** SETTINGS > Tests > `Keep the screen still`, off by default. On, the
+- **A switch for measuring what the drawing costs.** SETTINGS > Tests > `Freeze the screen`, off by default. On, the
   bat screen is redrawn only after a touch, button press or wheel turn, and when the recorder starts, pauses or stops;
   at other times the last picture stays up, so the waterfall and meters stand still. Sound, detection and recording are
   unchanged. The CPU test draws as usual. How much of the battery the backlight and the drawing take is not measured:
@@ -2441,12 +2442,12 @@ seemed to run with no audio; and a way to save the batteries with the screen was
    `cells only`, and does the screen dim? If it reads 1 and the screen dims, nothing more is needed. If it reads 0, the
    stock timer never dims in this case; `work/notes/backlight-usb.md` (2026-11-13) has the firmware reading and the
    smallest change that would make it dim (not built).
-8. **Keep the screen still.** In SETTINGS > Tests, turn it on and tap Done: the main screen appears and the waterfall
+8. **Freeze the screen.** In SETTINGS > Tests, turn it on and tap Done: the main screen appears and the waterfall
    stands still, with the sound unchanged. Tap a mode button: the screen is redrawn once, with the new mode. Press REC:
    the recording bar appears. With Debug info on, `draw` is near 0 after the next touch. Turn the switch off: the
    waterfall moves again.
 9. **Power, if a USB power meter is to hand.** On a supply of 1.5 A or more, in record standby on the bat screen, note
-   the meter's reading with BRIGHTNESS at LOW and at HIGH, then with `Keep the screen still` off and on.
+   the meter's reading with BRIGHTNESS at LOW and at HIGH, then with `Freeze the screen` off and on.
 
 ## Step 40 test file: the cells take over from a weak USB supply (built 2026-11-11, not yet installed)
 
@@ -3888,6 +3889,32 @@ way, since it runs in BATTERY, where the cells feed the rail. Task 10 treats a r
 makes sense for a reading of the cells, since the rail cannot be near 0 while the firmware runs; that is the best sign so
 far (low to medium). Task 1's on-cells branch also needs its state + 0xE to be 1, set by kind 4 (input event type 7, bit
 0 of a switch byte the button poll reads); what that bit means is not known. Step 40's checks test this first.
+
+
+### Not fixed: the cell level the patch checks can be 5 minutes old (found 2026-11-13)
+
+Read in V2.03; nothing here is tried on a unit. While the patch has the X8 on its cells with a phone on USB, it goes
+back to AUTO when the cell level at task 1's state + 0xD (0x8196A3ED) is at or below the stock threshold. Task 1 stores
+that byte from every kind 3 message, but the battery task (`FUN_80dacac0`, state at 0x81968664) does not always put a
+new reading in the message:
+
+- Task 1 handles kind 3 in one of two branches (0x80D6D8DA). With state + 0xE = 1 and state + 0xF = 0 (on cells, no
+  external power) it calls `FUN_80dac9f4(0)` and runs the stock low battery count: the level at or below the threshold
+  for about 600 messages in a row ends in the power-off sequence `FUN_80dcf588`. Otherwise it calls `FUN_80dac9f4(1)`
+  and does not count.
+- `FUN_80dac9f4` stores its argument in the battery task's state + 0xD. With 0 there, every message has a new reading.
+  With 1, the task copies a new reading into the message only when the flag at its state + 0xB8 is set, and it sets
+  that flag once in 4,168 messages (the counter at + 0xB0 against 0x1047, 0x80DACB58 to 0x80DACB84). At about 70 ms a
+  message that is about 5 minutes (the 70 ms is from `work/notes/backlight.md`, not timed).
+- The newest reading is always in the battery task's state + 0x38 (0x8196869C, a halfword stored on every pass at
+  0x80DACAE4), whichever branch task 1 takes.
+
+So if the Debug info strip shows `cells only 0` with a phone on USB (Step 41 check 7), the patch can be up to about 5
+minutes late in going back to AUTO, and the stock low battery power-off does not run in that state either. Cells that
+give out inside those minutes would cut the power, during a take if one is open. If the strip shows `cells only 1`,
+task 1 takes the first branch and none of this applies. A fix that writes nothing to the stock firmware's memory: read
+the level from 0x8196869C in place of 0x8196A3ED, and go back to AUTO only after several low readings in a row, since
+that reading is not smoothed. Not built.
 
 ## Firmware map (V2.03, in progress)
 
