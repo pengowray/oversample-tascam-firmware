@@ -2438,7 +2438,9 @@ seemed to run with no audio; and a way to save the batteries with the screen was
    waiting input to clear.
 6. With BACKLIGHT at ALWAYS: the waterfall never slows.
 7. **On a phone.** With a phone on USB and the X8 on its cells (`src 0S`, Step 40): what does the strip show for
-   `cells only`, and does the screen dim?
+   `cells only`, and does the screen dim? If it reads 1 and the screen dims, nothing more is needed. If it reads 0, the
+   stock timer never dims in this case; `work/notes/backlight-usb.md` (2026-11-13) has the firmware reading and the
+   smallest change that would make it dim (not built).
 8. **Keep the screen still.** In SETTINGS > Tests, turn it on and tap Done: the main screen appears and the waterfall
    stands still, with the sound unchanged. Tap a mode button: the screen is redrawn once, with the new mode. Press REC:
    the recording bar appears. With Debug info on, `draw` is near 0 after the next touch. Turn the switch off: the
