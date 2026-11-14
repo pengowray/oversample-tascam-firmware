@@ -2400,13 +2400,18 @@ the patch passes all the checks in `tools/x8patch.py`. Nothing in this step has 
   are 40 px high (the other pages' are 48), the gaps round them are 4 px, and the QR code's modules are 4 px in place
   of 5, so the code is 100 px (about 15 mm) in place of 125. The main screen is unchanged: its title bar says
   `REMOTE` as before, and a refused command's notice gives the code.
+- **Start recording can set `Mute while recording`.** The phone's Start recording has an argument, in both format
+  versions: 0 leaves the X8's `Mute while recording` switch (SETTINGS > Record) as it is, 1 turns it on and 2 turns it
+  off, and then recording starts as before. The switch is set when the X8 is already recording too. B249 to B272
+  answer a Start with argument 1 or 2 with `Unknown phone command.` and do not start.
 - **What the code does not do.** It keeps out other people's phones and commands by chance. A guessed check is right 1
   time in 65,536, and someone who records a few commands can find the code by trying all 1,000,000. The location in
   a chime is not covered by the check.
 
 **Memory.** The check is SipHash-2-4 because HMAC-SHA1 did not fit: with the RustCrypto `hmac` and `sha1` crates it
-took 6,384 bytes, and 3,072 were free at B272. The feature takes 2,472 bytes, 496 of them the check (the `siphasher`
-crate's took 1,088). The patch region has 600 bytes left (`.noinit` ends at 0x818ffda8), ITCM 81.1 of 89.2 KB used,
+took 6,384 bytes, and 3,072 were free at B272. The phone code takes 2,472 bytes, 496 of them the check (the
+`siphasher` crate's took 1,088), and Start recording's argument 144. The patch region has 456 bytes left (`.noinit`
+ends at 0x818ffe38), ITCM 81.1 of 89.2 KB used,
 DTCM 149.3 of 152.8 KB.
 
 **Not built: the code kept on the card.** Keeping the code in a file, so that it lasts over power-off, was measured and
@@ -2419,7 +2424,7 @@ left out.
   reader task, with `CORE_OPEN`, `FILE_READ` and `FILE_CLOSE`, and the reader keeps off the card outside BAT PLAYBACK
   because the stock recorder uses it. The three calls for a 6-byte file cost 240 bytes, before a task to make them
   from.
-- Both together took 536 of the 600 bytes left, without keeping the switch's setting.
+- Both together took 536 bytes, without keeping the switch's setting, and 456 are left.
 
 **What to check**, once a file is built.
 
@@ -2432,8 +2437,10 @@ left out.
    Does the clock stay as it was?
 5. **Wrong code.** Type another code into the phone page: one low note and `Phone page has a different code.`?
 6. **Both inputs.** With two inputs on, does one command still give one pair of notes, and no `old time` notice?
-7. **Off.** With `Phone code` off, as it is after power-on: do commands work with any code, and with none?
-8. **CPU.** With Debug info on, are `dsp` and `skip%` as in Step 41? The hash of the input runs until `Phone code`
+7. **Mute from the phone.** With the phone page's choice for muting: does Start recording turn `Mute while recording`
+   on, and off, on the Record tab, and are the headphones silent or playing during the take to match?
+8. **Off.** With `Phone code` off, as it is after power-on: do commands work with any code, and with none?
+9. **CPU.** With Debug info on, are `dsp` and `skip%` as in Step 41? The hash of the input runs until `Phone code`
    is first turned on.
 
 ## Step 41 test file: fewer redraws while the backlight is dimmed, and no phantom power question in BAT PLAYBACK (built 2026-11-13, not yet installed)

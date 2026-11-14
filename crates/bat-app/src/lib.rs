@@ -1568,7 +1568,7 @@ impl<'a> BatApp<'a> {
     }
 
     /// The readings the decoders gave this chunk, kept and queued for the host, and a listening
-    /// mode the phone asked for. A clock command sets the clock from either screen, whatever the
+    /// mode or a Mute while recording setting the phone asked for. A clock command sets the clock from either screen, whatever the
     /// setting for other phone chimes. Not inlined, so it stays out of `process`, which the X8
     /// patch runs from ITCM.
     #[inline(never)]
@@ -1581,6 +1581,12 @@ impl<'a> BatApp<'a> {
         if let Some((reading, clock_command)) = self.remote.take_reading() {
             self.phone = Some(reading);
             self.phone_out = Some((reading, clock_command || self.clock_from_remote));
+        }
+        // A start command can set the Mute while recording switch, on a host that offers it.
+        if let Some(mute) = self.remote.take_mute()
+            && self.input_kind == InputKind::Live
+        {
+            self.mute_while_recording = mute;
         }
         if let Some(mode) = self.remote.take_mode() {
             let mode = Mode::from(mode);

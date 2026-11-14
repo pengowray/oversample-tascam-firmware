@@ -246,7 +246,7 @@ pub(super) fn tests(app: &BatApp, fb: Fb) {
 /// The name of a phone command on the remote panel's last line.
 fn command_name(command: Option<RemoteCommand>) -> &'static str {
     match command {
-        Some(RemoteCommand::Start) => "Start",
+        Some(RemoteCommand::Start | RemoteCommand::StartWithMute(_)) => "Start",
         Some(RemoteCommand::Stop) => "Stop",
         Some(RemoteCommand::SetClock) => LAST_SET_CLOCK,
         Some(RemoteCommand::Listen(mode)) => LAST_MODE[mode_index(Mode::from(mode))],

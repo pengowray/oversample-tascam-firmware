@@ -605,3 +605,62 @@ fn the_phone_page_shows_the_code_while_it_is_in_force() {
     app.set_remote_on(false);
     assert_eq!(app.remote.code_shown(), Some(CODE));
 }
+
+/// Start recording can set the Mute while recording switch: argument 1 turns it on, 2 turns it
+/// off, and 0 leaves it as it is. It is set when the X8 is already recording too.
+#[test]
+fn a_start_command_can_set_mute_while_recording() {
+    const START_MUTED: [u8; 8] = *b"BATX\x01\x01\x01\x00";
+    const START_UNMUTED: [u8; 8] = *b"BATX\x01\x01\x02\x00";
+    let mut storage = vec![0.0f32; SECOND];
+    let mut buffers = Box::new(Buffers::new());
+    let mut app = remote_app(&mut storage, &mut buffers);
+    assert!(!app.mute_while_recording());
+    assert_eq!(run(&mut app, &press(START_MUTED, UNIX, 0.1, 1e-4)), [RecorderCommand::Start]);
+    assert!(app.mute_while_recording());
+    // Argument 0 leaves the switch on, and off after the next command turns it off.
+    assert_eq!(run(&mut app, &press(START, UNIX + 10, 0.1, 1e-4)), [RecorderCommand::Start]);
+    assert!(app.mute_while_recording());
+    app.set_recorder(crate::Recorder::Recording, 0);
+    assert_eq!(run(&mut app, &press(START_UNMUTED, UNIX + 20, 0.1, 1e-4)), [RecorderCommand::Start]);
+    assert!(!app.mute_while_recording());
+    assert_eq!(run(&mut app, &press(START, UNIX + 30, 0.1, 1e-4)), [RecorderCommand::Start]);
+    assert!(!app.mute_while_recording());
+    // Already recording, with the switch off: it is turned on.
+    assert_eq!(run(&mut app, &press(START_MUTED, UNIX + 40, 0.1, 1e-4)), [RecorderCommand::Start]);
+    assert!(app.mute_while_recording());
+    // Any other argument is unknown, and changes nothing.
+    assert_eq!(run(&mut app, &press(*b"BATX\x01\x01\x03\x00", UNIX + 50, 0.1, 1e-4)), []);
+    assert_eq!(app.remote.result_shown(app.samples), Some(RemoteResult::Unknown));
+    assert!(app.mute_while_recording());
+}
+
+/// In version 2 the choice is in byte 5, and a refused command does not set the switch.
+#[test]
+fn a_coded_start_command_sets_mute_only_with_the_code() {
+    let mut storage = vec![0.0f32; SECOND];
+    let mut buffers = Box::new(Buffers::new());
+    let mut app = coded_app(&mut storage, &mut buffers);
+    let wrong = coded(crate::RemoteCommand::StartWithMute(true), b"000000", UNIX);
+    assert_eq!(wrong[5], 0x11);
+    assert_eq!(run(&mut app, &press(wrong, UNIX, 0.1, 1e-4)), []);
+    assert!(!app.mute_while_recording());
+    let right = coded(crate::RemoteCommand::StartWithMute(true), &CODE, UNIX + 10);
+    assert_eq!(run(&mut app, &press(right, UNIX + 10, 0.1, 1e-4)), [RecorderCommand::Start]);
+    assert!(app.mute_while_recording());
+    let off = coded(crate::RemoteCommand::StartWithMute(false), &CODE, UNIX + 20);
+    assert_eq!(off[5], 0x12);
+    assert_eq!(run(&mut app, &press(off, UNIX + 20, 0.1, 1e-4)), [RecorderCommand::Start]);
+    assert!(!app.mute_while_recording());
+}
+
+/// BAT PLAYBACK has no Mute while recording switch: the choice is ignored and the command passed on.
+#[test]
+fn a_host_without_the_mute_switch_ignores_the_choice() {
+    let mut storage = vec![0.0f32; SECOND];
+    let mut buffers = Box::new(Buffers::new());
+    let mut app = remote_app(&mut storage, &mut buffers);
+    app.set_input_kind(crate::InputKind::Playback);
+    assert_eq!(run(&mut app, &press(*b"BATX\x01\x01\x01\x00", UNIX, 0.1, 1e-4)), [RecorderCommand::Start]);
+    assert!(!app.mute_while_recording());
+}

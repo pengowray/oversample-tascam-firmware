@@ -129,7 +129,7 @@ patched update file.
 `crates/x8-patch/x8patch.ld` is the linker script; its comments give the reasons for each range. At
 B272 the patched update file is 25,859,340 bytes, 365,804 bytes longer than the official one.
 Free space at B273: ITCM 81.1 of 89.2 KB used, DTCM 149.3 of 152.8 KB used, and the patch region
-ends at 0x818FFDA8 of 0x81900000, 600 bytes short of the end (3,072 bytes at B272). The patch
+ends at 0x818FFE38 of 0x81900000, 456 bytes short of the end (3,072 bytes at B272). The patch
 region and DTCM are nearly full: the next feature needs room made first, for which see below.
 Formatting a
 float with `{:.1}` and the like pulls about 19 KB of the core library's float printing into the

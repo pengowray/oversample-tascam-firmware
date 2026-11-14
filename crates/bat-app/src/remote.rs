@@ -150,6 +150,8 @@ pub(crate) struct Remote {
     reading: Option<(Reading, bool)>,
     pending: Option<RecorderCommand>,
     pending_mode: Option<ListeningMode>,
+    /// A start command's choice for the Mute while recording switch, not yet passed on.
+    pending_mute: Option<bool>,
     /// A clock command was read, and its outcome has not been reported yet.
     pub(crate) clock_pending: bool,
     result: Option<(RemoteResult, u64)>,
@@ -180,6 +182,7 @@ impl Remote {
             reading: None,
             pending: None,
             pending_mode: None,
+            pending_mute: None,
             clock_pending: false,
             result: None,
             beep: Beep::new(),
@@ -350,6 +353,10 @@ impl Remote {
                 if remote.is_some() {
                     match command {
                         Some(RemoteCommand::Start) => self.pending = Some(RecorderCommand::Start),
+                        Some(RemoteCommand::StartWithMute(mute)) => {
+                            self.pending_mute = Some(mute);
+                            self.pending = Some(RecorderCommand::Start);
+                        }
                         Some(RemoteCommand::Stop) => self.pending = Some(RecorderCommand::Stop),
                         Some(RemoteCommand::SetClock) => self.clock_pending = true,
                         Some(RemoteCommand::Listen(mode)) => self.pending_mode = Some(mode),
@@ -391,6 +398,10 @@ impl Remote {
 
     pub(crate) fn take_command(&mut self) -> Option<RecorderCommand> {
         self.pending.take()
+    }
+
+    pub(crate) fn take_mute(&mut self) -> Option<bool> {
+        self.pending_mute.take()
     }
 
     pub(crate) fn take_mode(&mut self) -> Option<ListeningMode> {
