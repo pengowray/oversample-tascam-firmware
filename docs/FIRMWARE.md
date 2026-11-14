@@ -166,7 +166,7 @@ The memory ranges and their sizes are in [HARDWARE.md](HARDWARE.md#memory-free-f
 ### The patch header
 
 The patch starts with a header, `X8_PATCH_HEADER` in `crates/x8-patch/src/patch.rs`: the magic
-`BATX`, a header version (21 at B272), the addresses of 34 entry points, the address of the logo screen's lower image
+`BATX`, a header version (21 at B273), the addresses of 34 entry points, the address of the logo screen's lower image
 handle and the y positions of that screen's two images, and a build number.
 `tools/x8patch.py` reads the entry points from the header, so the stock firmware's hook sites
 always point at the right functions after a rebuild. The build field is 0 in the ELF file;
@@ -186,7 +186,7 @@ value it expects, and it refuses the build if any site differs.
 | Function entry | The first 4 bytes of a stock function become a `b.w` to a patch function that does the whole job. | The bridge's USER SETTINGS slot getter (0x80D6A238). The patch's `slot_hook` reports slots 2 and 3 as holding a MANUAL preset. |
 | Fact | A stock word the patch's constants depend on is checked and left alone. | The layout word for 8-bit alpha images, which the bat tiles' icons use. |
 
-At B272 there are 36 hook sites: 2 pointer words, 3 tail calls, 29 calls and 2 function entries,
+At B273 there are 36 hook sites: 2 pointer words, 3 tail calls, 29 calls and 2 function entries,
 plus 1 fact that is only checked. The logo screen (from B259) also changes a handle literal and 3
 `movs` immediates, and the USB audio (from B263) 3 more `movs` immediates in `FUN_80df4a24`, the
 packet sizes of the 2-channel alternate settings.

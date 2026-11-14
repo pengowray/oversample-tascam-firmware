@@ -134,7 +134,7 @@ While `Phone code` is on, on the main screen:
 - **A version 1 command** is refused: one low note, and the notice `Phone page needs the X8's code.`
   `Type it, then send again:` and the code on a third line.
 - **A version 2 command with another check** is refused: one low note, and the notice
-  `Phone page has a different code.` `Type this one, then send again:` and the code on a third
+  `Phone page has a different code.` `Type this code, then send again:` and the code on a third
   line.
 - **A version 2 command with the right check and a time no later than the last one acted on** is
   refused, because it may be a recording played again: one low note, and the notice

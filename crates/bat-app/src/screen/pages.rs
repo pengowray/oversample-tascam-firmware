@@ -55,7 +55,7 @@ pub(super) const CODE_STATE: [&str; 2] = ["The X8 obeys commands from any phone.
 /// On the main screen when a command was refused. The code is the line after these, grouped
 /// as on the Phone page.
 pub(super) const CODE_NEEDED_LINES: [&str; 2] = ["Phone page needs the X8's code.", "Type it, then send again:"];
-pub(super) const CODE_WRONG_LINES: [&str; 2] = ["Phone page has a different code.", "Type this one, then send again:"];
+pub(super) const CODE_WRONG_LINES: [&str; 2] = ["Phone page has a different code.", "Type this code, then send again:"];
 pub(super) const CODE_OLD_LINES: [&str; 2] = ["Phone command has an old time.", "Send again. Check phone's clock."];
 pub(super) const CPU_TEST_NAME: &str = "CPU test";
 pub(super) const CPU_TEST_HELP: [&str; 2] =
@@ -120,7 +120,7 @@ fn switch_panel(fb: Fb, panel: Rectangle, name: &str, lines: &[&str], on: bool, 
     }
     let (x, y) = (panel.top_left.x + 10, panel.top_left.y);
     // The Phone page's 40 px panels have the same 8 px under their one line as the others.
-    let lower = panel.size.height as i32 - 48;
+    let lower = (panel.size.height as i32 - 48).min(0);
     text(fb, &BODY, name, x, y + 20 + lower / 2, LEFT, TEXT);
     switch_control(fb, panel_switch(panel), on);
     for (line, y) in lines.iter().zip([y + 40 + lower, y + 54]) {

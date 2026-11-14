@@ -2382,7 +2382,7 @@ the patch passes all the checks in `tools/x8patch.py`. Nothing in this step has 
   time is later than the last one it acted on. Each refusal is one low note and a notice:
   - a command with no check (version 1, from a phone page without the code): `Phone page needs the X8's code.`
     `Type it, then send again:` `493 817`
-  - a check made from another code: `Phone page has a different code.` `Type this one, then send again:` `493 817`
+  - a check made from another code: `Phone page has a different code.` `Type this code, then send again:` `493 817`
   - a right check with a time no later than the last command acted on, which may be a recording played again:
     `Phone command has an old time.` `Send again. Check phone's clock.`
 
