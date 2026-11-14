@@ -218,15 +218,26 @@ pub const RECORD_PAUSE: Rectangle = panel(PAGE_TOP + 122, 48);
 pub const RECORD_MUTE: Rectangle = panel(PAGE_TOP + 176, 48);
 /// Last on the page: it matters only with USB plugged in, and keeps 96 and 192 kHz available then.
 pub const RECORD_POWER: Rectangle = panel(PAGE_TOP + 230, 48);
-/// Phone page: the phone remote with its status lines, its clock switch, then the phone page's QR
-/// code with the address and the Phone time button beside it. The remote's switch is what people
-/// change most, so it is at the top; the QR code is needed once for each phone.
+/// Phone page: the phone remote with its status lines, the phone code's switch with the code,
+/// the clock switch, then the phone page's QR code with the address and the Phone time button
+/// beside it. The remote's switch is what people change most, so it is at the top; the QR code
+/// is needed once for each phone. The two switches under the remote are 40 px high, 8 px less
+/// than the other pages' panels, and the gaps round them 4 px, so that the page has room for
+/// the phone code's switch.
 pub const PHONE_REMOTE: Rectangle = panel(PAGE_TOP, 124);
-/// Under the phone remote, because only its chimes are heard on the main screen.
-pub const PHONE_CLOCK: Rectangle = panel(PAGE_TOP + 130, 48);
-/// Size of one module of the QR code, in pixels. At 5 px the code is 125 px, about 19 mm on the
-/// X8's screen, which a phone reads from 20 cm.
-pub const QR_MODULE: i32 = 5;
+/// Under the phone remote. Off by default: it guards against other people's phones, which
+/// few people need.
+pub const PHONE_CODE: Rectangle = panel(PAGE_TOP + 128, 40);
+/// The code's right edge, left of its switch, and its baseline in the panel. The on state's line
+/// under the name ends before the code starts.
+pub const PHONE_CODE_RIGHT: i32 = 250;
+pub const PHONE_CODE_BASELINE: i32 = 29;
+/// Only the phone remote's chimes are heard on the main screen.
+pub const PHONE_CLOCK: Rectangle = panel(PAGE_TOP + 172, 40);
+/// Size of one module of the QR code, in pixels. At 4 px the code is 100 px, about 15 mm on the
+/// X8's screen. It was 5 px (19 mm, which a phone reads from 20 cm) before the phone code's
+/// switch needed the room; 4 px has not been scanned from an X8's screen.
+pub const QR_MODULE: i32 = 4;
 /// The white margin round the code, in modules. The QR standard asks for 4; 3 leaves a gap above
 /// the settings note, and phone cameras read codes with less. It is white because readers need a
 /// light margin, which the dark background is not.
@@ -235,7 +246,7 @@ const QR_CARD_SIDE: u32 = ((crate::qr::SIZE as i32 + 2 * QR_MARGIN) * QR_MODULE)
 /// The white card of the QR code: under the remote's panels, or at the top of the page on a host
 /// without the phone remote (BAT PLAYBACK), so the page has no gap.
 pub const fn qr_card(remote_shown: bool) -> Rectangle {
-    let top = if remote_shown { PAGE_TOP + 184 } else { PAGE_TOP };
+    let top = if remote_shown { PAGE_TOP + 218 } else { PAGE_TOP };
     Rectangle::new(Point::new(6, top), Size::new(QR_CARD_SIDE, QR_CARD_SIDE))
 }
 /// The address and its help, right of the code.
@@ -276,6 +287,7 @@ pub fn control_row(setting: Setting) -> Rectangle {
         Setting::AutoLevel => AUTO_VOLUME_ROW,
         Setting::MixFile => panel_switch_row(RECORD_MIX_FILE),
         Setting::ClockFromRemote => panel_switch_row(PHONE_CLOCK),
+        Setting::PhoneCode => panel_switch_row(PHONE_CODE),
         Setting::PauseWithRec => panel_switch_row(RECORD_PAUSE),
         Setting::MuteWhileRecording => panel_switch_row(RECORD_MUTE),
         Setting::CellsOnWeakUsb => panel_switch_row(RECORD_POWER),
@@ -326,6 +338,7 @@ pub fn switch(setting: Setting) -> Rectangle {
     match setting {
         Setting::MixFile => panel_switch(RECORD_MIX_FILE),
         Setting::ClockFromRemote => panel_switch(PHONE_CLOCK),
+        Setting::PhoneCode => panel_switch(PHONE_CODE),
         Setting::PauseWithRec => panel_switch(RECORD_PAUSE),
         Setting::MuteWhileRecording => panel_switch(RECORD_MUTE),
         Setting::CellsOnWeakUsb => panel_switch(RECORD_POWER),

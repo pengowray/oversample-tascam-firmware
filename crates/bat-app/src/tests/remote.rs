@@ -85,6 +85,7 @@ fn run(app: &mut BatApp, x: &[f32]) -> Vec<RecorderCommand> {
     commands
 }
 
+/// An app with the phone remote on and the phone code not required, as it is by default.
 fn remote_app<'a>(storage: &'a mut [f32], buffers: &'a mut Buffers) -> BatApp<'a> {
     let mut app = BatApp::new(FS, storage, buffers);
     app.set_remote_available(true);
@@ -369,4 +370,238 @@ fn a_listening_mode_command_changes_the_mode() {
     assert_eq!(run(&mut app, &press(LISTEN_PITCH, UNIX + 20, 0.1, 1e-4)), []);
     assert_eq!(app.mode, crate::Mode::Fd);
     assert_eq!(app.remote.result_shown(app.samples), Some(RemoteResult::ModeNotOffered(crate::Mode::Pitch)));
+}
+
+/// The code on the Phone page in these tests.
+const CODE: [u8; 6] = *b"493817";
+
+/// The deployment ID of a version 2 command made with `code`, for a chime that `press` makes
+/// at `unix`.
+fn coded(command: crate::RemoteCommand, code: &[u8; 6], unix: u32) -> [u8; 8] {
+    command.coded_deployment_id(code, unix, 600)
+}
+
+/// An app with the phone remote on and the phone code required.
+fn coded_app<'a>(storage: &'a mut [f32], buffers: &'a mut Buffers) -> BatApp<'a> {
+    let mut app = remote_app(storage, buffers);
+    app.set_phone_code(CODE);
+    app.set_phone_code_required(true);
+    app
+}
+
+#[test]
+fn the_code_is_not_required_by_default() {
+    let mut storage = vec![0.0f32; SECOND];
+    let mut buffers = Box::new(Buffers::new());
+    let mut app = BatApp::new(FS, &mut storage, &mut buffers);
+    assert!(!app.phone_code_required());
+    app.set_remote_available(true);
+    app.set_remote_on(true);
+    assert_eq!(app.phone_code(), None);
+    assert_eq!(app.remote.code_shown(), None);
+}
+
+#[test]
+fn a_command_made_with_the_code_is_acted_on() {
+    let mut storage = vec![0.0f32; SECOND];
+    let mut buffers = Box::new(Buffers::new());
+    let mut app = coded_app(&mut storage, &mut buffers);
+    let start = coded(crate::RemoteCommand::Start, &CODE, UNIX);
+    assert_eq!(run(&mut app, &press(start, UNIX, 0.1, 1e-4)), [RecorderCommand::Start]);
+    assert!(app.take_phone_time().expect("the chime's time").set_clock);
+    let stop = coded(crate::RemoteCommand::Stop, &CODE, UNIX + 10);
+    assert_eq!(run(&mut app, &press(stop, UNIX + 10, 0.1, 1e-4)), [RecorderCommand::Stop]);
+    let fd = coded(crate::RemoteCommand::Listen(crate::ListeningMode::Fd), &CODE, UNIX + 20);
+    assert_eq!(run(&mut app, &press(fd, UNIX + 20, 0.1, 1e-4)), []);
+    assert_eq!(app.mode, crate::Mode::Fd);
+    let clock = coded(crate::RemoteCommand::SetClock, &CODE, UNIX + 30);
+    assert_eq!(run(&mut app, &press(clock, UNIX + 30, 0.1, 1e-4)), []);
+    assert!(app.remote.clock_pending);
+}
+
+#[test]
+fn a_version_1_command_is_refused_while_the_code_is_required() {
+    for id in [START, SET_CLOCK, LISTEN_FD] {
+        let mut storage = vec![0.0f32; SECOND];
+        let mut buffers = Box::new(Buffers::new());
+        let mut app = coded_app(&mut storage, &mut buffers);
+        assert_eq!(run(&mut app, &press(id, UNIX, 0.1, 1e-4)), [], "{id:?}");
+        assert_eq!(app.remote.result_shown(app.samples), Some(RemoteResult::CodeNeeded));
+        assert_eq!(app.take_phone_time(), None);
+        assert!(!app.remote.clock_pending);
+        assert_eq!(app.mode, crate::Mode::Het);
+    }
+}
+
+#[test]
+fn a_command_made_with_another_code_is_refused() {
+    for command in [crate::RemoteCommand::Start, crate::RemoteCommand::SetClock] {
+        let mut storage = vec![0.0f32; SECOND];
+        let mut buffers = Box::new(Buffers::new());
+        let mut app = coded_app(&mut storage, &mut buffers);
+        let id = coded(command, b"493818", UNIX);
+        assert_eq!(run(&mut app, &press(id, UNIX, 0.1, 1e-4)), []);
+        assert_eq!(app.remote.result_shown(app.samples), Some(RemoteResult::CodeWrong));
+        assert_eq!(app.take_phone_time(), None);
+        assert!(!app.remote.clock_pending);
+        // The ID of one chime in a chime with another time: a recording sent again with a
+        // new time.
+        let id = coded(command, &CODE, UNIX + 20);
+        assert_eq!(run(&mut app, &press(id, UNIX + 30, 0.1, 1e-4)), []);
+        assert_eq!(app.remote.result_shown(app.samples), Some(RemoteResult::CodeWrong));
+        assert_eq!(app.take_phone_time(), None);
+    }
+}
+
+#[test]
+fn a_command_no_later_than_the_last_one_acted_on_is_refused() {
+    let mut storage = vec![0.0f32; SECOND];
+    let mut buffers = Box::new(Buffers::new());
+    let mut app = coded_app(&mut storage, &mut buffers);
+    let start = coded(crate::RemoteCommand::Start, &CODE, UNIX + 10);
+    assert_eq!(run(&mut app, &press(start, UNIX + 10, 0.1, 1e-4)), [RecorderCommand::Start]);
+    assert!(app.take_phone_time().is_some());
+    // An earlier command, and another command with the same time.
+    for unix in [UNIX, UNIX + 10] {
+        let stop = coded(crate::RemoteCommand::Stop, &CODE, unix);
+        assert_eq!(run(&mut app, &press(stop, unix, 0.1, 1e-4)), [], "{unix}");
+        assert_eq!(app.remote.result_shown(app.samples), Some(RemoteResult::CodeOld));
+        assert_eq!(app.take_phone_time(), None);
+    }
+    // The recording of the first command, played again after the others.
+    assert_eq!(run(&mut app, &press(start, UNIX + 10, 0.1, 1e-4)), []);
+    assert_eq!(app.remote.result_shown(app.samples), Some(RemoteResult::CodeOld));
+    // A later command is acted on.
+    let stop = coded(crate::RemoteCommand::Stop, &CODE, UNIX + 11);
+    assert_eq!(run(&mut app, &press(stop, UNIX + 11, 0.1, 1e-4)), [RecorderCommand::Stop]);
+    // A refused command does not count as the last one: a wrong code with a later time, then
+    // the right code with a time between the two.
+    let wrong = coded(crate::RemoteCommand::Start, b"000000", UNIX + 50);
+    assert_eq!(run(&mut app, &press(wrong, UNIX + 50, 0.1, 1e-4)), []);
+    let start = coded(crate::RemoteCommand::Start, &CODE, UNIX + 40);
+    assert_eq!(run(&mut app, &press(start, UNIX + 40, 0.1, 1e-4)), [RecorderCommand::Start]);
+}
+
+#[test]
+fn the_same_coded_chime_on_both_inputs_gives_one_command() {
+    let mut storage = vec![0.0f32; SECOND];
+    let mut buffers = Box::new(Buffers::new());
+    let mut app = coded_app(&mut storage, &mut buffers);
+    app.set_inputs([Some(InputName { short: "3", long: "Input 3" }), Some(InputName { short: "4", long: "Input 4" })]);
+    let start = coded(crate::RemoteCommand::Start, &CODE, UNIX);
+    assert_eq!(run(&mut app, &press(start, UNIX, 0.1, 1e-4)), [RecorderCommand::Start]);
+    assert_eq!(app.remote.chimes_read, 2);
+    // The second reading is not reported as an old command.
+    assert_eq!(app.remote.result_shown(app.samples), None);
+}
+
+#[test]
+fn with_the_code_not_required_any_check_is_accepted() {
+    let mut storage = vec![0.0f32; SECOND];
+    let mut buffers = Box::new(Buffers::new());
+    let mut app = coded_app(&mut storage, &mut buffers);
+    app.open_settings_page(crate::SettingsPage::Phone);
+    let row = layout::control_row(Setting::PhoneCode).center();
+    assert!(app.is_tappable(row.x, row.y));
+    app.touch(row.x, row.y);
+    assert!(!app.phone_code_required());
+    app.button(Button::Home);
+    let start = coded(crate::RemoteCommand::Start, b"000000", UNIX + 10);
+    assert_eq!(run(&mut app, &press(start, UNIX + 10, 0.1, 1e-4)), [RecorderCommand::Start]);
+    assert!(app.take_phone_time().is_some());
+    // An earlier time is accepted too, and so is version 1.
+    let stop = coded(crate::RemoteCommand::Stop, &CODE, UNIX);
+    assert_eq!(run(&mut app, &press(stop, UNIX, 0.1, 1e-4)), [RecorderCommand::Stop]);
+    assert_eq!(run(&mut app, &press(START, UNIX + 20, 0.1, 1e-4)), [RecorderCommand::Start]);
+}
+
+/// With the code required, only a command made with the code gives the phone's time. A plain
+/// AudioMoth chime after a tone, another recorder's deployment ID and an unknown command give
+/// none, although Set clock from all chimes is on.
+#[test]
+fn only_a_command_made_with_the_code_gives_the_phone_time() {
+    let unknown_with_the_code = {
+        let mut id = *b"BATX\x02\x50\x00\x00";
+        let check = chime::format::remote_check(&CODE, id[5], UNIX, 600);
+        id[6..].copy_from_slice(&check);
+        id
+    };
+    let cases: [(Option<[u8; 8]>, bool, Option<RemoteResult>); 6] = [
+        (None, false, None),
+        (Some(*b"AUDIOMOT"), false, None),
+        // An unknown command in version 1, a version this build does not know, and an unknown
+        // command in version 2 with a check made from another code.
+        (Some(*b"BATX\x01\x05\x00\x00"), false, Some(RemoteResult::Unknown)),
+        (Some(*b"BATX\x03\x10\x00\x00"), false, Some(RemoteResult::Unknown)),
+        (Some(*b"BATX\x02\x50\x00\x00"), false, Some(RemoteResult::Unknown)),
+        // An unknown command made with the code: its time is used, as any accepted chime's is.
+        (Some(unknown_with_the_code), true, Some(RemoteResult::Unknown)),
+    ];
+    for (id, gives_time, result) in cases {
+        for required in [true, false] {
+            let mut storage = vec![0.0f32; SECOND];
+            let mut buffers = Box::new(Buffers::new());
+            let mut app = coded_app(&mut storage, &mut buffers);
+            app.set_phone_code_required(required);
+            assert!(app.clock_from_remote());
+            let mut bytes = chime_gen::time_payload(UNIX, 600);
+            bytes.extend(id.iter().flatten());
+            let render = chime_gen::render(FS as u32, &bytes, chime_gen::tune_for_payload(bytes.len()));
+            let chime: Vec<f32> = render.mix().iter().map(|&v| v as f32 * 0.1).collect();
+            let tone = page_tone(500, 0.1);
+            let mut seed = 5;
+            let mut x = noise(SECOND + tone.len() + SECOND + chime.len() + SECOND, 1e-4, &mut seed);
+            add_at(&mut x, SECOND, &tone);
+            add_at(&mut x, SECOND + tone.len() + SECOND, &chime);
+            assert_eq!(run(&mut app, &x), [], "{id:?}");
+            assert_eq!(app.remote.chimes_read, 1, "{id:?}");
+            assert_eq!(app.take_phone_time().is_some(), gives_time || !required, "{id:?} {required}");
+            assert_eq!(app.remote.result_shown(app.samples), result, "{id:?} {required}");
+        }
+    }
+}
+
+/// The code is made when the Phone code switch is first turned on, from the input heard until
+/// then, and is kept when the switch is turned off and on again.
+#[test]
+fn the_code_is_made_once_from_the_input() {
+    let mut codes = Vec::new();
+    for seed in [1u32, 2, 3] {
+        let mut storage = vec![0.0f32; SECOND];
+        let mut buffers = Box::new(Buffers::new());
+        let mut app = BatApp::new(FS, &mut storage, &mut buffers);
+        app.set_remote_available(true);
+        app.set_inputs([Some(InputName { short: "3", long: "Input 3" }), None]);
+        let mut seed = seed;
+        run(&mut app, &noise(SECOND / 4, 1e-4, &mut seed));
+        assert_eq!(app.phone_code(), None);
+        // The switch on the Phone page.
+        app.open_settings_page(crate::SettingsPage::Phone);
+        let row = layout::control_row(Setting::PhoneCode).center();
+        app.touch(row.x, row.y);
+        assert!(app.phone_code_required());
+        let code = app.phone_code().expect("a code");
+        assert!(code.iter().all(|c| c.is_ascii_digit()), "{code:?}");
+        app.touch(row.x, row.y);
+        run(&mut app, &noise(SECOND / 4, 1e-4, &mut seed));
+        app.touch(row.x, row.y);
+        assert!(app.phone_code_required());
+        assert_eq!(app.phone_code(), Some(code));
+        codes.push(code);
+    }
+    assert!(codes[0] != codes[1] && codes[1] != codes[2] && codes[0] != codes[2], "{codes:?}");
+}
+
+/// The Phone page shows the code only while the Phone code switch is on.
+#[test]
+fn the_phone_page_shows_the_code_while_it_is_in_force() {
+    let mut storage = vec![0.0f32; SECOND];
+    let mut buffers = Box::new(Buffers::new());
+    let mut app = coded_app(&mut storage, &mut buffers);
+    assert_eq!(app.remote.code_shown(), Some(CODE));
+    app.set_phone_code_required(false);
+    assert_eq!(app.remote.code_shown(), None);
+    app.set_phone_code_required(true);
+    app.set_remote_on(false);
+    assert_eq!(app.remote.code_shown(), Some(CODE));
 }

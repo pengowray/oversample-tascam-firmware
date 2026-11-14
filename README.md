@@ -41,7 +41,8 @@ update can leave the unit needing repair.
 - **GUANO metadata** in each WAV file: start time, length, recorder, and the phone's location when
   known.
 - **Phone remote** (experimental): chimes played by a phone set the X8's clock, start and stop
-  recording, and change the listening mode. The phone page is
+  recording, and change the listening mode. With `Phone code` on, the X8 shows a 6-digit code to type into
+  the phone page, and acts only on commands made with it. The phone page is
   [remote.oversample.com](https://remote.oversample.com/#x8); the X8's SETTINGS, Phone tab shows a
   QR code for it. The format is in [docs/PHONE_REMOTE.md](docs/PHONE_REMOTE.md).
 - **Settings** in four tabs: Listen, Record, Phone and Tests, with a CPU test.

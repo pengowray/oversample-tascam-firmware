@@ -138,7 +138,10 @@ impl ChimeTest {
                     self.reading = Some(Reading::new(&message, start_sample, now));
                     if !repeat {
                         self.fresh = true;
-                        self.clock_command = message.remote_command() == Some(RemoteCommand::SetClock);
+                        // In either version of the format. This screen does not look at
+                        // the check: it reads every chime.
+                        let command = message.remote().and_then(|remote| remote.command());
+                        self.clock_command = command == Some(RemoteCommand::SetClock);
                     }
                 }
             }

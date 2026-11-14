@@ -5,6 +5,10 @@
 //! the tone in the spectrum its analysis already makes, which costs one comparison per
 //! spectrum column. The tone wakes the decoders for long enough to read a chime.
 //!
+//! While the Phone code switch is on, the app acts only on a command whose check was made from
+//! the 6-digit code on the Phone page (format version 2, in `docs/PHONE_REMOTE.md`), and uses
+//! no other chime's time or location on the main screen. The switch is off by default.
+//!
 //! The commands say what to do, not "press REC", so a chime read twice, or read on both
 //! inputs, does no harm. The app changes the listening mode itself. It passes start and stop to the
 //! host, which carries them out and tells the app the outcome with [`BatApp::remote_result`], and a
@@ -16,7 +20,7 @@ use core::f32::consts::TAU;
 use core::mem::MaybeUninit;
 
 use crate::phone_time::Reading;
-use chime::format::TimeMessage;
+use chime::format::{REMOTE_CODE_DIGITS, TimeMessage};
 use chime::{Decoder, Event};
 
 const CARRIER_HZ: f32 = chime::format::CARRIER_HZ as f32;
@@ -74,6 +78,13 @@ pub enum RemoteResult {
     ModeSet(Mode),
     /// This host does not offer the mode, so nothing changed.
     ModeNotOffered(Mode),
+    /// The phone code is required, and the command has no check: nothing was done.
+    CodeNeeded,
+    /// The command's check was made from another code: nothing was done.
+    CodeWrong,
+    /// The command's check is right, but its time is not later than the time of the last
+    /// command acted on, so it may be a recording played again: nothing was done.
+    CodeOld,
 }
 
 impl RemoteResult {
@@ -125,6 +136,16 @@ pub(crate) struct Remote {
     pub(crate) last: Option<LastCommand>,
     /// The time in the latest command's chime, so its reading on the other input is ignored.
     last_unix: u32,
+    /// The phone code, as 6 ASCII digits: made the first time the Phone code switch is turned
+    /// on, and kept until the host is turned off.
+    pub(crate) code: Option<[u8; REMOTE_CODE_DIGITS]>,
+    /// Only commands with a check made from the code are acted on.
+    pub(crate) code_required: bool,
+    /// A hash of input samples, which the code is made from: the host has no random numbers,
+    /// and the inputs' noise differs each time.
+    noise: u32,
+    /// The time in the last command with a check that was acted on.
+    last_coded_unix: Option<u32>,
     /// The latest chime's time, not yet passed on, and whether it came with a clock command.
     reading: Option<(Reading, bool)>,
     pending: Option<RecorderCommand>,
@@ -152,6 +173,10 @@ impl Remote {
             chimes_failed: 0,
             last: None,
             last_unix: 0,
+            code: None,
+            code_required: false,
+            noise: 0,
+            last_coded_unix: None,
             reading: None,
             pending: None,
             pending_mode: None,
@@ -169,6 +194,47 @@ impl Remote {
     /// Whether the tone is being looked for.
     pub(crate) fn enabled(&self) -> bool {
         self.available && self.on
+    }
+
+    /// Turn the Phone code switch on or off at sample `now`. The first time it is turned on,
+    /// make the code from the hash of the input so far and the time of the press. Not inlined:
+    /// the wheel, a tap and the host each call it.
+    #[inline(never)]
+    pub(crate) fn set_code_required(&mut self, required: bool, now: u64) {
+        self.code_required = required;
+        if required && self.code.is_none() {
+            // MurmurHash3's last step, so that every bit of the hash changes the code.
+            let mut hash = self.noise ^ now as u32;
+            hash = (hash ^ hash >> 16).wrapping_mul(0x85eb_ca6b);
+            hash = (hash ^ hash >> 13).wrapping_mul(0xc2b2_ae35);
+            hash ^= hash >> 16;
+            // Each digit is the whole part of 10 times a fraction, which starts as the hash
+            // over 2^32.
+            let mut code = [0; REMOTE_CODE_DIGITS];
+            for digit in &mut code {
+                let tenfold = hash as u64 * 10;
+                *digit = b'0' + (tenfold >> 32) as u8;
+                hash = tenfold as u32;
+            }
+            self.code = Some(code);
+        }
+    }
+
+    /// The code to show: while the code is required.
+    pub(crate) fn code_shown(&self) -> Option<[u8; REMOTE_CODE_DIGITS]> {
+        if self.code_required { self.code } else { None }
+    }
+
+    /// Add 1 sample in 64 of a block of input to the hash the code is made from, until the
+    /// code is made. Inlined, because it runs in the app's processing, which the X8 patch runs
+    /// from ITCM.
+    #[inline(always)]
+    pub(crate) fn add_noise(&mut self, block: &[f32]) {
+        if self.code.is_none() {
+            for sample in block.iter().step_by(64) {
+                self.noise = (self.noise ^ sample.to_bits()).wrapping_mul(0x0100_0193);
+            }
+        }
     }
 
     /// One spectrum column, in dB. Inlined, because it runs in the app's analysis, which the X8
@@ -254,32 +320,68 @@ impl Remote {
             Event::Chime(chime) => {
                 let Some(message) = TimeMessage::parse(&chime.payload[..chime.payload_len]) else { return };
                 self.chimes_read += 1;
-                // The decoder counts samples from when it was built; the time since the chime
-                // started is the same in both counts.
-                let start_sample = now as i64 - (chime.end_sample as i64 - chime.start_sample);
-                let sets_clock = message.remote_command() == Some(RemoteCommand::SetClock);
-                if self.last_unix != message.unix_time {
+                let remote = message.remote();
+                let same_time = self.last_unix == message.unix_time;
+                if let Some(remote) = remote {
+                    let same_chime = same_time && self.last.is_some_and(|last| last.message == remote);
+                    self.last = Some(LastCommand { message: remote, read_at: now, level_dbfs: chime.level_dbfs });
+                    self.last_unix = message.unix_time;
+                    if same_chime {
+                        return;
+                    }
+                    // Stop listening once the other input has had time to finish this chime.
+                    self.listen_until = self.listen_until.min(now + self.rate_hz as u64 / 4);
+                }
+                let command = remote.and_then(RemoteMessage::command);
+                if let Some(refused) = self.refusal(remote, &message) {
+                    // A chime that is refused, or has no command, gives no time or location.
+                    if remote.is_some() {
+                        self.report(if command.is_some() { refused } else { RemoteResult::Unknown }, now);
+                    }
+                    return;
+                }
+                if !same_time {
+                    // The decoder counts samples from when it was built; the time since the
+                    // chime started is the same in both counts.
+                    let start_sample = now as i64 - (chime.end_sample as i64 - chime.start_sample);
+                    let sets_clock = command == Some(RemoteCommand::SetClock);
                     self.reading = Some((Reading::new(&message, start_sample, now), sets_clock));
                 }
-                let Some(remote) = message.remote() else { return };
-                let same_chime =
-                    self.last.is_some_and(|last| last.message == remote) && self.last_unix == message.unix_time;
-                self.last = Some(LastCommand { message: remote, read_at: now, level_dbfs: chime.level_dbfs });
-                self.last_unix = message.unix_time;
-                if !same_chime {
-                    match remote.known() {
+                if remote.is_some() {
+                    match command {
                         Some(RemoteCommand::Start) => self.pending = Some(RecorderCommand::Start),
                         Some(RemoteCommand::Stop) => self.pending = Some(RecorderCommand::Stop),
                         Some(RemoteCommand::SetClock) => self.clock_pending = true,
                         Some(RemoteCommand::Listen(mode)) => self.pending_mode = Some(mode),
                         None => self.report(RemoteResult::Unknown, now),
                     }
-                    // Stop listening once the other input has had time to finish this chime.
-                    self.listen_until = self.listen_until.min(now + self.rate_hz as u64 / 4);
                 }
             }
             Event::Unreadable(_) => self.chimes_failed += 1,
         }
+    }
+
+    /// Why a chime is not used, while the code is required: it has no phone command, the
+    /// command has no check, the check was made from another code, or the chime's time is not
+    /// later than the time of the last command acted on. None for a chime to use, whose time
+    /// is then kept for the next one. Not inlined, so the check's hash stays out of ITCM.
+    #[inline(never)]
+    fn refusal(&mut self, remote: Option<RemoteMessage>, message: &TimeMessage) -> Option<RemoteResult> {
+        if !self.code_required {
+            return None;
+        }
+        let (Some(remote), Some(code)) = (remote, self.code) else { return Some(RemoteResult::CodeNeeded) };
+        if remote.check().is_none() {
+            return Some(RemoteResult::CodeNeeded);
+        }
+        if !remote.check_matches(&code, message.unix_time, message.timezone_minutes) {
+            return Some(RemoteResult::CodeWrong);
+        }
+        if self.last_coded_unix.is_some_and(|last| message.unix_time <= last) {
+            return Some(RemoteResult::CodeOld);
+        }
+        self.last_coded_unix = Some(message.unix_time);
+        None
     }
 
     /// The latest chime's time, once, and whether its chime was a clock command.

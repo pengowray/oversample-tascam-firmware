@@ -33,6 +33,8 @@
 //! `DRAW=on` or `DRAW=off` offers the Tests page's drawing switch (with `DEBUG=1`) in that state.
 //! `AUTO=on` or `AUTO=bats` sets Auto volume, for the settings screen.
 //! `GUANO=off` turns the GUANO metadata switch off, for the Record page.
+//! `REMOTE=off` turns Phone remote off and `PHONE_CODE=on` turns Phone code on, for the Phone
+//! page (`tools` with `PAGE=phone`). The code shown is 493 817.
 //! `MUTE=on` turns Mute while recording on, for the Record page and the main screen with
 //! `X8=recording`.
 //! `REC_READY=off` shows MANUAL's MASTER with REC READY off, for the settings screen's MIX file row.
@@ -245,7 +247,9 @@ fn main() {
         // As BAT DETECTOR on the X8 has it: all four tabs.
         Some("tools") => {
             app.set_remote_available(true);
-            app.set_remote_on(true);
+            app.set_remote_on(std::env::var("REMOTE").as_deref() != Ok("off"));
+            app.set_phone_code(*b"493817");
+            app.set_phone_code_required(std::env::var("PHONE_CODE").as_deref() == Ok("on"));
             app.set_debug_available(true);
             app.set_mix_file_available(true);
             app.open_settings_page(match std::env::var("PAGE").as_deref() {
@@ -260,16 +264,21 @@ fn main() {
                 run_cpu_test(&mut app, rows.parse().unwrap());
             }
         }
-        // RESULT picks another phone remote notice: clockset, aftertake, clockfailed, mode, nopitch.
+        // RESULT picks another phone remote notice: clockset, aftertake, clockfailed, mode, nopitch,
+        // needcode, wrongcode, oldcode.
         Some("unknown") => {
             app.set_remote_available(true);
             app.set_remote_on(true);
+            app.set_phone_code(*b"493817");
             app.remote_result(match std::env::var("RESULT").as_deref() {
                 Ok("clockset") => bat_app::RemoteResult::ClockSet,
                 Ok("aftertake") => bat_app::RemoteResult::ClockAfterTake,
                 Ok("clockfailed") => bat_app::RemoteResult::ClockFailed,
                 Ok("mode") => bat_app::RemoteResult::ModeSet(Mode::Comb),
                 Ok("nopitch") => bat_app::RemoteResult::ModeNotOffered(Mode::Pitch),
+                Ok("needcode") => bat_app::RemoteResult::CodeNeeded,
+                Ok("wrongcode") => bat_app::RemoteResult::CodeWrong,
+                Ok("oldcode") => bat_app::RemoteResult::CodeOld,
                 _ => bat_app::RemoteResult::Unknown,
             });
         }

@@ -2364,6 +2364,78 @@ B241 or an earlier build. All the checks in `tools/x8patch.py` pass on this file
 1. **Start and stop.** With Phone remote on and the phone page reloaded, do `Start recording` and `Stop recording` work as before?
 2. **Old phone page.** If a phone still has the old page cached, its commands should do nothing at all. Reload the page.
 
+## Step 42: a code for the phone remote (B273, source of 2026-11-15, no update file built)
+
+B273 is on a branch and is not built as an update file: it needs a `chime` crate commit in the Oversample repository
+that is not pushed yet, and `Cargo.toml` still names the commit before it. Built against a local copy of that crate,
+the patch passes all the checks in `tools/x8patch.py`. Nothing in this step has run on a unit. Includes Step 41 (B272).
+
+**What changes.**
+
+- **A code for the phone remote.** SETTINGS > Phone has a new `Phone code` switch, off by default: a guard against
+  other people's phones, for example where several people use X8s near each other. The first time it is turned on
+  after power-on, the X8 makes a 6-digit code and shows it beside the switch, as `493 817`, while the switch is on. The person types it into the
+  phone page once. The phone page then sends format version 2, in which each command has a 16-bit check made from the
+  code, the command, and the chime's time and UTC offset (SipHash-2-4; [PHONE_REMOTE.md](PHONE_REMOTE.md) has the
+  layout and test vectors). The code lasts until power-off, as every setting does.
+- **`Phone code` on.** The main screen acts only on a version 2 command whose check is right and whose
+  time is later than the last one it acted on. Each refusal is one low note and a notice:
+  - a command with no check (version 1, from a phone page without the code): `Phone page needs the X8's code.`
+    `Type it, then send again:` `493 817`
+  - a check made from another code: `Phone page has a different code.` `Type this one, then send again:` `493 817`
+  - a right check with a time no later than the last command acted on, which may be a recording played again:
+    `Phone command has an old time.` `Send again. Check phone's clock.`
+
+  Off, everything is as in B272, and version 2 commands are acted on whatever their check.
+- **Only an accepted command sets the clock.** With `Phone code` on, a chime that is not an accepted command gives the
+  main screen no time and no location. Before, with `Set clock from all chimes` on (the default), any chime after a
+  tone set the clock, including a plain AudioMoth chime with no command. PHONE TIME is unchanged: it reads every chime,
+  and a Set X8 clock chime sets the clock there in version 1 or version 2, whatever its check.
+- **Where the code comes from.** The X8 has no random number generator the patch can use. The app hashes 1 input sample
+  in 64 while a bat screen is open, and makes the code from that hash and the sample count when `Phone code` is first
+  turned on. With an input on, its noise makes the code different each time. With no input, the code depends only
+  on when the switch was turned on.
+- **Phone page layout.** The `Phone code` switch is under `Phone remote`, with the code in the page's largest text
+  beside the switch while it is on. To make room, the `Phone code` and `Set clock from all chimes` panels
+  are 40 px high (the other pages' are 48), the gaps round them are 4 px, and the QR code's modules are 4 px in place
+  of 5, so the code is 100 px (about 15 mm) in place of 125. The main screen is unchanged: its title bar says
+  `REMOTE` as before, and a refused command's notice gives the code.
+- **What the code does not do.** It keeps out other people's phones and commands by chance. A guessed check is right 1
+  time in 65,536, and someone who records a few commands can find the code by trying all 1,000,000. The location in
+  a chime is not covered by the check.
+
+**Memory.** The check is SipHash-2-4 because HMAC-SHA1 did not fit: with the RustCrypto `hmac` and `sha1` crates it
+took 6,384 bytes, and 3,072 were free at B272. The feature takes 2,472 bytes, 496 of them the check (the `siphasher`
+crate's took 1,088). The patch region has 600 bytes left (`.noinit` ends at 0x818ffda8), ITCM 81.1 of 89.2 KB used,
+DTCM 149.3 of 152.8 KB.
+
+**Not built: the code kept on the card.** Keeping the code in a file, so that it lasts over power-off, was measured and
+left out.
+
+- *Writing* would use the calls `location::write_log` makes for `BAT_LOCATIONS.CSV` (`FILE_OPEN`, `FILE_WRITE`,
+  `FILE_CLOSE`, from the GUANO hook on task 4 as a take's files close), so the code would reach the card only when a
+  take ends, in the takes' folder. That costs 296 bytes.
+- *Reading* has no path that is known to be safe in BAT DETECTOR. The patch reads files only in BAT PLAYBACK, on the
+  reader task, with `CORE_OPEN`, `FILE_READ` and `FILE_CLOSE`, and the reader keeps off the card outside BAT PLAYBACK
+  because the stock recorder uses it. The three calls for a 6-byte file cost 240 bytes, before a task to make them
+  from.
+- Both together took 536 of the 600 bytes left, without keeping the switch's setting.
+
+**What to check**, once a file is built.
+
+1. **The code.** SETTINGS > Phone, turn `Phone code` on: a 6-digit code beside the switch? Turn it off and on: the
+   same code? Power off and on, and turn it on again: another code?
+2. **QR code.** Does a phone still read the smaller QR code from 20 cm? This size has not been scanned from an X8.
+3. **Right code.** With `Phone code` on, type the code into the phone page. Do Start, Stop, Set X8 clock and a listening mode work as in
+   Step 41, with the same beeps?
+4. **No code.** With a phone page that has no code: one low note and `Phone page needs the X8's code.`, with the code?
+   Does the clock stay as it was?
+5. **Wrong code.** Type another code into the phone page: one low note and `Phone page has a different code.`?
+6. **Both inputs.** With two inputs on, does one command still give one pair of notes, and no `old time` notice?
+7. **Off.** With `Phone code` off, as it is after power-on: do commands work with any code, and with none?
+8. **CPU.** With Debug info on, are `dsp` and `skip%` as in Step 41? The hash of the input runs until `Phone code`
+   is first turned on.
+
 ## Step 41 test file: fewer redraws while the backlight is dimmed, and no phantom power question in BAT PLAYBACK (built 2026-11-13, not yet installed)
 
 `work/patch47/#PortaX8_0272.203` (B272, SHA-256 `228a1ec5…35883910ec`). Includes Steps 39 and 40 (B263 and B266), whose

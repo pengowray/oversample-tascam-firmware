@@ -577,3 +577,20 @@ fn a_clock_command_chime_sets_the_clock_from_the_phone_time_screen() {
     app.set_clock_state(ClockState::Set(0));
     assert_eq!(app.remote.result_shown(app.samples), Some(crate::RemoteResult::ClockSet));
 }
+
+/// The phone time screen does not look at a version 2 command's check: a Set X8 clock chime made
+/// with any code sets the clock, also while the phone code is required on the main screen.
+#[test]
+fn a_coded_clock_command_sets_the_clock_from_the_phone_time_screen() {
+    let mut bytes = chime_gen::time_payload(UNIX, 660);
+    bytes.extend_from_slice(&chime::format::RemoteCommand::SetClock.coded_deployment_id(b"000000", UNIX, 660));
+    let render = chime_gen::render(FS as u32, &bytes, chime_gen::tune_for_payload(bytes.len()));
+    let chime: Vec<f32> = render.mix().iter().map(|&v| v as f32).collect();
+    let x = chime_in_silence(SECOND / 2, &chime, SECOND);
+    let mut storage = vec![0.0f32; 1024];
+    let mut app = BatApp::new(FS, &mut storage, buffers());
+    app.set_phone_code_required(true);
+    app.open_chime_test();
+    run_two(&mut app, &x, &x);
+    assert!(app.take_phone_time().expect("the chime's time").set_clock);
+}

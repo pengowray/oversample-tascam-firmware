@@ -211,7 +211,7 @@ pub fn draw(app: &BatApp, fb: Fb) {
     } else if app.pause_refused_shown() {
         corner_notice_lines(fb, &pages::PAUSE_OFF_LINES);
     } else if let Some(result) = app.remote.result_shown(app.samples) {
-        corner_notice_lines(fb, pages::result_lines(result));
+        pages::result_notice(app, fb, result);
     } else if let Some(silence) = app.mix_silence() {
         mix_silence_notice(fb, silence);
     }

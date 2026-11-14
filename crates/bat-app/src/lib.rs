@@ -267,6 +267,9 @@ pub enum Setting {
     MixFile,
     /// Whether a phone remote chime also sets the host's clock: see [`PhoneTime`].
     ClockFromRemote,
+    /// Whether the phone remote acts only on commands made with the code on the Phone page:
+    /// see [`BatApp::phone_code_required`].
+    PhoneCode,
     /// Whether REC pauses a take: see [`BatApp::set_pause_option_available`].
     PauseWithRec,
     /// Whether the headphones are silent while a take is being recorded: see
@@ -281,7 +284,7 @@ pub enum Setting {
 }
 
 impl Setting {
-    pub const ALL: [Setting; 14] = [
+    pub const ALL: [Setting; 15] = [
         Setting::LowestBatCall,
         Setting::ListenTo,
         Setting::AutoLevel,
@@ -291,6 +294,7 @@ impl Setting {
         Setting::PauseWithRec,
         Setting::MuteWhileRecording,
         Setting::CellsOnWeakUsb,
+        Setting::PhoneCode,
         Setting::ClockFromRemote,
         Setting::Mark(CallKind::Bat),
         Setting::Mark(CallKind::Tone),
@@ -305,7 +309,7 @@ impl Setting {
             Setting::MixFile | Setting::PauseWithRec | Setting::MuteWhileRecording | Setting::CellsOnWeakUsb => {
                 SettingsPage::Record
             }
-            Setting::ClockFromRemote => SettingsPage::Phone,
+            Setting::ClockFromRemote | Setting::PhoneCode => SettingsPage::Phone,
             Setting::DebugInfo | Setting::DrawOnInput => SettingsPage::Tests,
             _ => SettingsPage::Listen,
         }
@@ -1075,6 +1079,28 @@ impl<'a> BatApp<'a> {
         self.remote.on = on;
     }
 
+    /// Whether the phone remote acts only on commands whose check was made from the phone
+    /// code, and uses no other chime's time or location on the main screen. Off by default.
+    pub fn phone_code_required(&self) -> bool {
+        self.remote.code_required
+    }
+
+    /// Turn the Phone code switch on or off. The first time it is turned on, the app makes the
+    /// phone code.
+    pub fn set_phone_code_required(&mut self, required: bool) {
+        self.remote.set_code_required(required, self.samples);
+    }
+
+    /// The phone code, as 6 ASCII digits, once the Phone code switch has been turned on.
+    pub fn phone_code(&self) -> Option<[u8; 6]> {
+        self.remote.code
+    }
+
+    /// Set the phone code, in place of the one the app makes: for tests and screenshots.
+    pub fn set_phone_code(&mut self, code: [u8; 6]) {
+        self.remote.code = Some(code);
+    }
+
     /// Tones heard, chimes read and chimes that failed, since the host started.
     pub fn remote_counts(&self) -> (u32, u32, u32) {
         self.remote.counts()
@@ -1157,6 +1183,8 @@ impl<'a> BatApp<'a> {
             Setting::MixFile => {}
             Setting::ClockFromRemote if steps != 0 => self.clock_from_remote = steps > 0,
             Setting::ClockFromRemote => {}
+            Setting::PhoneCode if steps != 0 => self.set_phone_code_required(steps > 0),
+            Setting::PhoneCode => {}
             Setting::PauseWithRec if steps != 0 => self.pause_with_rec = steps > 0,
             Setting::PauseWithRec => {}
             Setting::MuteWhileRecording if steps != 0 => self.mute_while_recording = steps > 0,
@@ -1591,7 +1619,7 @@ impl<'a> BatApp<'a> {
         match Setting::ALL[i] {
             Setting::DebugInfo => self.debug_available,
             Setting::MixFile => self.mix_file_available,
-            Setting::ClockFromRemote => self.remote.available,
+            Setting::ClockFromRemote | Setting::PhoneCode => self.remote.available,
             Setting::PauseWithRec => self.pause_option_available,
             Setting::MuteWhileRecording => self.input_kind == InputKind::Live,
             Setting::CellsOnWeakUsb => self.power_option_available,
@@ -1886,6 +1914,7 @@ impl<'a> BatApp<'a> {
                     Setting::DebugInfo => self.debug_info = !self.debug_info,
                     Setting::MixFile => self.mix_file = !self.mix_file,
                     Setting::ClockFromRemote => self.clock_from_remote = !self.clock_from_remote,
+                    Setting::PhoneCode => self.set_phone_code_required(!self.remote.code_required),
                     Setting::PauseWithRec => self.pause_with_rec = !self.pause_with_rec,
                     Setting::MuteWhileRecording => self.mute_while_recording = !self.mute_while_recording,
                     Setting::CellsOnWeakUsb => self.cells_on_weak_usb = !self.cells_on_weak_usb,
@@ -2289,6 +2318,7 @@ impl<'a> BatApp<'a> {
         self.stages.start();
         self.meters[0].update(peak(first), chunk_s);
         self.meters[1].update(peak(second), chunk_s);
+        self.remote.add_noise(first);
         self.stages.lap(Stage::Input);
 
         if self.screen == Screen::ChimeTest {

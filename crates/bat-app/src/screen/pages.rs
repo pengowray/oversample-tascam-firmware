@@ -5,10 +5,14 @@ use embedded_graphics::pixelcolor::Rgb565;
 use embedded_graphics::prelude::*;
 use embedded_graphics::primitives::{PrimitiveStyle, Rectangle};
 
-use super::{BODY, BODY_BOLD, Fb, Fixed, LEFT, SMALL, hline, outline_selected, rounded, switch_control, text};
+use super::{
+    BIG, BODY, BODY_BOLD, Fb, Fixed, LEFT, RIGHT, SMALL, corner_notice_lines, hline, outline_selected, rounded,
+    switch_control, text,
+};
 use crate::layout::{
-    PHONE_CLOCK, PHONE_REMOTE, QR_MARGIN, QR_MODULE, QR_TEXT_X, RECORD_GUANO, RECORD_MIX_FILE, RECORD_MUTE,
-    RECORD_PAUSE, RECORD_POWER, TESTS_CPU_TEST, TESTS_DEBUG, TESTS_DRAW, panel_switch, phone_time, qr_card,
+    PHONE_CLOCK, PHONE_CODE, PHONE_CODE_BASELINE, PHONE_CODE_RIGHT, PHONE_REMOTE, QR_MARGIN, QR_MODULE, QR_TEXT_X,
+    RECORD_GUANO, RECORD_MIX_FILE, RECORD_MUTE, RECORD_PAUSE, RECORD_POWER, TESTS_CPU_TEST, TESTS_DEBUG, TESTS_DRAW,
+    panel_switch, phone_time, qr_card,
 };
 use crate::palette::*;
 use crate::{BatApp, Mode, RecorderCommand, RemoteCommand, RemoteResult, Setting, qr};
@@ -45,6 +49,14 @@ pub(super) const MUTED_LABEL: &str = "MUTED";
 pub(super) const PAUSE_OFF_LINES: [&str; 2] = ["Pausing is off.", "STOP ends the take."];
 pub(super) const CLOCK_FROM_REMOTE_STATE: [&str; 2] =
     ["Only the phone's \"Set X8 clock\" sets the clock.", "Start, Stop and mode chimes also set the clock."];
+pub(super) const CODE_NAME: &str = "Phone code";
+/// The on line is short, because the code is at its right.
+pub(super) const CODE_STATE: [&str; 2] = ["The X8 obeys commands from any phone.", "Phone commands need a code"];
+/// On the main screen when a command was refused. The code is the line after these, grouped
+/// as on the Phone page.
+pub(super) const CODE_NEEDED_LINES: [&str; 2] = ["Phone page needs the X8's code.", "Type it, then send again:"];
+pub(super) const CODE_WRONG_LINES: [&str; 2] = ["Phone page has a different code.", "Type this one, then send again:"];
+pub(super) const CODE_OLD_LINES: [&str; 2] = ["Phone command has an old time.", "Send again. Check phone's clock."];
 pub(super) const CPU_TEST_NAME: &str = "CPU test";
 pub(super) const CPU_TEST_HELP: [&str; 2] =
     ["Runs every listening mode with Auto volume off and on,", "8 s each, up to 3 min. Lists CPU load and lost input."];
@@ -107,9 +119,11 @@ fn switch_panel(fb: Fb, panel: Rectangle, name: &str, lines: &[&str], on: bool, 
         outline_selected(fb, panel);
     }
     let (x, y) = (panel.top_left.x + 10, panel.top_left.y);
-    text(fb, &BODY, name, x, y + 20, LEFT, TEXT);
+    // The Phone page's 40 px panels have the same 8 px under their one line as the others.
+    let lower = panel.size.height as i32 - 48;
+    text(fb, &BODY, name, x, y + 20 + lower / 2, LEFT, TEXT);
     switch_control(fb, panel_switch(panel), on);
-    for (line, y) in lines.iter().zip([y + 40, y + 54]) {
+    for (line, y) in lines.iter().zip([y + 40 + lower, y + 54]) {
         text(fb, &SMALL, *line, x, y, LEFT, TEXT_MUTED);
     }
 }
@@ -176,6 +190,14 @@ pub(super) fn record(app: &BatApp, fb: Fb) {
 pub(super) fn phone(app: &BatApp, fb: Fb) {
     if app.remote_available() {
         remote_panel(app, fb);
+        let selected = app.selected_setting() == Setting::PhoneCode;
+        let on = app.phone_code_required();
+        switch_panel(fb, PHONE_CODE, CODE_NAME, &[state(&CODE_STATE, on)], on, selected);
+        if let Some(code) = app.remote.code_shown() {
+            // The largest text on the page: it is what the person reads off the screen.
+            let y = PHONE_CODE.top_left.y + PHONE_CODE_BASELINE;
+            text(fb, &BIG, grouped(&Grouped::new(&code)), PHONE_CODE_RIGHT, y, RIGHT, TEXT);
+        }
         let selected = app.selected_setting() == Setting::ClockFromRemote;
         let line = state(&CLOCK_FROM_REMOTE_STATE, app.clock_from_remote());
         switch_panel(fb, PHONE_CLOCK, CLOCK_FROM_REMOTE_NAME, &[line], app.clock_from_remote(), selected);
@@ -269,6 +291,32 @@ fn remote_panel(app: &BatApp, fb: Fb) {
     }
 }
 
+/// The code as it is shown, in two groups of three digits: `493 817`.
+struct Grouped([u8; 7]);
+
+impl Grouped {
+    fn new(code: &[u8; 6]) -> Self {
+        let [a, b, c, d, e, f] = *code;
+        Self([a, b, c, b' ', d, e, f])
+    }
+}
+
+fn grouped(code: &Grouped) -> &str {
+    core::str::from_utf8(&code.0).unwrap_or("")
+}
+
+/// A command's outcome, in the corner of the waterfall. A refusal over the code gives the code
+/// to type into the phone page.
+pub(super) fn result_notice(app: &BatApp, fb: Fb, result: RemoteResult) {
+    let [first, second] = match result {
+        RemoteResult::CodeNeeded => CODE_NEEDED_LINES,
+        RemoteResult::CodeWrong => CODE_WRONG_LINES,
+        _ => return corner_notice_lines(fb, result_lines(result)),
+    };
+    let code = Grouped::new(&app.remote.code.unwrap_or(*b"------"));
+    corner_notice_lines(fb, &[first, second, grouped(&code)]);
+}
+
 /// A phone remote message from a newer phone page than this build reads.
 pub(super) const UNKNOWN_LINES: [&str; 2] = ["Unknown phone command.", "Update the bat firmware."];
 
@@ -290,6 +338,9 @@ pub(super) fn result_lines(result: RemoteResult) -> &'static [&'static str] {
         RemoteResult::ClockFailed => &CLOCK_FAILED_LINES,
         RemoteResult::ModeSet(mode) => &MODE_SET_LINES[mode_index(mode)],
         RemoteResult::ModeNotOffered(mode) => &MODE_NOT_OFFERED_LINES[mode_index(mode)],
+        // `result_notice` adds the code to these two.
+        RemoteResult::CodeNeeded | RemoteResult::CodeWrong => &[],
+        RemoteResult::CodeOld => &CODE_OLD_LINES,
     }
 }
 
@@ -328,6 +379,17 @@ pub(crate) fn lines_with_widths() -> std::vec::Vec<(std::string::String, i32, i3
     }
     add(&SMALL, CHIME_TEST_HELP, phone_time(true).size.width as i32 - 20 - ARROW_ROOM);
     add(&BODY_BOLD, CHIME_TEST_NAME, phone_time(true).size.width as i32 - 20 - ARROW_ROOM);
+    // The phone code's on line ends before the code, which is at most this wide.
+    let code_width = width(&BIG, "888 888");
+    add(&SMALL, CODE_STATE[1], PHONE_CODE_RIGHT - code_width - 8 - 16);
+    // In the Phone page's 40 px panels the line is beside the switch, not under it.
+    for line in [CODE_STATE[0]].iter().chain(&CLOCK_FROM_REMOTE_STATE) {
+        add(&SMALL, line, 240);
+    }
+    add(&BODY, CODE_NAME, PHONE_CODE_RIGHT - code_width - 8 - 16);
+    for line in CODE_NEEDED_LINES.iter().chain(&CODE_WRONG_LINES) {
+        add(&BODY, line, crate::layout::WF_W as i32 - 20);
+    }
     let states = [MIX_FILE_FOLLOWS, DEBUG_STATE, DRAW_STATE, GUANO_STATE, PAUSE_STATE, CLOCK_FROM_REMOTE_STATE];
     for line in states.iter().flatten().chain([&MIX_FILE_OVERRIDES, &GUANO_HELP]) {
         add(&SMALL, line, inside);
@@ -356,6 +418,7 @@ pub(crate) fn lines_with_widths() -> std::vec::Vec<(std::string::String, i32, i3
         RemoteResult::ClockSet,
         RemoteResult::ClockAfterTake,
         RemoteResult::ClockFailed,
+        RemoteResult::CodeOld,
     ]
     .into_iter()
     .chain(Mode::ALL.map(RemoteResult::ModeSet))
