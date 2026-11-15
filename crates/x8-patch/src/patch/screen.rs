@@ -556,7 +556,7 @@ impl core::fmt::Write for Line {
 }
 
 const STRIP_ROWS: usize = 13;
-const FONT: FontRenderer = FontRenderer::new::<fonts::u8g2_font_helvR08_tf>();
+const FONT: FontRenderer = FontRenderer::new::<fonts::u8g2_font_helvR08_tr>().with_ignore_unknown_chars(true);
 
 fn draw_strip(target: &mut Rgb565Buffer<'_>, top: i32, line: &Line, background: Rgb565) {
     let _ = target

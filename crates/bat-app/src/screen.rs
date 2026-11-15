@@ -44,11 +44,11 @@ pub(crate) fn chime_clock_width(text: &str) -> i32 {
     chime_screen::CLOCK.get_rendered_dimensions(text, Point::zero(), VerticalPosition::Baseline).unwrap().advance.x
 }
 
-const SMALL: FontRenderer = FontRenderer::new::<fonts::u8g2_font_helvR08_tf>();
-const BODY: FontRenderer = FontRenderer::new::<fonts::u8g2_font_helvR10_tf>();
-const BODY_BOLD: FontRenderer = FontRenderer::new::<fonts::u8g2_font_helvB10_tf>();
-const VALUE: FontRenderer = FontRenderer::new::<fonts::u8g2_font_helvB14_tf>();
-const BIG: FontRenderer = FontRenderer::new::<fonts::u8g2_font_helvB18_tf>();
+const SMALL: FontRenderer = FontRenderer::new::<fonts::u8g2_font_helvR08_tr>().with_ignore_unknown_chars(true);
+const BODY: FontRenderer = FontRenderer::new::<fonts::u8g2_font_helvR10_tr>().with_ignore_unknown_chars(true);
+const BODY_BOLD: FontRenderer = FontRenderer::new::<fonts::u8g2_font_helvB10_tr>().with_ignore_unknown_chars(true);
+const VALUE: FontRenderer = FontRenderer::new::<fonts::u8g2_font_helvB14_tr>().with_ignore_unknown_chars(true);
+const BIG: FontRenderer = FontRenderer::new::<fonts::u8g2_font_helvB18_tr>().with_ignore_unknown_chars(true);
 
 type Fb<'a, 'b> = &'a mut Rgb565Buffer<'b>;
 
