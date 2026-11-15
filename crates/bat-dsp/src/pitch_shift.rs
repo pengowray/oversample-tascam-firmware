@@ -5,7 +5,7 @@
 //! phase-vocoder techniques for real-time pitch shifting, chorusing,
 //! harmonizing and other exotic audio modifications", JAES 47(11), 1999):
 //!
-//! 1. Every 288 samples (1.5 ms), the last 1024 are windowed (Hann) and
+//! 1. Every 512 samples (2.7 ms), the last 1024 are windowed (Hann) and
 //!    transformed.
 //! 2. Each local maximum of the magnitude spectrum is a peak. The bins within 4
 //!    of a peak (and nearer to it than to the next peak) move together, by the
@@ -16,7 +16,7 @@
 //!    in fixed blocks of 5 bins, each block by the shift of its centre.
 //! 4. Moving a bin by `d` bins changes its frequency within the frame but not
 //!    its phase at the centre of the frame. To keep the output continuous from
-//!    one frame to the next, the moved bins are also rotated by `d × 288 / 1024`
+//!    one frame to the next, the moved bins are also rotated by `d × 512 / 1024`
 //!    turns more each hop. For peaks this `d` is not rounded, so a tone comes
 //!    out at exactly its frequency divided by the factor. Each peak or block
 //!    continues the rotation stored at its bin in the previous frame.
@@ -61,13 +61,14 @@ use fft::{PHASOR_STEPS, PHASORS};
 
 /// Samples in one analysis frame.
 pub const FRAME_LEN: usize = 1024;
-/// Samples between frames. 288 costs 11% less than 256 (a quarter frame)
-/// with the same figures for steady tones in `measurements`; at 320 their
-/// median tone to residual falls from 49 to 41 dB. Unlike 256, 288 does not
-/// divide the frame, so noise comes out with its level rising and falling
-/// once a hop: 0.6 dB from top to bottom at factor 4, 0.25 dB at factor 10
-/// (0.05 dB, the measuring limit, at 256). A multiple of [`DECIMATION`].
-pub const HOP: usize = 288;
+/// Samples between frames: half a frame, for the X8's CPU. Against 288 (the
+/// hop before) it takes about 36% less time, with no clicks, but a steady tone
+/// gains a warble at the frame rate (375 Hz at 192 kHz): sidebands at a
+/// median of -19 dBc over tones from 20 to 90 kHz (-53 dBc at 288), worst
+/// near half a bin of shift. On 2026-11-15 the owner heard no difference
+/// from 288 on recordings and synthetic CF calls. A multiple of
+/// [`DECIMATION`].
+pub const HOP: usize = 512;
 
 pub const DEFAULT_FACTOR: f32 = 10.0;
 /// The smallest factor: the shifted sound must fit below 24 kHz (see [`Stft`]).
