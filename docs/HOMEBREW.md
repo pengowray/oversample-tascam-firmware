@@ -2364,11 +2364,39 @@ B241 or an earlier build. All the checks in `tools/x8patch.py` pass on this file
 1. **Start and stop.** With Phone remote on and the phone page reloaded, do `Start recording` and `Stop recording` work as before?
 2. **Old phone page.** If a phone still has the old page cached, its commands should do nothing at all. Reload the page.
 
-## Step 42: a code for the phone remote (B273, source of 2026-11-15, no update file built)
+## Step 43 test file: B273's source built for size, to compare CPU (built 2026-11-15, not yet installed)
 
-B273 is on a branch and is not built as an update file: it needs a `chime` crate commit in the Oversample repository
-that is not pushed yet, and `Cargo.toml` still names the commit before it. Built against a local copy of that crate,
-the patch passes all the checks in `tools/x8patch.py`. Nothing in this step has run on a unit. Includes Step 41 (B272).
+`work/patch49/#PortaX8_0274.203` (B274, SHA-256 `fa001217…1c7dc62dc9b4e`). The same source as B273, built with
+`tools/build.sh --config 'profile.release.opt-level="s"'` instead of `opt-level = 3`. All the checks in
+`tools/x8patch.py` pass. It is for one comparison: how much processor time building for size costs. If the cost is
+small, the patch region gets room for the features that do not fit now (the phone code kept on the card, the cell
+level in BAT DETECTOR's title bar, CPU test results written to the card, 32-bit float over USB).
+
+| | B273 (`opt-level = 3`) | B274 (`"s"`) |
+|---|---|---|
+| `.text` | 211,734 bytes | 140,140 bytes |
+| `.itcm` (of 89.2 KB) | 83,040 bytes | 48,440 bytes |
+| Patch region free | 456 bytes | about 106 KB |
+| Update file | 25,862,068 bytes | 25,755,756 bytes |
+
+**What to check.** Run each step on B273, then install B274 and run it again in the same state: the same inputs on,
+the same rate, the recorder in the same state, Synthetic calls on.
+
+1. **CPU test.** SETTINGS > Tests, CPU test, Start test. Photograph the table when it ends; the line above it names
+   the build. Compare `dsp`, `max`, `draw` and `skip%` row by row. Any yellow count (`dry`, `lost`, `drop`) in B274
+   that B273 does not have?
+2. **CPU test while recording.** The same, with a take running for every row.
+3. **USB and a take together.** With a phone recording the X8 over USB at 192 kHz and a take running in BAT DETECTOR,
+   Debug info on: do `dsp` and `skip%` stay as without USB, and are `lost` and `drop` 0? Does the phone's file play
+   with no gaps? This has not been checked on any build.
+4. **By ear.** In B274, do HET, FD and TE sound as in B273, with no clicks or dropouts?
+
+## Step 42 test file: a code for the phone remote (built 2026-11-15, not yet installed)
+
+`work/patch48/#PortaX8_0273.203` (B273, SHA-256 `3e3b25bc…48647a67339a3`). Includes Step 41 (B272), whose checks
+still apply. Install this file in place of any earlier build. All the checks in `tools/x8patch.py` pass, and two
+builds give the same file. It builds from the `chime` crate commit that `Cargo.toml` names. Nothing in this step has
+run on a unit.
 
 **What changes.**
 
@@ -2426,7 +2454,7 @@ left out.
   from.
 - Both together took 536 bytes, without keeping the switch's setting, and 456 are left.
 
-**What to check**, once a file is built.
+**What to check.**
 
 1. **The code.** SETTINGS > Phone, turn `Phone code` on: a 6-digit code beside the switch? Turn it off and on: the
    same code? Power off and on, and turn it on again: another code?
