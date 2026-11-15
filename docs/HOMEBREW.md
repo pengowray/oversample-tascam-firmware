@@ -2399,8 +2399,9 @@ recording (252 lost, `skip%` 12 and 21), several rows skip 1 to 3% of the analys
 than on B273 (up to 1.1 M frames lost and 43k dropped, against 39k and 3k). On B273, PITCH stereo was already the only
 row that could not keep up.
 
-Per-package opt-levels do not help, because LTO optimises the whole patch again at the top crate's level. Measured
-sizes (bytes):
+Per-package opt-levels don't give B273's ITCM code with a smaller patch. A crate built for size does get smaller
+(bat-app at `"s"` saves about 23 KB of `.text`), but the hot processing is in bat-app too, so ITCM changes with it.
+Measured sizes (bytes; `.text` does not include `.itcm`):
 
 | Build | `.itcm` | `.text` |
 |---|---|---|
@@ -2412,7 +2413,8 @@ sizes (bytes):
 | B274, all `"s"` | 48,440 | 140,140 |
 
 Only the first two keep the ITCM code the same as B273's, and the second saves only about 3 KB. The others change the
-code that runs in ITCM, so they would probably be slower too. B273's `opt-level = 3` stays.
+code that runs in ITCM, so they would probably be slower too. B273's `opt-level = 3` stays. Moving bat-app's screens
+into a crate of their own, built for size, would keep the ITCM code and save most of that 23 KB.
 
 ## Step 42 test file: a code for the phone remote (built 2026-11-15, not yet installed)
 
