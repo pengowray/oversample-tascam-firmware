@@ -84,13 +84,15 @@ pub(super) extern "C" fn enter_work() {
         load_itcm();
         // SAFETY: spare SDRAM no stock code uses (see `spare`).
         let te = unsafe { core::slice::from_raw_parts_mut(spare::TE_STORAGE as *mut f32, spare::TE_SAMPLES) };
-        // SAFETY: zeroing the buffers in place makes them a valid Buffers.
+        // SAFETY: zeroing the buffers in place makes them a valid CachedBuffers.
         let buffers = unsafe {
             ptr::write_bytes(BUFFERS.0.get(), 0, 1);
             (*BUFFERS.0.get()).assume_init_mut()
         };
+        // SAFETY: spare SDRAM no stock code uses (see `spare`); any bytes are a valid Snapshot.
+        let snapshot = unsafe { &mut *(spare::SNAPSHOT as *mut bat_app::Snapshot) };
         // SAFETY: init_in_place writes every field; only task 1 uses APP.
-        unsafe { BatApp::init_in_place((*APP.0.get()).as_mut_ptr(), SAMPLE_RATE, te, buffers) };
+        unsafe { BatApp::init_in_place((*APP.0.get()).as_mut_ptr(), SAMPLE_RATE, te, buffers, snapshot) };
         // SAFETY: just built; no other context uses it yet.
         let app = unsafe { app() };
         app.set_modes(&Mode::WITHOUT_PITCH);

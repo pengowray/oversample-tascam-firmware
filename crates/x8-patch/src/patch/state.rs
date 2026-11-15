@@ -2,7 +2,7 @@ use core::cell::UnsafeCell;
 use core::mem::MaybeUninit;
 use core::sync::atomic::{AtomicBool, AtomicU32};
 
-use bat_app::{BatApp, Buffers};
+use bat_app::{BatApp, CachedBuffers};
 
 use super::{Slot, spare, stock};
 
@@ -149,7 +149,7 @@ pub(super) static CYCLE_COUNTER_ON: AtomicBool = AtomicBool::new(false);
 #[unsafe(link_section = ".dtcm")]
 pub(super) static APP: Slot<BatApp<'static>> = Slot(UnsafeCell::new(MaybeUninit::uninit()));
 #[unsafe(link_section = ".noinit")]
-pub(super) static BUFFERS: Slot<Buffers> = Slot(UnsafeCell::new(MaybeUninit::uninit()));
+pub(super) static BUFFERS: Slot<CachedBuffers> = Slot(UnsafeCell::new(MaybeUninit::uninit()));
 
 /// Checksum of the code copied into ITCM, to stop processing if anything
 /// changes it (no stock code is known to use that part of ITCM).

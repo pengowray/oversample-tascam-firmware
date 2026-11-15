@@ -626,7 +626,7 @@ fn snapshot(app: &BatApp, fb: Fb) {
         let row = fb.row_mut(SNAP_Y as usize + y);
         let dst = &mut row[SNAP_X as usize..SNAP_X as usize + SNAP_W];
         for (x, px) in dst.iter_mut().enumerate() {
-            *px = INFERNO_565[app.bufs.snapshot[x * SNAP_H + y] as usize];
+            *px = INFERNO_565[app.snapshot[x * SNAP_H + y] as usize];
         }
     }
     // The frequencies at the top and bottom of the snapshot.

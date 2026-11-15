@@ -18,6 +18,13 @@ const _: () = assert!(OUT_FRAMES.is_multiple_of(4));
 /// The input ring is `IN_RING`, in DTCM (see state.rs).
 pub const IN_FRAMES: u32 = 8_192;
 
+/// The snapshot of the last call (`bat_app::Snapshot`, 9,000 bytes), in the 9 KB between the
+/// time expander's storage and the patch stack. The app writes it once per marked call and the
+/// screen reads it once per frame, so uncached costs little. It was in the patch region until
+/// B275.
+pub const SNAPSHOT: usize = 0x87f5_dc00;
+const _: () = assert!(SNAPSHOT >= TE_STORAGE + TE_SAMPLES * 4);
+
 // From here to the end of SDRAM (0x87f60000 to 0x87ffffff), after the time expander's storage:
 // uncached like the display buffer. Each range below starts 32-byte aligned (a cache line, and
 // what the card's DMA wants), and the asserts check that each ends before the next starts.
@@ -28,7 +35,7 @@ pub const IN_FRAMES: u32 = 8_192;
 /// slower, but it is used little: the DSP task does the processing.
 pub const PATCH_STACK: usize = 0x87f6_0000;
 pub const PATCH_STACK_BYTES: usize = 40 * 1024;
-const _: () = assert!(PATCH_STACK >= TE_STORAGE + TE_SAMPLES * 4);
+const _: () = assert!(PATCH_STACK >= SNAPSHOT + size_of::<bat_app::Snapshot>());
 /// BAT PLAYBACK's list as the app keeps it: `[bat_app::FileEntry; LIST_FILES]`.
 pub const FILE_LIST: usize = 0x87f6_a000;
 pub const FILE_LIST_BYTES: usize = 0xc000;

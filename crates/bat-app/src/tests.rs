@@ -1144,8 +1144,11 @@ fn init_in_place_over_garbage_matches_new() {
     // SAFETY: filling the slot's bytes before building into it.
     unsafe { core::ptr::write_bytes(slot.as_mut_ptr().cast::<u8>(), 0xa5, core::mem::size_of::<BatApp>()) };
     // SAFETY: init_in_place writes every field.
+    let Buffers { cached, snapshot } = buffers();
+    // The snapshot left as filler, as the X8's uncached memory is.
+    snapshot.fill(0xa5);
     let placed = unsafe {
-        BatApp::init_in_place(slot.as_mut_ptr(), FS, &mut s2, buffers());
+        BatApp::init_in_place(slot.as_mut_ptr(), FS, &mut s2, cached, snapshot);
         slot.assume_init_mut()
     };
     let out_placed = run(placed, &x, 4096);

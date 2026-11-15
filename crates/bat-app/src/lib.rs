@@ -437,12 +437,38 @@ impl Meter {
     }
 }
 
-/// The app's large buffers: about 158 KB. Its processing touches them only once per
-/// spectrum column or display column, except for the chime test's decoders, which it
-/// touches for every sample while that screen is open. They are kept outside
-/// [`BatApp`] so that on the X8 the app's own state (about 44 KB, touched for
-/// every sample) can sit in fast on-chip memory while these stay in SDRAM.
+/// The snapshot of the last call, scaled to the snapshot's size, column-major. The app
+/// writes it once per marked call and the screen reads it once per frame, so on the X8 it
+/// can sit in uncached memory.
+pub type Snapshot = [u8; SNAP_W * SNAP_H];
+
+/// Everything the app keeps outside its own state: [`CachedBuffers`] and the [`Snapshot`],
+/// together, for [`BatApp::new`]. A host that places them apart passes them separately to
+/// [`BatApp::init_in_place`].
 pub struct Buffers {
+    cached: CachedBuffers,
+    snapshot: Snapshot,
+}
+
+impl Buffers {
+    /// All zero, with the chime test's decoders not built yet, for a `static`.
+    pub const fn new() -> Self {
+        Self { cached: CachedBuffers::new(), snapshot: [0; SNAP_W * SNAP_H] }
+    }
+}
+
+impl Default for Buffers {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+/// The app's large buffers, apart from the snapshot. Its processing touches them only once
+/// per spectrum column or display column, except for the chime test's decoders, which it
+/// touches for every sample while that screen is open. They are kept outside [`BatApp`] so
+/// that on the X8 the app's own state (about 44 KB, touched for every sample) can sit in
+/// fast on-chip memory while these stay in cached SDRAM.
+pub struct CachedBuffers {
     /// Waterfall levels (0 to 254, or `WF_NO_DATA`), one column of `WF_H` per
     /// `WF_COLUMN_MS`, column-major, as a ring: `BatApp::wf_next` is the oldest
     /// column.
@@ -451,8 +477,6 @@ pub struct Buffers {
     /// snapshots, and their centre sample times.
     history: [u8; HISTORY * BINS],
     history_centre: [u64; HISTORY],
-    /// The last call, scaled to the snapshot's size, column-major.
-    snapshot: [u8; SNAP_W * SNAP_H],
     /// The chime test's decoders, one per block of input, built when the screen opens.
     chime: [core::mem::MaybeUninit<chime::Decoder>; 2],
     /// PITCH's shifter for the right ear, used only in stereo. The left ear's is in the app's
@@ -460,21 +484,20 @@ pub struct Buffers {
     pitch_right: PitchShifter,
 }
 
-impl Buffers {
+impl CachedBuffers {
     /// All zero, with the chime test's decoders not built yet, for a `static`.
     pub const fn new() -> Self {
         Self {
             wf: [0; WF_W * WF_H],
             history: [0; HISTORY * BINS],
             history_centre: [0; HISTORY],
-            snapshot: [0; SNAP_W * SNAP_H],
             chime: [const { core::mem::MaybeUninit::uninit() }; 2],
             pitch_right: PitchShifter::unconfigured(),
         }
     }
 }
 
-impl Default for Buffers {
+impl Default for CachedBuffers {
     fn default() -> Self {
         Self::new()
     }
@@ -524,8 +547,9 @@ pub struct BatApp<'a> {
     /// steady tone, the start of the tone.
     last_call_since: u64,
 
-    /// The waterfall, history and snapshot (see [`Buffers`]).
-    bufs: &'a mut Buffers,
+    /// The waterfall and history (see [`CachedBuffers`]).
+    bufs: &'a mut CachedBuffers,
+    snapshot: &'a mut Snapshot,
     /// The oldest column of the waterfall ring.
     wf_next: usize,
     /// Index of the display column being filled (sample time / column length).
@@ -682,7 +706,8 @@ impl<'a> BatApp<'a> {
         let mut app = core::mem::MaybeUninit::<Self>::uninit();
         // SAFETY: init_in_place writes every field.
         unsafe {
-            Self::init_in_place(app.as_mut_ptr(), sample_rate, te_storage, buffers);
+            let Buffers { cached, snapshot } = buffers;
+            Self::init_in_place(app.as_mut_ptr(), sample_rate, te_storage, cached, snapshot);
             app.assume_init()
         }
     }
@@ -698,7 +723,8 @@ impl<'a> BatApp<'a> {
         this: *mut Self,
         sample_rate: f32,
         te_storage: &'a mut [f32],
-        buffers: &'a mut Buffers,
+        buffers: &'a mut CachedBuffers,
+        snapshot: &'a mut Snapshot,
     ) {
         use core::ptr::addr_of_mut as field;
         /// Fill an array field element by element, without a temporary.
@@ -748,10 +774,11 @@ impl<'a> BatApp<'a> {
             buffers.wf.fill(0);
             buffers.history.fill(0);
             buffers.history_centre.fill(0);
-            buffers.snapshot.fill(0);
+            snapshot.fill(0);
             // Ready from `Buffers::new`, or all zero: either way `init` sets every setting.
             buffers.pitch_right.init(sample_rate);
             field!((*this).bufs).write(buffers);
+            field!((*this).snapshot).write(snapshot);
             field!((*this).wf_next).write(0);
             field!((*this).wf_column).write(0);
             fill(field!((*this).bin_max), f32::MIN);
@@ -2543,6 +2570,7 @@ impl<'a> BatApp<'a> {
             last_call,
             last_call_since,
             bufs,
+            snapshot,
             wf_next,
             wf_column,
             bin_max,
@@ -2565,7 +2593,7 @@ impl<'a> BatApp<'a> {
             remote,
             ..
         } = self;
-        let Buffers { wf, history, history_centre, snapshot, .. } = &mut **bufs;
+        let CachedBuffers { wf, history, history_centre, .. } = &mut **bufs;
         let column_len = ((*sample_rate * WF_COLUMN_MS * 0.001) as u64).max(1);
         let bin_hz = *sample_rate / FFT_N as f32;
         let scale = 255.0 / *display_range_db;
@@ -2818,7 +2846,7 @@ fn build_snapshot(
     sample_rate: f32,
     history: &[u8; HISTORY * BINS],
     centres: &[u64; HISTORY],
-    snapshot: &mut [u8; SNAP_W * SNAP_H],
+    snapshot: &mut Snapshot,
 ) -> (f32, f32) {
     let margin = (SNAP_MARGIN_MS * 0.001 * sample_rate) as u64;
     let from = event.start_sample.saturating_sub(margin);
