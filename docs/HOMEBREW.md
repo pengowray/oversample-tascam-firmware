@@ -2364,7 +2364,7 @@ B241 or an earlier build. All the checks in `tools/x8patch.py` pass on this file
 1. **Start and stop.** With Phone remote on and the phone page reloaded, do `Start recording` and `Stop recording` work as before?
 2. **Old phone page.** If a phone still has the old page cached, its commands should do nothing at all. Reload the page.
 
-## Step 43 test file: B273's source built for size, to compare CPU (built 2026-11-15, not yet installed)
+## Step 43 test file: B273's source built for size, to compare CPU (built 2026-11-15, run 2026-11-15)
 
 `work/patch49/#PortaX8_0274.203` (B274, SHA-256 `fa001217…1c7dc62dc9b4e`). The same source as B273, built with
 `tools/build.sh --config 'profile.release.opt-level="s"'` instead of `opt-level = 3`. All the checks in
@@ -2390,6 +2390,29 @@ the same rate, the recorder in the same state, Synthetic calls on.
    Debug info on: do `dsp` and `skip%` stay as without USB, and are `lost` and `drop` 0? Does the phone's file play
    with no gaps? This has not been checked on any build.
 4. **By ear.** In B274, do HET, FD and TE sound as in B273, with no clicks or dropouts?
+
+**Result** (test unit, 2026-11-15, CPU test only). Building for size costs too much processor time. Recording, with
+Synthetic calls off on both builds, `dsp` rose by 5 to 11 points in every row: HET stereo 38 to 44, FD 48 to 56, FD
+with the chime decoders 62 to 70. On standby, with Synthetic calls on, it rose by 3 to 11 points. Most of the rise is
+in the analysis (`ana` 25 to 31 recording, 21 to 24 on standby). New problems in B274: PITCH mono loses frames while
+recording (252 lost, `skip%` 12 and 21), several rows skip 1 to 3% of the analysis, and PITCH stereo loses far more
+than on B273 (up to 1.1 M frames lost and 43k dropped, against 39k and 3k). On B273, PITCH stereo was already the only
+row that could not keep up.
+
+Per-package opt-levels do not help, because LTO optimises the whole patch again at the top crate's level. Measured
+sizes (bytes):
+
+| Build | `.itcm` | `.text` |
+|---|---|---|
+| B273, all `3` | 83,040 | 211,734 |
+| `3`, with embedded-graphics, u8g2-fonts and guano at `"s"` | 83,040 | 208,598 |
+| `3`, with those and bat-app at `"s"` | 63,248 | 188,932 |
+| `"s"`, with bat-app, bat-dsp, microfft, libm and chime at `3` | 59,384 | 167,588 |
+| `"s"`, with bat-dsp, microfft, libm and chime at `3` | 53,912 | 146,830 |
+| B274, all `"s"` | 48,440 | 140,140 |
+
+Only the first two keep the ITCM code the same as B273's, and the second saves only about 3 KB. The others change the
+code that runs in ITCM, so they would probably be slower too. B273's `opt-level = 3` stays.
 
 ## Step 42 test file: a code for the phone remote (built 2026-11-15, not yet installed)
 
