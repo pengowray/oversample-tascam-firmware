@@ -13,7 +13,7 @@ use crate::fb::Rgb565Buffer;
 use crate::layout::*;
 use crate::palette::*;
 use crate::{
-    AutoVolume, BatApp, CallKind, DEFAULT_CUTOFF_HZ, Feed, InputKind, Meter, MixSilence, Mode, MonitorSource, Recorder,
+    AutoVolume, BatApp, Battery, CallKind, DEFAULT_CUTOFF_HZ, Feed, InputKind, Meter, MixSilence, Mode, MonitorSource, Recorder,
     Screen, Setting, SettingsPage, TeStatus, VIEW_HI_HZ, VIEW_LO_HZ, WF_COLUMN_MS,
 };
 use bat_dsp::heterodyne::DEFAULT_COMB_SPACING_HZ;
@@ -154,32 +154,32 @@ fn hline(fb: Fb, x0: i32, x1: i32, y: i32, color: Rgb565) {
 pub fn draw(app: &BatApp, fb: Fb) {
     let _ = fb.clear(BACKGROUND);
     if app.screen == Screen::Settings {
-        title_bar(fb, "SETTINGS", false);
+        title_bar(app, fb, "SETTINGS", false);
         settings(app, fb);
         return;
     }
     if app.screen == Screen::ChimeTest {
-        title_bar(fb, chime_screen::TITLE, false);
+        title_bar(app, fb, chime_screen::TITLE, false);
         chime_screen::draw(app, fb);
         return;
     }
     if app.screen == Screen::CpuTest {
-        title_bar(fb, cpu_test_screen::TITLE, false);
+        title_bar(app, fb, cpu_test_screen::TITLE, false);
         cpu_test_screen::draw(app, fb);
         return;
     }
     if app.screen == Screen::Files {
-        title_bar(fb, player_screen::TITLE, false);
+        title_bar(app, fb, player_screen::TITLE, false);
         player_screen::files(app, fb);
         return;
     }
     if app.screen == Screen::Folders {
-        title_bar(fb, player_screen::TITLE, false);
+        title_bar(app, fb, player_screen::TITLE, false);
         player_screen::folders(app, fb);
         return;
     }
     if app.screen == Screen::FileInfo {
-        title_bar(fb, player_screen::INFO_TITLE, false);
+        title_bar(app, fb, player_screen::INFO_TITLE, false);
         player_screen::details(app, fb);
         return;
     }
@@ -188,15 +188,17 @@ pub fn draw(app: &BatApp, fb: Fb) {
         InputKind::Playback => player_screen::title(app),
     };
     if app.bufs.cpu_test.running {
-        let (at, count) = (app.bufs.cpu_test.at + 1, app.bufs.cpu_test.count);
-        title_bar(fb, format_args!("{} row {at}/{count}", cpu_test_screen::TITLE), true);
+        // Rows over both passes, when the test records a second.
+        let (done, all) = app.bufs.cpu_test.progress();
+        let at = (done + 1).min(all);
+        title_bar(app, fb, format_args!("{} row {at}/{all}", cpu_test_screen::TITLE), true);
     } else {
         let playback = app.input_kind() == InputKind::Playback;
-        title_bar_fitted(fb, title, true, playback, playback && app.player().current().is_some());
+        title_bar_fitted(app, fb, title, true, playback, playback && app.player().current().is_some());
     }
     if app.remote_on() {
         let colour = if app.remote.listening(app.samples) { ACCENT } else { TEXT_MUTED };
-        text(fb, &SMALL, pages::TITLE_LABEL, 284, 16, RIGHT, colour);
+        text(fb, &SMALL, pages::TITLE_LABEL, 280, 16, RIGHT, colour);
     }
     match app.input_kind() {
         InputKind::Live => status_bar(app, fb),
@@ -225,10 +227,10 @@ pub fn draw(app: &BatApp, fb: Fb) {
 }
 
 #[inline(never)]
-fn title_bar(fb: Fb, title: impl u8g2_fonts::Content, menu: bool) {
+fn title_bar(app: &BatApp, fb: Fb, title: impl u8g2_fonts::Content, menu: bool) {
     fill(fb, Rectangle::new(Point::zero(), Size::new(320, TITLE_H as u32)), TITLE);
     text(fb, &BODY_BOLD, title, 160, 17, CENTER, TEXT);
-    title_icons(fb, menu);
+    title_icons(app, fb, menu);
 }
 
 /// A title too long for the bar is cut short with "...", between the menu and the battery.
@@ -237,7 +239,7 @@ fn title_bar(fb: Fb, title: impl u8g2_fonts::Content, menu: bool) {
 ///
 /// With `info`, a circled "i" before the battery opens the file's information, and the title,
 /// still centred, keeps clear of it.
-fn title_bar_fitted(fb: Fb, title: &str, menu: bool, chevron: bool, info: bool) {
+fn title_bar_fitted(app: &BatApp, fb: Fb, title: &str, menu: bool, chevron: bool, info: bool) {
     const CHEVRON_W: i32 = 14;
     fill(fb, Rectangle::new(Point::zero(), Size::new(320, TITLE_H as u32)), TITLE);
     let middle = if info { 2 * (TITLE_INFO.top_left.x - 160) - 4 } else { TITLE_MIDDLE.size.width as i32 };
@@ -263,21 +265,44 @@ fn title_bar_fitted(fb: Fb, title: &str, menu: bool, chevron: bool, info: bool) 
             .into_styled(PrimitiveStyle::with_fill(TEXT))
             .draw(fb);
     }
-    title_icons(fb, menu);
+    title_icons(app, fb, menu);
 }
 
-fn title_icons(fb: Fb, menu: bool) {
+fn title_icons(app: &BatApp, fb: Fb, menu: bool) {
     if menu {
         // Three lines, as the stock apps' Shortcut Menu button.
         for y in [7, 11, 15] {
             fill(fb, Rectangle::new(Point::new(12, y), Size::new(16, 2)), TEXT);
         }
     }
-    // Battery, as in the stock title bars. The emulator always shows it full.
-    let outline = PrimitiveStyleBuilder::new().stroke_color(TEXT).stroke_width(1).build();
-    let _ = Rectangle::new(Point::new(288, 7), Size::new(21, 11)).into_styled(outline).draw(fb);
-    fill(fb, Rectangle::new(Point::new(309, 10), Size::new(2, 5)), TEXT);
-    fill(fb, Rectangle::new(Point::new(290, 9), Size::new(17, 7)), TEXT);
+    battery(app, fb);
+}
+
+/// The battery as the stock title bars draw it (`FUN_80dab25c` and its QML): a 30 x 12 frame
+/// with 2 px walls and the terminal on the left, and a 6 px bar anchored on the right, 23 px wide
+/// when full. Empty cells blink it: shown and hidden by turns, about 0.55 s each. On USB power
+/// the stock bar shows the USB logo; this writes "USB".
+fn battery(app: &BatApp, fb: Fb) {
+    const X: i32 = 284;
+    const Y: i32 = 6;
+    const BLINK_S: f32 = 0.55;
+    let eighths = match app.battery() {
+        Battery::External => {
+            text(fb, &SMALL, "USB", X + 15, Y + 10, CENTER, TEXT);
+            return;
+        }
+        Battery::Cells(eighths) => eighths.min(8),
+    };
+    let hidden = eighths == 0 && (app.samples as f32 / (BLINK_S * app.sample_rate)) as u64 % 2 == 1;
+    if hidden {
+        return;
+    }
+    // The walls, then the terminal.
+    for (x, y, w, h) in [(X + 2, Y, 28, 2), (X + 2, Y + 10, 28, 2), (X + 2, Y, 2, 12), (X + 28, Y, 2, 12), (X, Y + 3, 2, 6)] {
+        fill(fb, Rectangle::new(Point::new(x, y), Size::new(w, h)), TEXT);
+    }
+    let width = i32::from(eighths) * 23 / 8;
+    fill(fb, Rectangle::new(Point::new(X + 27 - width, Y + 3), Size::new(width as u32, 6)), TEXT);
 }
 
 /// The recorder's state as the X8's REC LED shows it: red while recording

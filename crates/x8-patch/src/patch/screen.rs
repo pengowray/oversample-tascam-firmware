@@ -208,6 +208,7 @@ pub(super) fn draw_frame() {
     // SAFETY: built by enter_work.
     let app = unsafe { app() };
     update_status(app);
+    super::power::show_battery(app);
     if app.cpu_test_running() {
         app.cpu_test_figures(host_figures());
     }

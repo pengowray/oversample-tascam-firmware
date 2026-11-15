@@ -25,6 +25,32 @@ pub fn cells_good(battery_type: u8, level: u8, thresholds: &[u8; 3]) -> bool {
     level != 0 && level != 0xff && level > threshold
 }
 
+/// The stock title bar's battery fill, in eighths (0 to 8), as `FUN_80dab25c` works it out:
+/// `ranges` holds an {empty, full} pair of levels for each BATTERY TYPE (alkaline, Ni-MH,
+/// lithium; at 0x80DAB458 in the stock image). None for no reading (0, 0xFF or under 36) or an
+/// unknown type.
+pub fn battery_eighths(level: u8, battery_type: u8, ranges: &[u16; 6]) -> Option<u8> {
+    let i = usize::from(battery_type) * 2;
+    let (&empty, &full) = (ranges.get(i)?, ranges.get(i + 1)?);
+    let level = u16::from(level);
+    if level < 36 || level == 0xff || full <= empty {
+        return None;
+    }
+    Some(match level {
+        l if l <= empty => 0,
+        l if l >= full => 8,
+        l => ((l - empty) * 7 / (full - empty) + 1) as u8,
+    })
+}
+
+/// The stock icon's smoothing, applied every 0.6 s: a change of 8 or more is shown at once, and a
+/// smaller one moves the level shown by (change x 100 / 128) rounded down, so a rise of 1 is
+/// ignored and a fall of 1 is followed.
+pub fn smooth_level(shown: u8, reading: u8) -> u8 {
+    let d = i32::from(reading) - i32::from(shown);
+    if d.abs() >= 8 { reading } else { (i32::from(shown) + (d * 100).div_euclid(128)) as u8 }
+}
+
 /// What the patch does with the stock "supply below 1.5 A" event.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum WeakSupply {
@@ -89,6 +115,33 @@ mod tests {
 
     fn answer(source: u8, switched: bool, gave_up: bool, battery_type: u8, level: u8) -> WeakSupply {
         on_weak_supply(true, source, switched, gave_up, battery_type, level, &T)
+    }
+
+    #[test]
+    fn the_battery_fill_follows_the_stock_steps() {
+        const RANGES: [u16; 6] = [102, 156, 102, 147, 112, 161];
+        let alkaline = |level| battery_eighths(level, 0, &RANGES);
+        assert_eq!(alkaline(102), Some(0));
+        assert_eq!(alkaline(103), Some(1));
+        assert_eq!(alkaline(109), Some(1));
+        assert_eq!(alkaline(110), Some(2));
+        assert_eq!(alkaline(155), Some(7));
+        assert_eq!(alkaline(156), Some(8));
+        assert_eq!(battery_eighths(146, 1, &RANGES), Some(7));
+        assert_eq!(battery_eighths(113, 2, &RANGES), Some(1));
+        assert_eq!(alkaline(0), None);
+        assert_eq!(alkaline(35), None);
+        assert_eq!(alkaline(0xff), None);
+        assert_eq!(battery_eighths(130, 3, &RANGES), None);
+    }
+
+    #[test]
+    fn the_battery_level_shown_is_smoothed_as_stock() {
+        assert_eq!(smooth_level(120, 121), 120, "a rise of 1 is ignored");
+        assert_eq!(smooth_level(120, 119), 119, "a fall of 1 is followed");
+        assert_eq!(smooth_level(120, 124), 123);
+        assert_eq!(smooth_level(120, 128), 128, "8 or more at once");
+        assert_eq!(smooth_level(128, 120), 120);
     }
 
     #[test]

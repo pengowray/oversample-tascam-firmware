@@ -346,6 +346,9 @@ pub const POWER_SOURCE: *mut u8 = 0x81e8_ca55 as *mut u8;
 /// minutes old while task 1 sees external power: docs/HOMEBREW.md, "The cell level task 1 keeps
 /// can be 5 minutes old".
 pub const CELL_LEVEL_NOW: *const u16 = 0x8196_869c as *const u16;
+/// The stock title bar battery's {empty, full} cell levels by BATTERY TYPE, halfwords in the
+/// image, read by `FUN_80dab25c` (0x80DAB3D6 to 0x80DAB404).
+pub const BATTERY_ICON_RANGES: *const [u16; 6] = 0x80da_b458 as *const [u16; 6];
 /// Button poll state 0x81968664 + 0x54: set when the USB supply check has posted "below 1.5 A",
 /// so it posts once; cleared when the supply recovers or external power goes.
 pub const SUPPLY_LATCH: *mut u32 = 0x8196_86b8 as *mut u32;

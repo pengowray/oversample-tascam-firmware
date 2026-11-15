@@ -5,9 +5,13 @@
 use core::ptr;
 use core::sync::atomic::{AtomicBool, AtomicU32, Ordering::Relaxed};
 
-use x8_patch::power_source::{AUTO, BATTERY, LOW_READINGS, WeakSupply, back_to_auto, low_readings, on_weak_supply};
+use bat_app::{BatApp, Battery};
+use x8_patch::power_source::{
+    AUTO, BATTERY, LOW_READINGS, WeakSupply, back_to_auto, battery_eighths, low_readings, on_weak_supply, smooth_level,
+};
 
-use super::{Handler, read_byte, stock};
+use super::state::BLOCKS;
+use super::{Handler, blocks_per_second, read_byte, stock};
 
 /// The bat app's "Run from batteries on weak USB" switch, copied on each pass of the app. On at start,
 /// as the app's setting is, so it applies before the bat screen first opens.
@@ -95,4 +99,39 @@ pub(super) fn debug_state() -> (u8, char) {
 /// next start uses USB power again.
 pub(super) fn saved_power_source() -> Option<u8> {
     (SWITCHED.load(Relaxed) && read_byte(stock::POWER_SOURCE) == BATTERY).then_some(AUTO)
+}
+
+/// The cell level the title bar's battery shows, smoothed as the stock icon smooths it, and when
+/// it was last moved. 0 until the first reading.
+static SHOWN_LEVEL: AtomicU32 = AtomicU32::new(0);
+static SHOWN_AT: AtomicU32 = AtomicU32::new(0);
+/// The stock icon compares its level with the reading every 12 calls of task 2's 50 ms loop.
+const SMOOTH_MS: u32 = 600;
+
+/// Pass the app the battery as the stock title bars show it. From the context running the app,
+/// before each redraw.
+pub(super) fn show_battery(app: &mut BatApp<'static>) {
+    if read_byte(stock::ON_CELLS_ONLY) != 1 {
+        app.set_battery(Battery::External);
+        return;
+    }
+    let now = BLOCKS.load(Relaxed);
+    let reading = cell_level();
+    let shown = SHOWN_LEVEL.load(Relaxed) as u8;
+    if shown == 0 || now.wrapping_sub(SHOWN_AT.load(Relaxed)) >= SMOOTH_MS * blocks_per_second() / 1000 {
+        // As the stock icon: 0xFF (and 0, no reading) keeps the level shown.
+        let next = match reading {
+            0 | 0xff => shown,
+            _ if shown == 0 => reading,
+            _ => smooth_level(shown, reading),
+        };
+        SHOWN_LEVEL.store(next.into(), Relaxed);
+        SHOWN_AT.store(now, Relaxed);
+    }
+    // SAFETY: a constant table in the stock image.
+    let ranges = unsafe { ptr::read_volatile(stock::BATTERY_ICON_RANGES) };
+    let level = SHOWN_LEVEL.load(Relaxed) as u8;
+    // No reading yet: full, as before.
+    let eighths = battery_eighths(level, read_byte(stock::BATTERY_TYPE), &ranges).unwrap_or(8);
+    app.set_battery(Battery::Cells(eighths));
 }

@@ -341,7 +341,6 @@ pub(super) const STARTING_TAKE: &str = "Starting a take for the recording pass..
 /// Where the value line goes on the main screen, while the test runs.
 pub(super) fn running_line(app: &BatApp, fb: Fb) {
     let test = &app.bufs.cpu_test;
-    let (done, all) = test.progress();
     if test.running && test.phase == Phase::StartingTake {
         text(fb, &SMALL, STARTING_TAKE, 8, VALUE_BASELINE - 12, LEFT, TEXT);
         text(fb, &SMALL, RUNNING_HELP, 8, VALUE_BASELINE, LEFT, TEXT_MUTED);
@@ -356,7 +355,7 @@ pub(super) fn running_line(app: &BatApp, fb: Fb) {
         AutoVolume::BatsOnly => "Bats only",
     };
     let decoders = if row.decoders { ", decoders" } else { "" };
-    let line = format_args!("{} of {all}: {mode}{suffix}, Auto volume {volume}{decoders}, {left} s", done + 1);
+    let line = format_args!("{mode}{suffix}, Auto volume {volume}{decoders}, {left} s left");
     text(fb, &SMALL, line, 8, VALUE_BASELINE - 12, LEFT, TEXT);
     text(fb, &SMALL, RUNNING_HELP, 8, VALUE_BASELINE, LEFT, TEXT_MUTED);
 }

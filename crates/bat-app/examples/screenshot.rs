@@ -21,6 +21,7 @@
 //! `FILES=info|inforeading|infonone|infonotplayable|infomain` shows the file information view,
 //! opened by a long press on the list (or from the title bar for `infomain`); `INFO_SCROLL=N`
 //! turns the wheel N steps on it.
+//! `BATTERY=usb` or `BATTERY=0` to `8` sets the title bar's battery (default full).
 //! `BUILD=240` gives the app the X8 patch's build number, for the CPU test.
 //! `INPUTS=5,6` or `INPUTS=5` names the inputs for the meters and settings;
 //! `INPUTS=none` shows the notice for no input.
@@ -323,6 +324,11 @@ fn main() {
     }
     let mut pixels = vec![0u16; WIDTH * HEIGHT];
     let mut fb = Rgb565Buffer::new(&mut pixels, WIDTH, HEIGHT);
+    match std::env::var("BATTERY").as_deref() {
+        Ok("usb") => app.set_battery(bat_app::Battery::External),
+        Ok(n) => app.set_battery(bat_app::Battery::Cells(n.parse().unwrap())),
+        Err(_) => {}
+    }
     app.render(&mut fb);
     if debug && !matches!(args.get(4).map(String::as_str), Some("settings" | "tools" | "cputest")) {
         // The longest lines of the patch's draw_debug that a test should reach, in

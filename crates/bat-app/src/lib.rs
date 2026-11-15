@@ -175,6 +175,16 @@ pub enum Button {
     Mark,
 }
 
+/// What the title bar's battery shows, as the X8's own title bars show it.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum Battery {
+    /// Running on cells: the fill in eighths, 0 to 8. At 0 the cells are empty, and the icon
+    /// blinks.
+    Cells(u8),
+    /// Running from USB power: the USB symbol in place of the battery.
+    External,
+}
+
 /// What the recorder is doing, as the status bar shows it.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum Recorder {
@@ -652,6 +662,8 @@ pub struct BatApp<'a> {
     debug_info: bool,
     /// The host's build number, for the CPU test's results.
     host_build: Option<u32>,
+    /// Full until the host says otherwise: the web emulator has no battery.
+    battery: Battery,
     stages: stages::StageClock,
     mix_file_available: bool,
     mix_file: bool,
@@ -837,6 +849,7 @@ impl<'a> BatApp<'a> {
             field!((*this).debug_available).write(false);
             field!((*this).debug_info).write(false);
             field!((*this).host_build).write(None);
+            field!((*this).battery).write(Battery::Cells(8));
             field!((*this).stages).write(stages::StageClock::new());
             field!((*this).mix_file_available).write(false);
             field!((*this).mix_file).write(true);
@@ -1469,6 +1482,15 @@ impl<'a> BatApp<'a> {
 
     /// The host's build number, such as the X8 patch's B240. The CPU test shows it beside its
     /// results, so a photo of them says which build measured them. 0 means unknown.
+    /// What the title bar's battery shows.
+    pub fn set_battery(&mut self, battery: Battery) {
+        self.battery = battery;
+    }
+
+    pub fn battery(&self) -> Battery {
+        self.battery
+    }
+
     pub fn set_host_build(&mut self, build: u32) {
         self.host_build = (build != 0).then_some(build);
     }
