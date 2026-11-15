@@ -2364,6 +2364,75 @@ B241 or an earlier build. All the checks in `tools/x8patch.py` pass on this file
 1. **Start and stop.** With Phone remote on and the phone page reloaded, do `Start recording` and `Stop recording` work as before?
 2. **Old phone page.** If a phone still has the old page cached, its commands should do nothing at all. Reload the page.
 
+## Step 44 test file: stereo PITCH, a CPU test while recording with a log, the real battery level (built 2026-11-15, not yet installed)
+
+`work/patch50/#PortaX8_0275.203` (B275, SHA-256 `c45109a6…dbedf82a8fb5e96474`). Built as B273 is (`opt-level = 3`;
+B274's size build is not kept). Includes Step 42 (B273), whose checks still apply. Install this file in place of any
+earlier build. All the checks in `tools/x8patch.py` pass, and two builds give the same file. Nothing in this step has
+run on a unit.
+
+**What changes.**
+
+- **PITCH is on the mode buttons**, mono and stereo, after HET, COMB, FD and TE. Earlier builds hid it on the X8.
+- **PITCH costs less.** Stereo finds the peaks once, on both ears' power together, and moves both ears the same way;
+  the right ear keeps only its own frames (about 10 KB, not a second 17 KB shifter). Frames come every 512 samples
+  instead of 288. On a PC, shared peaks take 75 to 79% of the time of two shifters, and the longer hop about 64%. Mono
+  output at the same hop is bit-identical to before. The longer hop adds a warble at 375 Hz to steady tones
+  (sidebands a median of 19 dB down over tones from 20 to 90 kHz) and no clicks; on recordings and synthetic CF calls
+  the owner heard no difference from 288. Two tones only 500 Hz apart, one in each ear, lose 1.6 to 4.4 dB to the
+  residual. Estimated from B273's figures, not measured: PITCH stereo `dsp` about 47 on standby and 50 while
+  recording (B273: 75 and 81 to 83), PITCH mono about 43 and 57 (52 and 67 to 70).
+- **The CPU test runs twice.** From record standby or with the recorder stopped, it runs every row, starts a take
+  (as the phone's Start recording does), runs every row again while recording, then stops the take it started. About
+  6 minutes, with a 3-minute take. Tabs under the table show `Standby` or `Recording`. A tap during the test stops it,
+  and the take if the test started it. If the take does not start, the test ends and says why (`No recording pass:
+  HOLD is on.`, or the recording guide, a MANUAL page, or no response). Started while recording, it runs one pass, as
+  before, and leaves the take alone.
+- **`CPU_TEST.TXT`.** Each run's results go to this file beside the takes: both passes, the Totals and Stages columns
+  side by side, every count in full, and the name of the take it was written with. Runs are added to the end. The
+  patch writes to the card only as a take's files close, so the log of a test that recorded its own take is written
+  seconds after it ends, and the log of a one-pass test waits for the next take. The screen says `saved when a take
+  ends` or `saved on the card`. A log not yet written is lost at power-off.
+- **The title bar battery shows the cell level**, as the stock title bars do: the same 9 fill widths from the same
+  {empty, full} levels by BATTERY TYPE (0x80DAB458), the same smoothing every 0.6 s, blinking when the cells are
+  empty, and `USB` on external power (the stock icon shows a USB logo). The terminal is now on the left and the fill
+  grows from the right, as in the stock icon; earlier builds drew a full battery the other way round.
+- **Fonts with ASCII only.** Characters outside ASCII, which only card file names and GUANO text can have, are left
+  out when drawn: `Café` shows as `Caf`.
+- **Memory moved.** The snapshot of the last call is in uncached SDRAM at 0x87f5dc00, and the CPU test's state in the
+  app's buffers in SDRAM instead of DTCM.
+
+**Memory.**
+
+| | B273 | B275 | Limit |
+|---|---|---|---|
+| `.text` | 211,734 bytes | 220,622 bytes | |
+| `.itcm` | 83,040 bytes | 84,744 bytes | 91,392 bytes |
+| `.dtcm` | 152,920 bytes | 150,800 bytes | 156,416 bytes |
+| Patch region free | 344 bytes | 10,528 bytes | |
+
+**What to check.** Everything in Step 42's list, then:
+
+1. **CPU test, both passes.** SETTINGS > Tests, CPU test, Synthetic calls on, in record standby with both inputs on.
+   Before the start, does the screen say `Tests in record standby, then while recording a test take.`? Start: does it
+   run every row, start a take, run every row again, then stop the take? Photograph the `Standby` and `Recording`
+   tables, Totals and Stages. Compare PITCH with B273's photos: `dsp`, `lost`, `drop` and `skip%`, mono and stereo.
+2. **The log.** Within a few seconds of the take stopping, does the screen say `saved on the card`? On a computer, is
+   `CPU_TEST.TXT` in the takes' folder, with both passes and columns that line up? Run the test again: is the second
+   log added after the first? Does the test's take play, with its GUANO metadata?
+3. **A stopped test.** Tap during the recording pass: does the take stop, and does the log say `Stopped after N of M
+   rows.`?
+4. **PITCH by ear**, mono and stereo, on standby and while recording, with the Debug info strip on: any clicks or
+   dropouts? Do `lost` and `drop` stay at 0? Does a take recorded with PITCH play with no gaps?
+5. **Battery.** On cells, does the bat screen's battery show about the same fill as the stock title bar (HOME)? On USB
+   power, does it say `USB`?
+6. **BAT PLAYBACK.** Does a file whose name has a character outside ASCII show the rest of the name? Do the last
+   call's snapshot and playback work as before?
+
+**Risk.** The log is written from the GUANO hook, on the recorder's task, as the location log is, but in several
+writes of up to 4 KB where the location log makes one. A failed write leaves the log for the next take. The test
+starts and stops takes the way the phone remote does (from B249).
+
 ## Step 43 test file: B273's source built for size, to compare CPU (built 2026-11-15, run 2026-11-15)
 
 `work/patch49/#PortaX8_0274.203` (B274, SHA-256 `fa001217…1c7dc62dc9b4e`). The same source as B273, built with
