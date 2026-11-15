@@ -146,7 +146,7 @@ impl From<ListeningMode> for Mode {
 
 impl Mode {
     pub const ALL: [Mode; 6] = [Mode::Het, Mode::Comb, Mode::Fd, Mode::Te, Mode::Pitch, Mode::Thru];
-    /// The modes the X8 runs fast enough: PITCH cannot keep up there.
+    /// Every mode but PITCH, for a host too slow for it (the X8 until B275).
     pub const WITHOUT_PITCH: [Mode; 5] = [Mode::Het, Mode::Comb, Mode::Fd, Mode::Te, Mode::Thru];
 
     /// Button label. HET, FD and TE are the usual names on bat detectors.

@@ -156,7 +156,7 @@ fn main() {
         }
     }
     if let Ok(state) = std::env::var("X8") {
-        app.set_modes(&Mode::WITHOUT_PITCH);
+        app.set_modes(&Mode::ALL);
         let state = match state.as_str() {
             "standby" => Recorder::Standby,
             "recording" => Recorder::Recording,

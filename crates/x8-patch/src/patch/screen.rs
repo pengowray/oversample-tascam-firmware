@@ -95,7 +95,8 @@ pub(super) extern "C" fn enter_work() {
         unsafe { BatApp::init_in_place((*APP.0.get()).as_mut_ptr(), SAMPLE_RATE, te, buffers, snapshot) };
         // SAFETY: just built; no other context uses it yet.
         let app = unsafe { app() };
-        app.set_modes(&Mode::WITHOUT_PITCH);
+        // PITCH from B275: shared peaks for stereo and a 512-sample hop brought it within reach.
+        app.set_modes(&Mode::ALL);
         app.set_recorder(Recorder::Stopped, 0);
         app.set_debug_available(true);
         app.set_draw_option_available(true);
