@@ -34,7 +34,7 @@ use bat_dsp::classify::{CallClassifier, DEFAULT_TRAIN_MIN_DB};
 use bat_dsp::detector::{CallDetector, CallEvent, DEFAULT_AUDIBLE_BAND_HZ, DEFAULT_BAND_LO_HZ};
 use bat_dsp::freq_div::FrequencyDivider;
 use bat_dsp::heterodyne::{DEFAULT_COMB_SPACING_HZ, DEFAULT_CUTOFF_HZ, HetComb, Heterodyne};
-use bat_dsp::pitch_shift::PitchShifter;
+use bat_dsp::pitch_shift::{PitchChannel, PitchShifter};
 use bat_dsp::spectrum::{Column, SpectrumAnalyzer};
 use bat_dsp::time_expansion::{ExpanderState, TimeExpander};
 
@@ -479,9 +479,10 @@ pub struct CachedBuffers {
     history_centre: [u64; HISTORY],
     /// The chime test's decoders, one per block of input, built when the screen opens.
     chime: [core::mem::MaybeUninit<chime::Decoder>; 2],
-    /// PITCH's shifter for the right ear, used only in stereo. The left ear's is in the app's
-    /// own state, which on the X8 is in DTCM and has no room for a second.
-    pitch_right: PitchShifter,
+    /// PITCH's right ear, used only in stereo: its own frames and overlap-add. The left ear's
+    /// shifter, which also finds the peaks for both, is in the app's own state, which on the
+    /// X8 is in DTCM and has no room for this too.
+    pitch_right: PitchChannel,
 }
 
 impl CachedBuffers {
@@ -492,7 +493,7 @@ impl CachedBuffers {
             history: [0; HISTORY * BINS],
             history_centre: [0; HISTORY],
             chime: [const { core::mem::MaybeUninit::uninit() }; 2],
-            pitch_right: PitchShifter::unconfigured(),
+            pitch_right: PitchChannel::new(),
         }
     }
 }
@@ -775,8 +776,7 @@ impl<'a> BatApp<'a> {
             buffers.history.fill(0);
             buffers.history_centre.fill(0);
             snapshot.fill(0);
-            // Ready from `Buffers::new`, or all zero: either way `init` sets every setting.
-            buffers.pitch_right.init(sample_rate);
+            buffers.pitch_right.reset();
             field!((*this).bufs).write(buffers);
             field!((*this).snapshot).write(snapshot);
             field!((*this).wf_next).write(0);
@@ -2175,7 +2175,6 @@ impl<'a> BatApp<'a> {
         self.fd.set_division(FD_DIVISIONS[self.fd_index]);
         self.te.set_factor(TE_FACTORS[self.te_index]);
         self.pitch.set_factor(PITCH_FACTORS[self.pitch_index]);
-        self.bufs.pitch_right.set_factor(PITCH_FACTORS[self.pitch_index]);
     }
 
     fn trigger_te(&mut self) {
@@ -2440,9 +2439,10 @@ impl<'a> BatApp<'a> {
             match self.mode {
                 Mode::Het => self.het.copy_filter_to_second_channel(),
                 Mode::Comb => self.comb.copy_filter_to_second_channel(),
-                // The left shifter carries on. The right one holds sound from when stereo
-                // last stopped, so it starts from silence, under the switch fade.
-                Mode::Pitch => self.bufs.pitch_right.reset(),
+                // The left shifter carries on. The right ear holds sound from when stereo
+                // last stopped, so it starts from silence, under the switch fade, in step
+                // with the left.
+                Mode::Pitch => self.pitch.start_stereo(&mut self.bufs.pitch_right),
                 _ => {}
             }
         }
@@ -2487,10 +2487,7 @@ impl<'a> BatApp<'a> {
             match self.mode {
                 Mode::Het => self.het.process_stereo(left, right, out_l, out_r),
                 Mode::Comb => self.comb.process_stereo(left, right, out_l, out_r),
-                Mode::Pitch => {
-                    self.pitch.process(left, out_l);
-                    self.bufs.pitch_right.process(right, out_r);
-                }
+                Mode::Pitch => self.pitch.process_stereo(&mut self.bufs.pitch_right, left, right, out_l, out_r),
                 _ => {
                     out_l.copy_from_slice(left);
                     out_r.copy_from_slice(right);

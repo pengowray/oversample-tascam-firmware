@@ -190,6 +190,76 @@ impl PitchShifter {
     }
 }
 
+impl PitchShifter {
+    /// Shift two ears together: this shifter is the left ear, and `right` the right. Peaks
+    /// are found once, on the sum of both ears' powers, and both ears move and rotate the
+    /// same. That costs less than two shifters, and a mono input gives both ears exactly
+    /// what [`process`](Self::process) gives.
+    ///
+    /// `right` must be in step with this shifter: call [`start_stereo`](Self::start_stereo)
+    /// before the first stereo chunk after mono ones.
+    pub fn process_stereo(
+        &mut self,
+        right: &mut PitchChannel,
+        in_l: &[f32],
+        in_r: &[f32],
+        out_l: &mut [f32],
+        out_r: &mut [f32],
+    ) {
+        debug_assert!(in_l.len() == in_r.len() && in_l.len() == out_l.len() && in_l.len() == out_r.len());
+        debug_assert!(right.stft.fill == self.stft.fill && right.stft.start == self.stft.start);
+        let lowest = if self.highpass_on { self.cutoff_bin } else { 1 };
+        let mut done = 0;
+        while done < in_l.len() {
+            let n = self.stft.room().min(in_l.len() - done);
+            self.stft.push(&in_l[done..done + n], &mut out_l[done..done + n]);
+            right.stft.push(&in_r[done..done + n], &mut out_r[done..done + n]);
+            done += n;
+            if self.stft.frame_due() {
+                self.stft.analyse();
+                right.stft.analyse();
+                let (left, right) = (&mut self.stft, &mut right.stft);
+                self.shift.apply_n::<2>([&left.spectrum, &right.spectrum], [&mut left.spec, &mut right.spec], lowest);
+                left.synthesise();
+                right.synthesise();
+            }
+        }
+    }
+
+    /// Clear `right` to silence, in step with this shifter, so stereo can start while
+    /// this shifter carries on.
+    pub fn start_stereo(&self, right: &mut PitchChannel) {
+        right.reset();
+        right.stft.start = self.stft.start;
+        right.stft.fill = self.stft.fill;
+    }
+}
+
+/// The right ear's own part of a stereo shift (about 10 KB): its input, spectrum and
+/// overlap-add. The peaks, and the rest of the shift, are the left ear's
+/// [`PitchShifter`]'s; see [`PitchShifter::process_stereo`].
+#[derive(Clone, Debug)]
+pub struct PitchChannel {
+    stft: Stft,
+}
+
+impl PitchChannel {
+    /// Silent, for a `static`.
+    pub const fn new() -> Self {
+        Self { stft: Stft::new() }
+    }
+
+    pub fn reset(&mut self) {
+        self.stft.reset();
+    }
+}
+
+impl Default for PitchChannel {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 /// Hann-windowed short-time Fourier transform and overlap-add resynthesis:
 /// 1024-point frames every HOP samples. The shifted spectrum has nothing above
 /// 24 kHz (96 kHz divided by [`MIN_FACTOR`]), so each frame is resynthesised at
@@ -344,10 +414,18 @@ impl Stft {
     /// it (microfft's packed layout, with DC and Nyquist in bin 0; see
     /// [`Shifted`]), and overlap-add the result.
     fn frame(&mut self, modify: impl FnOnce(&[Complex32; HALF], &mut Shifted)) {
+        self.analyse();
+        modify(&self.spectrum, &mut self.spec);
+        self.synthesise();
+    }
+
+    fn analyse(&mut self) {
         self.fill = 0;
         fft::windowed_rfft_1024(&self.input, self.start, &mut self.spectrum);
         self.start = (self.start + HOP) % FRAME_LEN;
-        modify(&self.spectrum, &mut self.spec);
+    }
+
+    fn synthesise(&mut self) {
 
         self.acc.copy_within(LOW_HOP.., 0);
         self.acc[LOW_LEN + 1 - LOW_HOP..].fill(0.0);
@@ -401,18 +479,35 @@ impl PeakShift {
     /// bins of `src` from `lowest` up (at least 1). The bins below are left
     /// out, which is the high-pass.
     fn apply(&mut self, src: &[Complex32; HALF], dst: &mut Shifted, lowest: usize) {
-        dst.fill(Complex32::new(0.0, 0.0));
+        self.apply_n::<1>([src], [dst], lowest)
+    }
 
-        // Powers from the bin below `lowest`, which the peak search compares
-        // with, to Nyquist. Peaks are searched for from `lowest`, so loud sound
-        // below the cutoff does not raise the threshold.
-        self.power[HALF] = src[0].im * src[0].im;
+    /// [`apply`](Self::apply) for `C` channels at once: peaks are found on
+    /// the sum of their powers, and every channel moves and rotates the same.
+    fn apply_n<const C: usize>(&mut self, src: [&[Complex32; HALF]; C], mut dst: [&mut Shifted; C], lowest: usize) {
+        for d in dst.iter_mut() {
+            d.fill(Complex32::new(0.0, 0.0));
+        }
         let below = lowest - 1;
-        self.power[below] = if below == 0 { src[0].re * src[0].re } else { src[below].norm_sqr() };
         let mut strongest = 0.0f32;
-        for (p, c) in self.power[lowest..HALF].iter_mut().zip(&src[lowest..]) {
-            *p = c.norm_sqr();
-            strongest = strongest.max(*p);
+        for (c, s) in src.iter().enumerate() {
+            let nyq = s[0].im * s[0].im;
+            let low = if below == 0 { s[0].re * s[0].re } else { s[below].norm_sqr() };
+            if c == 0 {
+                self.power[HALF] = nyq;
+                self.power[below] = low;
+                for (p, z) in self.power[lowest..HALF].iter_mut().zip(&s[lowest..]) {
+                    *p = z.norm_sqr();
+                    if C == 1 { strongest = strongest.max(*p); }
+                }
+            } else {
+                self.power[HALF] += nyq;
+                self.power[below] += low;
+                for (p, z) in self.power[lowest..HALF].iter_mut().zip(&s[lowest..]) {
+                    *p += z.norm_sqr();
+                    strongest = strongest.max(*p);
+                }
+            }
         }
 
         // Without a branch, which on noise goes one way or the other at random.
@@ -438,18 +533,18 @@ impl PeakShift {
             let hi = if i + 1 == count { HALF - 1 } else { (k + self.peaks[i + 1] as usize) / 2 };
             let core_from = next.max(k.saturating_sub(PEAK_REACH));
             let core_to = hi.min(k + PEAK_REACH);
-            self.move_blocks(src, dst, next, core_from);
+            self.move_blocks(&src, &mut dst, next, core_from);
             let freq = self.power[k];
-            self.move_bins(src, dst, core_from, core_to, k, freq, true);
-            self.move_blocks(src, dst, core_to + 1, hi + 1);
+            self.move_bins(&src, &mut dst, core_from, core_to, k, freq, true);
+            self.move_blocks(&src, &mut dst, core_to + 1, hi + 1);
             next = hi + 1;
         }
-        self.move_blocks(src, dst, next, HALF);
+        self.move_blocks(&src, &mut dst, next, HALF);
     }
 
     /// Move bins `from..end` in blocks of [`BLOCK`] bins, aligned to multiples
     /// of [`BLOCK`] so the same bins are grouped in every frame.
-    fn move_blocks(&mut self, src: &[Complex32; HALF], dst: &mut Shifted, from: usize, end: usize) {
+    fn move_blocks<const C: usize>(&mut self, src: &[&[Complex32; HALF]; C], dst: &mut [&mut Shifted; C], from: usize, end: usize) {
         let mut a = from;
         while a < end {
             let b = ((a / BLOCK + 1) * BLOCK).min(end);
@@ -468,10 +563,10 @@ impl PeakShift {
     /// sound, such as a fast FM call, and advance by the whole shift, which
     /// makes overlapping frames agree exactly while the shift holds.
     #[allow(clippy::too_many_arguments)]
-    fn move_bins(
+    fn move_bins<const C: usize>(
         &mut self,
-        src: &[Complex32; HALF],
-        dst: &mut Shifted,
+        src: &[&[Complex32; HALF]; C],
+        dst: &mut [&mut Shifted; C],
         from: usize,
         to: usize,
         key: usize,
@@ -494,9 +589,13 @@ impl PeakShift {
         let rot = unit_phasor(turns);
         let rot = if whole % 2 == 0 { rot } else { -rot };
         let at = (GUARD as isize + whole as isize) as usize;
-        let moved = dst[at.wrapping_add(from)..=at.wrapping_add(to)].iter_mut();
-        for ((d, &x), t) in moved.zip(&src[from..=to]).zip(&mut self.track[from..=to]) {
-            *d += x * rot;
+        for (d, s) in dst.iter_mut().zip(src) {
+            let moved = d[at.wrapping_add(from)..=at.wrapping_add(to)].iter_mut();
+            for (d, &x) in moved.zip(&s[from..=to]) {
+                *d += x * rot;
+            }
+        }
+        for t in &mut self.track[from..=to] {
             *t = Track { turns, rate };
         }
     }
@@ -1076,5 +1175,137 @@ mod measurements {
             }
         });
         std::println!("ms per s: forward {fwd:.2}, apply {apply:.2}, inverse and overlap-add {inv:.2}, whole {all:.2}");
+    }
+}
+
+#[cfg(test)]
+mod stereo {
+    use super::*;
+    use crate::test_util::{noise, rms, run_blocks, sine, tone_power, chirp};
+    use std::time::Instant;
+    use std::vec::Vec;
+    const FS: f32 = 192_000.0;
+
+    fn mono(x: &[f32], f: f32) -> Vec<f32> {
+        let mut p = PitchShifter::new(FS);
+        p.set_factor(f);
+        run_blocks(x, 256, |i, o| p.process(i, o))
+    }
+    fn stereo(l: &[f32], r: &[f32], f: f32) -> (Vec<f32>, Vec<f32>) {
+        let (mut p, mut right) = (PitchShifter::new(FS), PitchChannel::new());
+        p.set_factor(f);
+        let (mut a, mut b) = (std::vec![0.0; l.len()], std::vec![0.0; l.len()]);
+        for ((cl, cr), (ol, or)) in l.chunks(256).zip(r.chunks(256)).zip(a.chunks_mut(256).zip(b.chunks_mut(256))) {
+            p.process_stereo(&mut right, cl, cr, ol, or);
+        }
+        (a, b)
+    }
+
+    fn two_tones(fa: f32, fb: f32, noise_level: f32) -> (Vec<f32>, Vec<f32>) {
+        let n = 48_000;
+        let mut l = sine(FS, fa, 0.3, n);
+        let mut r = sine(FS, fb, 0.3, n);
+        for (v, z) in l.iter_mut().zip(noise(noise_level, n, 1)) { *v += z; }
+        for (v, z) in r.iter_mut().zip(noise(noise_level, n, 2)) { *v += z; }
+        (l, r)
+    }
+
+    #[test]
+    fn same_input_in_both_ears_gives_the_mono_output() {
+        let mut x = chirp(FS, 90_000.0, 25_000.0, 0.4, 40_000);
+        for (v, r) in x.iter_mut().zip(noise(0.05, 40_000, 11)) { *v += r; }
+        let m = mono(&x, 9.3);
+        let (a, b) = stereo(&x, &x, 9.3);
+        assert!(a == m && b == m);
+    }
+
+    #[test]
+    fn stereo_starting_mid_stream_runs_in_step() {
+        let x = chirp(FS, 90_000.0, 25_000.0, 0.4, 20_000);
+        let (mut p, mut right) = (PitchShifter::new(FS), PitchChannel::new());
+        let (mut a, mut b) = (std::vec![0.0; x.len()], std::vec![0.0; x.len()]);
+        // 1,000 samples is not a whole number of hops, so the right ear starts mid-frame.
+        const START: usize = 1_000;
+        p.process(&x[..START], &mut a[..START]);
+        p.start_stereo(&mut right);
+        for ((xs, ol), or) in x[START..].chunks(256).zip(a[START..].chunks_mut(256)).zip(b[START..].chunks_mut(256)) {
+            p.process_stereo(&mut right, xs, xs, ol, or);
+        }
+        // Once both ears' frames and overlap-adds hold only the same input, they agree exactly.
+        let settled = START + 2 * FRAME_LEN + 4 * HOP;
+        assert!(a[settled..] == b[settled..]);
+        assert!(b[settled..].iter().any(|&v| v != 0.0));
+    }
+
+    #[test]
+    fn each_ear_keeps_its_own_tone() {
+        for (fa, fb) in [(45_000.0, 62_000.0), (41_000.0, 52_000.0)] {
+            let (l, r) = two_tones(fa, fb, 0.01);
+            let (sl, sr) = stereo(&l, &r, 10.0);
+            let (ml, mr) = (mono(&l, 10.0), mono(&r, 10.0));
+            for (shared, separate, f) in [(&sl, &ml, fa), (&sr, &mr, fb)] {
+                let (s, m) = (snr(shared, f / 10.0), snr(separate, f / 10.0));
+                assert!(s > m - 3.0, "{f} Hz: {s:.1} dB shared, {m:.1} dB separate");
+            }
+        }
+    }
+    fn hash(y: &[f32]) -> u64 { y.iter().fold(0xcbf29ce484222325u64, |h, v| (h ^ v.to_bits() as u64).wrapping_mul(0x100000001b3)) }
+    fn snr(y: &[f32], f: f32) -> f32 {
+        let t = &y[4 * FRAME_LEN..];
+        let total = rms(t).powi(2);
+        let tone = tone_power(t, FS, f);
+        10.0 * libm::log10f(tone / (total - tone).max(1e-12))
+    }
+
+    /// Prints how shared peaks compare with two shifters, and their times on this computer.
+    #[test]
+    #[ignore]
+    fn stereo_measurements() {
+        let mut x = chirp(FS, 90_000.0, 25_000.0, 0.4, 40_000);
+        for (v, r) in x.iter_mut().zip(noise(0.05, 40_000, 11)) { *v += r; }
+        std::println!("mono output hash {:016x}", hash(&mono(&x, 9.3)));
+        let (a, b) = stereo(&x, &x, 9.3);
+        let m = mono(&x, 9.3);
+        std::println!("stereo L=R identical to mono: {} {}", a == m, b == m);
+
+        // Two different tones, one per ear, each in its own noise.
+        let n = 48_000;
+        for (fa, fb, na) in [(45_000.0, 62_000.0, 0.01), (45_000.0, 62_000.0, 0.0001), (41_000.0, 41_500.0, 0.01)] {
+            let mut l = sine(FS, fa, 0.3, n);
+            let mut r = sine(FS, fb, 0.3, n);
+            for (v, z) in l.iter_mut().zip(noise(na, n, 1)) { *v += z; }
+            for (v, z) in r.iter_mut().zip(noise(na, n, 2)) { *v += z; }
+            let (sl, sr) = stereo(&l, &r, 10.0);
+            let (ml, mr) = (mono(&l, 10.0), mono(&r, 10.0));
+            std::println!("tones {fa}/{fb} Hz, noise {na}: tone to residual L mono {:.1} shared {:.1}, R mono {:.1} shared {:.1} dB; level L {:.2} vs {:.2}",
+                snr(&ml, fa / 10.0), snr(&sl, fa / 10.0), snr(&mr, fb / 10.0), snr(&sr, fb / 10.0), rms(&sl[4096..]), rms(&ml[4096..]));
+        }
+        // Same call at both mics, 20 samples apart, independent noise: difference from separate shifters.
+        let mut l = chirp(FS, 80_000.0, 30_000.0, 0.3, n);
+        let mut r = std::vec![0.0; 20];
+        r.extend_from_slice(&l[..n - 20]);
+        for (v, z) in l.iter_mut().zip(noise(0.02, n, 3)) { *v += z; }
+        for (v, z) in r.iter_mut().zip(noise(0.02, n, 4)) { *v += z; }
+        let (sl, sr) = stereo(&l, &r, 10.0);
+        let (ml, mr) = (mono(&l, 10.0), mono(&r, 10.0));
+        let d = |a: &[f32], b: &[f32]| { let e: Vec<f32> = a.iter().zip(b).map(|(x, y)| x - y).collect(); 20.0 * libm::log10f(rms(&e[4096..]) / rms(&b[4096..])) };
+        std::println!("delayed chirp: shared vs separate, difference L {:.1} dB, R {:.1} dB; levels L {:.3}/{:.3} R {:.3}/{:.3}",
+            d(&sl, &ml), d(&sr, &mr), rms(&sl[4096..]), rms(&ml[4096..]), rms(&sr[4096..]), rms(&mr[4096..]));
+
+        let xc = |a: &[f32], b: &[f32]| { let (a, b) = (&a[4096..], &b[4096..]); (0..60).map(|lag| { let s: f32 = a[..a.len() - 60].iter().zip(&b[lag..]).map(|(x, y)| x * y).sum(); s / (rms(a) * rms(b) * (a.len() - 60) as f32) }).fold(f32::MIN, f32::max) };
+        std::println!("delayed chirp: L-R normalised cross-correlation peak, input {:.2}, separate {:.2}, shared {:.2}", xc(&l, &r), xc(&ml, &mr), xc(&sl, &sr));
+        // Timing: one second of noise per ear.
+        let fs = 192_000usize;
+        let l = noise(0.5, fs, 5);
+        let r = noise(0.5, fs, 6);
+        let best = |f: &mut dyn FnMut()| (0..15).map(|_| { let t = Instant::now(); f(); t.elapsed().as_secs_f64() * 1000.0 }).fold(f64::MAX, f64::min);
+        let (mut pl, mut pr) = (PitchShifter::new(FS), PitchShifter::new(FS));
+        let (mut ps, mut pr2) = (PitchShifter::new(FS), PitchChannel::new());
+        let (mut ya, mut yb) = (std::vec![0.0; 256], std::vec![0.0; 256]);
+        for _ in 0..3 {
+            let two = best(&mut || for (a, b) in l.chunks(256).zip(r.chunks(256)) { pl.process(a, &mut ya); pr.process(b, &mut yb); });
+            let shared = best(&mut || for (a, b) in l.chunks(256).zip(r.chunks(256)) { ps.process_stereo(&mut pr2, a, b, &mut ya, &mut yb); });
+            std::println!("noise, ms per s of stereo: two shifters {two:.2}, shared peaks {shared:.2} ({:.0}%)", 100.0 * shared / two);
+        }
     }
 }
