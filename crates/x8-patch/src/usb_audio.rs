@@ -5,8 +5,13 @@
 //! The stock UAC2 audio function sends audio to the host on interface 2, in one of three
 //! alternate settings: 1 is 8 channels of 3 bytes, 2 is 2 channels of 3 bytes, 3 is 8 channels of
 //! 4 bytes. The packets are built in 416-byte buffers, and nothing in the stock code limits a
-//! packet to that size. 8 channels above 96 kHz would overrun them, so the patch keeps 8 channels
-//! at 96 kHz or below.
+//! packet to that size. 8 channels above 96 kHz would overrun them, so the patch keeps alternate
+//! setting 1 at 96 kHz or below.
+//!
+//! Alternate setting 3 above 96 kHz carries 2 channels of 32-bit float instead of 8 of 4-byte
+//! PCM: INPUT 3 and INPUT 4 after the stock dual-gain merge, as the X8 records them to its 32-bit
+//! float tracks. Its descriptor still says 8 channels: a host has to know this (Oversample does).
+//! B263 to B275 sent nothing in this case, so no host relied on it.
 
 /// The highest rate the stock firmware offers over USB.
 pub const HIGHEST_STOCK_RATE: u32 = 96_000;
@@ -34,16 +39,69 @@ pub fn eight_channels(alt: u8) -> bool {
     matches!(alt, 1 | 3)
 }
 
+/// The alternate setting that carries float above 96 kHz.
+pub const FLOAT_ALT: u8 = 3;
+/// The stock format byte (USB state + 0x48) for 4-byte samples, as its handler sets for
+/// alternate setting 3.
+pub const FOUR_BYTE_FORMAT: u8 = 4;
+
 /// The alternate setting to pass to the stock handler when the host asks for `alt` at
 /// `host_rate`. 0 makes the stock handler do nothing, so no 8-channel stream starts above 96 kHz.
+/// Alternate setting 3 above 96 kHz goes to the stock code as 2, whose first packets fit, and
+/// `after_alt` then makes the samples 4 bytes. The stock handler uses the number only to choose
+/// bytes, channels and its format byte (0x152C8 to 0x15342).
 pub fn alt_to_use(alt: u8, host_rate: u32) -> u8 {
-    if eight_channels(alt) && host_rate > HIGHEST_STOCK_RATE { 0 } else { alt }
+    match alt {
+        1 if host_rate > HIGHEST_STOCK_RATE => 0,
+        FLOAT_ALT if host_rate > HIGHEST_STOCK_RATE => 2,
+        alt => alt,
+    }
+}
+
+/// After the stock handler: the channels and bytes per sample to write into the USB state, when
+/// the patch changes them.
+pub fn after_alt(alt: u8, host_rate: u32) -> Option<(u8, u8)> {
+    (alt == FLOAT_ALT && host_rate > HIGHEST_STOCK_RATE).then_some((2, 4))
 }
 
 /// The rate to give the stock code when the host sets `rate` while interface 2 is at `alt`.
 /// 96 kHz is what the stock code itself sets for a rate it does not list.
 pub fn rate_to_use(rate: u32, alt: u8) -> u32 {
-    if eight_channels(alt) && rate > HIGHEST_STOCK_RATE { HIGHEST_STOCK_RATE } else { rate }
+    if alt == 1 && rate > HIGHEST_STOCK_RATE { HIGHEST_STOCK_RATE } else { rate }
+}
+
+/// When the host changes the rate with interface 2 at alternate setting 3: the channel count
+/// that suits the new rate, and whether to write it before the stock code takes the rate (going
+/// above 96 kHz, so no 8-channel packet is built at 192 kHz) or after it (coming down, so no
+/// 2-channel packet goes out in the 8-channel format's place before then).
+pub fn float_channels(alt: u8, rate: u32) -> Option<(u8, bool)> {
+    (alt == FLOAT_ALT).then(|| if rate > HIGHEST_STOCK_RATE { (2, true) } else { (8, false) })
+}
+
+/// Whether the audio interrupt sends float: alternate setting 3, with the 2 channels of 4 bytes
+/// the patch set.
+pub fn sends_float(alt: u8, channels: u8, bytes: u8) -> bool {
+    alt == FLOAT_ALT && channels == 2 && bytes == 4
+}
+
+/// The stock dual-gain merge's state for one channel at the end of a block (state block at
+/// 0x29cac + 0x48 x channel): `g` make-up gain (+0x04), `c` the high-gain path's scale (+0x0c)
+/// and `w` the crossfade weight (+0x44). At 192 kHz `w` moves once a block of 4 frames, so it
+/// holds for every frame of the block.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Merge {
+    pub g: f32,
+    pub c: f32,
+    pub w: f32,
+}
+
+/// One input's merged sample, as the stock routine computes it and the X8 records it to a 32-bit
+/// float track: `g x (B x w + A x c x (1 - w))`, with each word times the input's gain (+ or -
+/// 2^-31, its sign the input's phase setting). `high` and `low` are the high- and low-gain
+/// paths' words.
+pub fn merged(high: i32, low: i32, input_gain: f32, m: Merge) -> f32 {
+    let (a, b) = (high as f32 * input_gain, low as f32 * input_gain);
+    m.g * (b * m.w + a * m.c * (1.0 - m.w))
 }
 
 /// The largest packet the stock callback builds: one frame more than a packet's share of the
@@ -117,6 +175,48 @@ mod tests {
         assert_eq!(STOCK_TOP_RANGE, [0x00, 0x77, 0x01, 0x00, 0x00, 0x77, 0x01, 0x00, 0, 0, 0, 0]);
     }
 
+    /// Every order of alternate setting and rate: what the stock handler is asked for, and the
+    /// format the host then gets.
+    #[test]
+    fn alternate_setting_3_above_96_khz_sends_2_channels_of_float() {
+        // Setting first, at 96 kHz, then 192 kHz (as Oversample does).
+        assert_eq!(alt_to_use(3, 96_000), 3);
+        assert_eq!(after_alt(3, 96_000), None);
+        assert_eq!(rate_to_use(192_000, 3), 192_000);
+        assert_eq!(float_channels(3, 192_000), Some((2, true)));
+        assert!(packet_fits(2, 4, 192_000, true));
+        // Rate first, then the setting.
+        assert_eq!(alt_to_use(3, 192_000), 2);
+        assert_eq!(after_alt(3, 192_000), Some((2, 4)));
+        // Back to 96 kHz: 8 channels of 4 bytes again, as stock, after the stock code has the rate.
+        assert_eq!(float_channels(3, 96_000), Some((8, false)));
+        assert!(packet_fits(8, 4, 96_000, true));
+        // The other settings are as before.
+        assert_eq!(alt_to_use(1, 192_000), 0);
+        assert_eq!(rate_to_use(192_000, 1), 96_000);
+        assert_eq!(alt_to_use(2, 192_000), 2);
+        assert_eq!(after_alt(2, 192_000), None);
+        assert_eq!(float_channels(2, 192_000), None);
+        assert!(sends_float(3, 2, 4));
+        assert!(!sends_float(3, 8, 4) && !sends_float(2, 2, 4));
+    }
+
+    #[test]
+    fn the_merge_follows_the_firmware_formula() {
+        let full = 1i32 << 30; // half of full scale
+        let gain = -1.0 / 2_147_483_648.0; // INPUT 3 and 4's default, inverted
+        // D = 20 dB: c = 0.1, g = 10.
+        let high_path = Merge { g: 10.0, c: 0.1, w: 0.0 };
+        assert!((merged(full, 0, gain, high_path) + 0.5).abs() < 1e-6, "A alone, on A's scale");
+        let low_path = Merge { w: 1.0, ..high_path };
+        assert!((merged(0, full / 10, gain, low_path) + 0.5).abs() < 1e-4, "B, D dB up");
+        // Above A's full scale only B can say how loud: 3 times full scale.
+        assert!((merged(i32::MAX, 3 * (full / 5), gain, low_path) + 3.0).abs() < 1e-3);
+        let half_way = Merge { w: 0.25, ..high_path };
+        let want = 10.0 * (0.05 * gain * 0.25 * full as f32 + 0.5 * gain * 0.1 * 0.75 * full as f32 * 2.0);
+        assert!((merged(full, full / 20, gain, half_way) - want).abs() < 1e-6);
+    }
+
     #[test]
     fn the_wide_list_offers_192_khz_and_nothing_else_new() {
         let stock = [[44_100, 44_100, 0], [48_000, 48_000, 0], words(STOCK_TOP_RANGE)];
@@ -160,26 +260,35 @@ mod tests {
     #[test]
     fn eight_channels_stay_at_96_khz_or_below() {
         assert_eq!(alt_to_use(1, 192_000), 0);
-        assert_eq!(alt_to_use(3, 192_000), 0);
         assert_eq!(alt_to_use(2, 192_000), 2);
         assert_eq!(alt_to_use(1, 96_000), 1);
         assert_eq!(alt_to_use(0, 192_000), 0);
         assert_eq!(rate_to_use(192_000, 1), 96_000);
-        assert_eq!(rate_to_use(192_000, 3), 96_000);
         assert_eq!(rate_to_use(192_000, 2), 192_000);
         assert_eq!(rate_to_use(192_000, 0), 192_000);
         assert_eq!(rate_to_use(48_000, 1), 48_000);
-        // Every combination the guard allows fits the buffers at high speed.
+        // Every combination, in either order, fits the buffers at high speed: the format the stock
+        // handler sets for the setting it is given, then any change the patch makes.
+        let stock_format = |alt: u8| match alt {
+            1 => (8, 3),
+            3 => (8, 4),
+            _ => (2, 3),
+        };
         for alt in 0..4u8 {
             for rate in [44_100, 48_000, 96_000, 192_000] {
-                let (channels, bytes) = match alt {
-                    1 => (8, 3),
-                    3 => (8, 4),
-                    _ => (2, 3),
-                };
-                if alt_to_use(alt, rate) == alt && rate_to_use(rate, alt) == rate {
-                    assert!(packet_fits(channels, bytes, rate, true), "alt {alt} at {rate}");
+                // The setting chosen at this rate.
+                let (mut channels, mut bytes) = stock_format(alt_to_use(alt, rate));
+                if let Some(format) = after_alt(alt, rate) {
+                    (channels, bytes) = format;
                 }
+                assert!(packet_fits(channels, bytes, rate, true), "alt {alt} chosen at {rate}");
+                // The rate set after the setting, chosen at 96 kHz.
+                let (mut channels, bytes) = stock_format(alt_to_use(alt, 96_000));
+                let rate = rate_to_use(rate, alt);
+                if let Some((c, _)) = float_channels(alt, rate) {
+                    channels = c;
+                }
+                assert!(packet_fits(channels, bytes, rate, true), "alt {alt}, then {rate}");
             }
         }
     }

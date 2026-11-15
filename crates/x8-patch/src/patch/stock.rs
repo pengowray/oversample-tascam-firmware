@@ -32,6 +32,18 @@ pub const INPUT_BLOCKS: usize = 0x2000_e340;
 /// high gain path of its dual-gain pair). EXT IN uses the words of inputs
 /// 5 and 6.
 pub const INPUT_WORDS: [u32; 6] = [2, 5, 0, 6, 8, 11];
+/// The low gain path's word for inputs 3 and 4 (work/notes/audio.md, B[2] and B[3]).
+pub const LOW_GAIN_WORDS_3_4: [u32; 2] = [3, 9];
+/// The dual-gain merge's state, one block of 0x48 bytes per channel (inputs 1 to 6 are channels 0
+/// to 5): make-up gain g, the high gain path's scale c and the crossfade weight w, current values.
+pub const MERGE_STATE: usize = 0x0002_9cac;
+pub const MERGE_STEP: usize = 0x48;
+pub const MERGE_G: usize = 0x04;
+pub const MERGE_C: usize = 0x0c;
+pub const MERGE_W: usize = 0x44;
+/// Each channel's input gain, current value (+ or - 2^-31, or 0 muted), every 0x14 bytes.
+pub const INPUT_GAIN: usize = 0x0002_9e60;
+pub const INPUT_GAIN_STEP: usize = 0x14;
 /// DSP state + 0x622: 1 when tracks hear inputs 1 and 2 swapped.
 pub const SWAP_INPUTS_1_2: *const u8 = 0x0002_a2ce as *const u8;
 /// Settings + 0x30, one byte every 0x20 bytes for tracks 1 to 6: the pair
@@ -322,6 +334,8 @@ pub const USB_STATE: *const usize = 0x2000_0240 as *const usize;
 pub const USB_RATE: usize = 0x34;
 pub const USB_BYTES: usize = 0x46;
 pub const USB_CHANNELS: usize = 0x47;
+/// The stock handler's format byte: 1 for 3-byte samples, 4 for 4-byte (0x152C8 to 0x15342).
+pub const USB_FORMAT: usize = 0x48;
 pub const USB_WRITE_OFFSET: usize = 0x5c;
 /// The ring of audio for the host, which the audio class callback copies packets from.
 pub const USB_RING: *mut u8 = 0x2000_0254 as *mut u8;
