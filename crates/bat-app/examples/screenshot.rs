@@ -55,7 +55,29 @@ use u8g2_fonts::{FontRenderer, fonts};
 /// Run the CPU test on silence for `rows` rows, with made-up figures that rise with the row. With
 /// `rows` at the plan's length the test ends by itself. Otherwise it is left running.
 fn run_cpu_test(app: &mut BatApp, rows: usize) {
+    // CPU_PASSES=2: from record standby, with a recording pass after the first.
+    let two = std::env::var("CPU_PASSES").is_ok_and(|v| v == "2");
+    if two {
+        app.set_remote_available(true);
+        app.set_recorder(bat_app::Recorder::Standby, 0);
+    }
     app.start_cpu_test();
+    run_cpu_rows(app, rows, 0);
+    if two && app.take_remote_command().is_some() {
+        app.set_recorder(bat_app::Recorder::Recording, 0);
+        app.remote_result(bat_app::RemoteResult::Started);
+        run_cpu_rows(app, rows, 10);
+        let _ = app.take_remote_command();
+        app.set_recorder(bat_app::Recorder::Standby, 0);
+    }
+    // CPU_LOG=saved: the host has written the log.
+    if std::env::var("CPU_LOG").is_ok_and(|v| v == "saved") {
+        let _ = app.take_cpu_test_log(&mut [0u8; 16 * 1024]);
+        app.cpu_test_log_saved();
+    }
+}
+
+fn run_cpu_rows(app: &mut BatApp, rows: usize, extra: u32) {
     let plan = app.cpu_test_rows().len();
     let mut figures = bat_app::HostFigures { irq_percent: 43, hook_percent: 9, draw_percent: 13, ..Default::default() };
     let block = 192_000 / 5;
@@ -64,7 +86,7 @@ fn run_cpu_test(app: &mut BatApp, rows: usize) {
     for row in 0..rows.min(plan) {
         for _ in 0..40 {
             app.process(&a, &b, &mut l, &mut r);
-            figures.dsp_percent = 35 + 2 * row as u32;
+            figures.dsp_percent = 35 + extra + 2 * row as u32;
             figures.window = figures.window.wrapping_add(1);
             figures.waiting_most = 2_500 + 120 * row as u32;
             if row > 10 {
@@ -259,6 +281,10 @@ fn main() {
             });
         }
         Some("cputest") => {
+            if std::env::var("CPU_PASSES").is_ok_and(|v| v == "2") {
+                app.set_remote_available(true);
+                app.set_recorder(bat_app::Recorder::Standby, 0);
+            }
             app.open_cpu_test();
             if let Ok(rows) = std::env::var("CPU_ROWS") {
                 run_cpu_test(&mut app, rows.parse().unwrap());

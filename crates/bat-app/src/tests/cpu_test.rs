@@ -283,7 +283,7 @@ fn a_stage_clock_adds_each_stage_and_rows_keep_their_shares() {
     let end = (crate::cpu_test::SETTLE_S + crate::cpu_test::MEASURE_S) * rate;
     let next = HostFigures { window: 1, ..figures };
     assert!(test.figures(next, (Recorder::Stopped, None), 0, &clock, end, rate));
-    let result = test.rows[0].result.expect("the row finished");
+    let result = test.rows()[0].result.expect("the row finished");
     let stages = result.stages.expect("the clock was running");
     assert_eq!(stages[Stage::Analysis as usize], 25);
     assert_eq!(stages[Stage::Mode as usize], 5);
@@ -305,12 +305,147 @@ fn the_view_button_shows_only_with_a_stage_clock_and_switches_tables() {
     app.open_cpu_test();
     let view = layout::CPU_TEST_VIEW.center();
     app.touch(view.x, view.y);
-    assert_eq!(app.cpu_test.view, View::Totals, "no clock, so no button");
+    assert_eq!(app.bufs.cpu_test.view, View::Totals, "no clock, so no button");
     app.set_stage_clock(&TICKS, 48_000);
     app.touch(view.x, view.y);
-    assert_eq!(app.cpu_test.view, View::Stages);
+    assert_eq!(app.bufs.cpu_test.view, View::Stages);
     let mut pixels = vec![0u16; WIDTH * HEIGHT];
     app.render(&mut Rgb565Buffer::new(&mut pixels, WIDTH, HEIGHT));
     app.touch(view.x, view.y);
-    assert_eq!(app.cpu_test.view, View::Totals);
+    assert_eq!(app.bufs.cpu_test.view, View::Totals);
+}
+
+/// Run every row of the pass under way.
+fn run_pass(app: &mut BatApp, figures: &mut HostFigures, dsp: u32) {
+    for _ in 0..app.cpu_test_rows().len() {
+        run(app, ROW_SECONDS, figures, dsp, 0);
+    }
+}
+
+fn the_log(app: &mut BatApp) -> std::string::String {
+    let mut out = vec![0u8; 16 * 1024];
+    let len = app.take_cpu_test_log(&mut out).expect("a log");
+    std::string::String::from_utf8(out[..len].to_vec()).unwrap()
+}
+
+#[test]
+fn from_standby_it_records_a_take_for_a_second_pass_and_stops_it() {
+    let mut storage = vec![0.0f32; SECOND];
+    let mut buffers = Box::new(Buffers::new());
+    let mut app = app_with_storage(&mut storage, &mut buffers);
+    app.set_remote_available(true);
+    app.set_recorder(Recorder::Standby, 0);
+    app.open_cpu_test();
+    app.start_cpu_test();
+    let mut figures = HostFigures::default();
+    run_pass(&mut app, &mut figures, 30);
+    assert!(app.cpu_test_running());
+    assert_eq!(app.take_remote_command(), Some(RecorderCommand::Start));
+    app.set_recorder(Recorder::Recording, 0);
+    app.remote_result(RemoteResult::Started);
+    run_pass(&mut app, &mut figures, 45);
+    assert!(!app.cpu_test_running());
+    assert_eq!(app.take_remote_command(), Some(RecorderCommand::Stop), "the test stops its own take");
+
+    let test = &app.bufs.cpu_test;
+    assert!(test.both_passes());
+    assert!(test.pass_rows(0).iter().all(|row| row.result.unwrap().recorder == Some(Recorder::Standby)));
+    assert!(test.pass_rows(1).iter().all(|row| row.result.unwrap().dsp_percent == 45));
+    let log = the_log(&mut app);
+    assert!(log.contains("Record standby for every row."), "{log}");
+    assert!(log.contains("Recording for every row."), "{log}");
+    assert!(!log.contains("not run"), "{log}");
+    assert_eq!(app.take_cpu_test_log(&mut [0; 16]), None, "taken once");
+    app.cpu_test_log_saved();
+    assert_eq!(app.bufs.cpu_test.log, crate::cpu_test::Log::Saved);
+
+    // The tabs switch the table between the passes.
+    let tab = layout::CPU_TEST_PASS_TABS[0].center();
+    app.touch(tab.x, tab.y);
+    assert!(app.cpu_test_rows().iter().all(|row| row.result.unwrap().dsp_percent == 30));
+}
+
+#[test]
+fn a_take_that_does_not_start_ends_the_test_with_the_reason() {
+    let mut storage = vec![0.0f32; SECOND];
+    let mut buffers = Box::new(Buffers::new());
+    let mut app = app_with_storage(&mut storage, &mut buffers);
+    app.set_remote_available(true);
+    app.set_recorder(Recorder::Stopped, 0);
+    app.start_cpu_test();
+    let mut figures = HostFigures::default();
+    run_pass(&mut app, &mut figures, 30);
+    assert_eq!(app.take_remote_command(), Some(RecorderCommand::Start));
+    app.remote_result(RemoteResult::HoldOn(RecorderCommand::Start));
+    assert!(!app.cpu_test_running());
+    assert_eq!(app.take_remote_command(), None, "no take to stop");
+    let log = the_log(&mut app);
+    assert!(log.contains("No recording pass: HOLD is on."), "{log}");
+}
+
+#[test]
+fn while_recording_it_runs_one_pass_and_leaves_the_take_alone() {
+    let mut storage = vec![0.0f32; SECOND];
+    let mut buffers = Box::new(Buffers::new());
+    let mut app = app_with_storage(&mut storage, &mut buffers);
+    app.set_remote_available(true);
+    app.set_recorder(Recorder::Recording, 30);
+    app.start_cpu_test();
+    let mut figures = HostFigures::default();
+    run_pass(&mut app, &mut figures, 30);
+    assert!(!app.cpu_test_running());
+    assert_eq!(app.take_remote_command(), None);
+    assert!(!app.bufs.cpu_test.both_passes());
+    assert!(the_log(&mut app).contains("Recording for every row."));
+}
+
+#[test]
+fn a_stopped_test_stops_its_take_and_logs_what_ran() {
+    let mut storage = vec![0.0f32; SECOND];
+    let mut buffers = Box::new(Buffers::new());
+    let mut app = app_with_storage(&mut storage, &mut buffers);
+    app.set_remote_available(true);
+    app.set_recorder(Recorder::Standby, 0);
+    app.start_cpu_test();
+    let mut figures = HostFigures::default();
+    run_pass(&mut app, &mut figures, 30);
+    let _ = app.take_remote_command();
+    app.set_recorder(Recorder::Recording, 0);
+    app.remote_result(RemoteResult::Started);
+    run(&mut app, 2 * ROW_SECONDS, &mut figures, 45, 0);
+    app.touch(160, 200);
+    assert!(!app.cpu_test_running());
+    assert_eq!(app.take_remote_command(), Some(RecorderCommand::Stop));
+    let log = the_log(&mut app);
+    let rows = app.cpu_test_rows().len();
+    assert!(log.contains(&std::format!("Stopped after {} of {} rows.", rows + 2, 2 * rows)), "{log}");
+    assert!(log.contains("not run"), "{log}");
+}
+
+#[test]
+fn the_longest_log_fits_the_hosts_buffer() {
+    let mut storage = vec![0.0f32; SECOND];
+    let mut buffers = Box::new(Buffers::new());
+    let mut app = app_with_storage(&mut storage, &mut buffers);
+    app.set_modes(&Mode::ALL);
+    two_inputs(&mut app);
+    app.set_host_build(9999);
+    app.set_remote_available(true);
+    app.set_recorder(Recorder::Standby, 0);
+    app.start_cpu_test();
+    let mut figures = HostFigures { lost: 0, dry: 0, ..HostFigures::default() };
+    let rows = app.cpu_test_rows().len();
+    for _ in 0..rows {
+        run(&mut app, ROW_SECONDS, &mut figures, 99, 400_000_000 / (ROW_SECONDS as u32 * 5 * rows as u32));
+    }
+    let _ = app.take_remote_command();
+    app.set_recorder(Recorder::Recording, 0);
+    app.remote_result(RemoteResult::Started);
+    run_pass(&mut app, &mut figures, 99);
+    let mut out = vec![0u8; 16 * 1024];
+    let len = app.take_cpu_test_log(&mut out).unwrap();
+    let log = std::str::from_utf8(&out[..len]).unwrap();
+    assert!(len < 14 * 1024, "{len} bytes");
+    assert!(log.ends_with("\n\n"), "not cut short");
+    std::println!("{log}");
 }

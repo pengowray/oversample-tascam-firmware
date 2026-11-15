@@ -187,8 +187,8 @@ pub fn draw(app: &BatApp, fb: Fb) {
         InputKind::Live => "BAT DETECTOR",
         InputKind::Playback => player_screen::title(app),
     };
-    if app.cpu_test.running {
-        let (at, count) = (app.cpu_test.at + 1, app.cpu_test.count);
+    if app.bufs.cpu_test.running {
+        let (at, count) = (app.bufs.cpu_test.at + 1, app.bufs.cpu_test.count);
         title_bar(fb, format_args!("{} row {at}/{count}", cpu_test_screen::TITLE), true);
     } else {
         let playback = app.input_kind() == InputKind::Playback;
@@ -216,7 +216,7 @@ pub fn draw(app: &BatApp, fb: Fb) {
         mix_silence_notice(fb, silence);
     }
     snapshot(app, fb);
-    if app.cpu_test.running {
+    if app.bufs.cpu_test.running {
         cpu_test_screen::running_line(app, fb);
     } else {
         value_line(app, fb);

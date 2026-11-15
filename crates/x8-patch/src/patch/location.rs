@@ -81,17 +81,17 @@ pub(super) fn for_take() -> Option<(i32, i32)> {
     }
 }
 
-type FileOpen = unsafe extern "C" fn(*const u16, *const u8) -> usize;
-type FileClose = unsafe extern "C" fn(usize) -> i32;
-type FileSize = unsafe extern "C" fn(usize, *mut u32) -> usize;
-type FileSeek = unsafe extern "C" fn(usize, usize, u32, u32, i32) -> i32;
-type FileWrite = unsafe extern "C" fn(*const u8, usize, usize) -> usize;
+pub(super) type FileOpen = unsafe extern "C" fn(*const u16, *const u8) -> usize;
+pub(super) type FileClose = unsafe extern "C" fn(usize) -> i32;
+pub(super) type FileSize = unsafe extern "C" fn(usize, *mut u32) -> usize;
+pub(super) type FileSeek = unsafe extern "C" fn(usize, usize, u32, u32, i32) -> i32;
+pub(super) type FileWrite = unsafe extern "C" fn(*const u8, usize, usize) -> usize;
 
 /// In UTF-16, as the file functions take names; relative to the folder the takes are in.
 const NAME: [u16; 18] = x8_patch::wide::widen(b"BAT_LOCATIONS.CSV\0");
 /// Where the lines are built: in the stock header buffer, after the GUANO chunk's place.
-const LINES_AT: usize = 0x9000;
-const LINES_BYTES: usize = 0x1000;
+pub(super) const LINES_AT: usize = 0x9000;
+pub(super) const LINES_BYTES: usize = 0x1000;
 
 /// Appends the locations not written yet to the log, once a take, from the GUANO hook. Any failure
 /// leaves them for the next take.

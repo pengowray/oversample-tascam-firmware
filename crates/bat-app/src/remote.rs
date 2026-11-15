@@ -396,6 +396,12 @@ impl Remote {
         self.reading.take()
     }
 
+    /// A command from the app itself (the CPU test), for the host to carry out as it does the
+    /// phone's.
+    pub(crate) fn command_from_app(&mut self, command: RecorderCommand) {
+        self.pending = Some(command);
+    }
+
     pub(crate) fn take_command(&mut self) -> Option<RecorderCommand> {
         self.pending.take()
     }

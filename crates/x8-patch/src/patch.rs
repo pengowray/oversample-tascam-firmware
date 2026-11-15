@@ -7,6 +7,9 @@ use core::ptr;
 mod audio;
 /// BAT DETECTOR's launcher glyph.
 mod bat_glyph;
+/// The CPU test's logs: taken from the app on the DSP task, written to `CPU_TEST.TXT` as a take's
+/// files close.
+mod cpu_log;
 /// Sets the X8's clock from the phone's chimes, and keeps the phone's time for GUANO metadata.
 mod clock;
 /// Adds GUANO metadata to the WAV files of takes from a bat tile as the stock recorder closes them.

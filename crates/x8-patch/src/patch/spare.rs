@@ -1,4 +1,9 @@
 pub const DISPLAY: usize = 0x87eb_0000; // 320 x 480 RGB565, 0x4b000 bytes
+/// The CPU test's logs, as text, waiting for a take's files to close (see `cpu_log`), in the
+/// 20 KB between the display buffer and the time expander's storage.
+pub const CPU_LOG: usize = 0x87ef_b000;
+pub const CPU_LOG_BYTES: usize = 16 * 1024;
+const _: () = assert!(CPU_LOG >= DISPLAY + 0x4b000 && CPU_LOG + CPU_LOG_BYTES <= TE_STORAGE);
 pub const TE_STORAGE: usize = 0x87f0_0000; // f32 x TE_SAMPLES
 pub const TE_SAMPLES: usize = 96_000; // 0.5 s at 192 kHz
 /// SDRAM between two zeroed ranges, 0x865e1d88 to 0x865fffff, which no

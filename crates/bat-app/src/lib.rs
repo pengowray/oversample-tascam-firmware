@@ -483,6 +483,8 @@ pub struct CachedBuffers {
     /// shifter, which also finds the peaks for both, is in the app's own state, which on the
     /// X8 is in DTCM and has no room for this too.
     pitch_right: PitchChannel,
+    /// The CPU test's rows and results, for both passes. Touched once per redraw while it runs.
+    cpu_test: cpu_test::CpuTest,
 }
 
 impl CachedBuffers {
@@ -494,6 +496,7 @@ impl CachedBuffers {
             history_centre: [0; HISTORY],
             chime: [const { core::mem::MaybeUninit::uninit() }; 2],
             pitch_right: PitchChannel::new(),
+            cpu_test: cpu_test::CpuTest::new(),
         }
     }
 }
@@ -580,7 +583,6 @@ pub struct BatApp<'a> {
     /// [`set_skip_analysis`](Self::set_skip_analysis).
     skip_analysis: bool,
     chime: chime_test::ChimeTest,
-    cpu_test: cpu_test::CpuTest,
     remote: remote::Remote,
     player: player::Player<'a>,
     /// A finger on the screen that may move: where it touched down, where it is now, whether it
@@ -777,6 +779,7 @@ impl<'a> BatApp<'a> {
             buffers.history_centre.fill(0);
             snapshot.fill(0);
             buffers.pitch_right.reset();
+            buffers.cpu_test = cpu_test::CpuTest::new();
             field!((*this).bufs).write(buffers);
             field!((*this).snapshot).write(snapshot);
             field!((*this).wf_next).write(0);
@@ -798,7 +801,6 @@ impl<'a> BatApp<'a> {
             field!((*this).snapshot_hz).write((VIEW_LO_HZ, VIEW_HI_HZ));
             field!((*this).skip_analysis).write(false);
             field!((*this).chime).write(chime_test::ChimeTest::new());
-            field!((*this).cpu_test).write(cpu_test::CpuTest::new());
             field!((*this).remote).write(remote::Remote::new());
             field!((*this).player).write(player::Player::new());
             field!((*this).gesture).write(Gesture::NONE);
@@ -1005,48 +1007,86 @@ impl<'a> BatApp<'a> {
     /// Show the CPU test's screen, which offers the test and shows the latest results.
     pub fn open_cpu_test(&mut self) {
         self.screen = Screen::CpuTest;
-        if self.cpu_test.count == 0 || !self.cpu_test.has_results() {
-            self.cpu_test.plan(self.modes, self.inputs[1].is_some());
+        if self.bufs.cpu_test.count == 0 || !self.bufs.cpu_test.has_results() {
+            self.bufs.cpu_test.plan(self.modes, self.inputs[1].is_some());
         }
     }
 
     /// Whether the CPU test is running.
     pub fn cpu_test_running(&self) -> bool {
-        self.cpu_test.running
+        self.bufs.cpu_test.running
     }
 
     /// The CPU test's rows: each one's settings, and its figures if it has run.
     pub fn cpu_test_rows(&self) -> &[cpu_test::Row] {
-        &self.cpu_test.rows[..self.cpu_test.count]
+        self.bufs.cpu_test.rows()
+    }
+
+    /// Whether a CPU test started now would record a take for its second pass: the recorder is
+    /// stopped or in record standby, and the host can press REC.
+    pub(crate) fn cpu_test_would_record(&self) -> bool {
+        self.remote.available && matches!(self.recorder().0, Recorder::Stopped | Recorder::Standby)
     }
 
     /// Run the CPU test from its first row, on the main screen.
     pub fn start_cpu_test(&mut self) {
-        self.cpu_test.plan(self.modes, self.inputs[1].is_some());
-        self.cpu_test.saved =
-            Some(cpu_test::Saved { mode: self.mode, volume: self.level.volume(), source: self.source() });
-        self.cpu_test.running = true;
+        let records = self.cpu_test_would_record();
+        let saved = cpu_test::Saved { mode: self.mode, volume: self.level.volume(), source: self.source() };
+        let test = &mut self.bufs.cpu_test;
+        test.plan(self.modes, self.inputs[1].is_some());
+        test.saved = Some(saved);
+        test.running = true;
+        test.runs = [true, records];
+        test.phase = cpu_test::Phase::Rows;
+        test.owns_take = false;
+        test.end = None;
         self.screen = Screen::Main;
         self.begin_cpu_test_row();
     }
 
     fn begin_cpu_test_row(&mut self) {
-        let Some(row) = self.cpu_test.current().copied() else {
-            self.stop_cpu_test();
+        let Some(row) = self.bufs.cpu_test.current().copied() else {
+            let test = &mut self.bufs.cpu_test;
+            if test.pass == cpu_test::FIRST_PASS && test.runs[cpu_test::RECORDING_PASS] {
+                // The first pass has run: record a take for the second.
+                test.phase = cpu_test::Phase::StartingTake;
+                self.remote.command_from_app(RecorderCommand::Start);
+            } else {
+                self.end_cpu_test(None);
+            }
             return;
         };
         self.set_mode(row.mode);
         self.level.set_volume(row.volume);
         self.set_source(row.source());
         self.remote.set_forced(row.decoders);
-        self.cpu_test.begin_row(self.samples);
+        self.bufs.cpu_test.begin_row(self.samples);
     }
 
-    /// End the CPU test and show what it has measured so far.
+    /// Stop the CPU test before its end, and show what it has measured so far.
     fn stop_cpu_test(&mut self) {
-        self.cpu_test.running = false;
+        self.end_cpu_test(Some(cpu_test::End::Stopped));
+    }
+
+    /// End the CPU test: stop the take it started, put the settings back, make its log and show
+    /// its results.
+    fn end_cpu_test(&mut self, end: Option<cpu_test::End>) {
+        let test = &mut self.bufs.cpu_test;
+        test.running = false;
+        test.end = end;
+        test.phase = cpu_test::Phase::Rows;
+        if core::mem::take(&mut test.owns_take) {
+            self.remote.command_from_app(RecorderCommand::Stop);
+        }
+        if test.has_results() {
+            test.log = cpu_test::Log::Due;
+        }
+        // Show the last pass that ran.
+        if !test.both_passes() {
+            test.pass = cpu_test::FIRST_PASS;
+        }
         self.remote.set_forced(false);
-        if let Some(saved) = self.cpu_test.saved.take() {
+        if let Some(saved) = self.bufs.cpu_test.saved.take() {
             self.set_mode(saved.mode);
             self.level.set_volume(saved.volume);
             self.set_source(saved.source);
@@ -1056,12 +1096,12 @@ impl<'a> BatApp<'a> {
 
     /// The host's figures, at each redraw while the CPU test runs.
     pub fn cpu_test_figures(&mut self, figures: HostFigures) {
-        if !self.cpu_test.running {
+        if !self.bufs.cpu_test.running || self.bufs.cpu_test.phase != cpu_test::Phase::Rows {
             return;
         }
         let recorder = self.recorder().0;
         let state = (recorder, self.take_mix_file);
-        let finished = self.cpu_test.figures(
+        let finished = self.bufs.cpu_test.figures(
             figures,
             state,
             self.skipped_chunks,
@@ -1070,21 +1110,21 @@ impl<'a> BatApp<'a> {
             self.sample_rate as u64,
         );
         if finished {
-            self.cpu_test.at += 1;
+            self.bufs.cpu_test.at += 1;
             self.begin_cpu_test_row();
         }
     }
 
     /// Whether the host should pass its input through [`add_test_calls`](Self::add_test_calls).
     pub fn test_calls_on(&self) -> bool {
-        self.cpu_test.running && self.cpu_test.test_calls
+        self.bufs.cpu_test.running && self.bufs.cpu_test.test_calls
     }
 
     /// Add the CPU test's synthetic bat calls to the blocks about to be passed to
     /// [`process`](Self::process). They reach the headphones and the waterfall, and not a
     /// recorder outside the app.
     pub fn add_test_calls(&mut self, first: &mut [f32], second: &mut [f32]) {
-        self.cpu_test.add_calls(self.sample_rate, first, second);
+        self.bufs.cpu_test.add_calls(self.sample_rate, first, second);
     }
 
     /// The host can start and stop its recorder: offer the phone remote.
@@ -1141,6 +1181,44 @@ impl<'a> BatApp<'a> {
     /// What came of a command: shows on the main screen and beeps in the headphones.
     pub fn remote_result(&mut self, result: RemoteResult) {
         self.remote.report(result, self.samples);
+        let test = &mut self.bufs.cpu_test;
+        if test.running && test.phase == cpu_test::Phase::StartingTake {
+            match result {
+                RemoteResult::Started | RemoteResult::AlreadyRecording => {
+                    test.owns_take = result == RemoteResult::Started;
+                    test.phase = cpu_test::Phase::Rows;
+                    test.pass = cpu_test::RECORDING_PASS;
+                    test.at = 0;
+                    self.begin_cpu_test_row();
+                }
+                _ => self.end_cpu_test(Some(cpu_test::End::NoTake(result))),
+            }
+        }
+    }
+
+    /// The CPU test's log, as text, once a run has ended: written into `out`, returning its
+    /// length. The host writes it to the card, then calls
+    /// [`cpu_test_log_saved`](Self::cpu_test_log_saved). A log too long for `out` is cut short.
+    pub fn take_cpu_test_log(&mut self, out: &mut [u8]) -> Option<usize> {
+        if self.bufs.cpu_test.log != cpu_test::Log::Due {
+            return None;
+        }
+        let info = cpu_test::LogInfo {
+            build: self.host_build,
+            rate_hz: self.sample_rate as u32,
+            two_inputs: self.inputs[1].is_some(),
+        };
+        let mut writer = SliceWriter { out, len: 0 };
+        let _ = self.bufs.cpu_test.write_log(&mut writer, &info);
+        self.bufs.cpu_test.log = cpu_test::Log::Waiting;
+        Some(writer.len)
+    }
+
+    /// The host has written the CPU test's log to the card.
+    pub fn cpu_test_log_saved(&mut self) {
+        if self.bufs.cpu_test.log == cpu_test::Log::Waiting {
+            self.bufs.cpu_test.log = cpu_test::Log::Saved;
+        }
     }
 
     /// How many blocks of input the chime test listens to: with one input on, both blocks
@@ -1349,7 +1427,7 @@ impl<'a> BatApp<'a> {
     pub fn idle(&self) -> bool {
         self.mix_silence.is_some()
             && self.input_kind == InputKind::Live
-            && !self.cpu_test.running
+            && !self.bufs.cpu_test.running
             && matches!(self.te.state(), ExpanderState::Idle)
             && !self.remote.beeping()
             && self.remote.result_shown(self.samples).is_none()
@@ -1548,7 +1626,7 @@ impl<'a> BatApp<'a> {
     /// time, against a screen that is redrawn all the time. Off by default. The CPU test measures
     /// the drawing, so the host draws as usual while it runs.
     pub fn draw_on_input(&self) -> bool {
-        self.draw_on_input && !self.cpu_test.running
+        self.draw_on_input && !self.bufs.cpu_test.running
     }
 
     /// The switch's own state, for the settings page.
@@ -1562,7 +1640,7 @@ impl<'a> BatApp<'a> {
 
     /// Whether Mute while recording is silencing the headphones now (or fading them out).
     pub fn muted_for_take(&self) -> bool {
-        self.mute_while_recording && self.input_kind == InputKind::Live && self.is_recording() && !self.cpu_test.running
+        self.mute_while_recording && self.input_kind == InputKind::Live && self.is_recording() && !self.bufs.cpu_test.running
     }
 
     /// The host kept REC from pausing a take: the main screen says so for a few seconds.
@@ -1730,7 +1808,7 @@ impl<'a> BatApp<'a> {
             // HOME closes the settings screen; on the main screen it belongs to
             // the X8's launcher, except in BAT PLAYBACK, where it opens the list.
             Button::Home => {
-                if self.cpu_test.running {
+                if self.bufs.cpu_test.running {
                     self.stop_cpu_test();
                 }
                 if self.input_kind == InputKind::Playback && self.screen == Screen::Main {
@@ -1753,7 +1831,7 @@ impl<'a> BatApp<'a> {
                 Screen::Folders => self.choose_folder(self.player.folder_list.highlight),
                 Screen::FileInfo if self.details_play_shown() => self.play_details_file(),
                 Screen::FileInfo if self.info_from == Screen::Main => self.play_button(),
-                Screen::Main if !self.cpu_test.running => self.play_button(),
+                Screen::Main if !self.bufs.cpu_test.running => self.play_button(),
                 _ => {}
             },
             Button::Play => {}
@@ -1782,7 +1860,7 @@ impl<'a> BatApp<'a> {
             self.scroll_details_to(self.player.details_top as i32 + steps);
             return;
         }
-        if matches!(self.screen, Screen::ChimeTest | Screen::CpuTest) || self.cpu_test.running {
+        if matches!(self.screen, Screen::ChimeTest | Screen::CpuTest) || self.bufs.cpu_test.running {
             return;
         }
         let step = |i: usize, len: usize| (i as i32 + steps).clamp(0, len as i32 - 1) as usize;
@@ -1800,7 +1878,7 @@ impl<'a> BatApp<'a> {
     /// A tap on the touchscreen, in screen pixels.
     pub fn touch(&mut self, x: i32, y: i32) {
         // A tap anywhere stops the CPU test, so a tap cannot change a setting under it.
-        if self.cpu_test.running {
+        if self.bufs.cpu_test.running {
             self.stop_cpu_test();
             return;
         }
@@ -1821,9 +1899,13 @@ impl<'a> BatApp<'a> {
                 {
                     self.start_cpu_test();
                 } else if layout::CPU_TEST_CALLS.contains(p) {
-                    self.cpu_test.test_calls = !self.cpu_test.test_calls;
+                    self.bufs.cpu_test.test_calls = !self.bufs.cpu_test.test_calls;
+                } else if let Some(pass) = layout::CPU_TEST_PASS_TABS.iter().position(|tab| tab.contains(p))
+                    && self.bufs.cpu_test.both_passes()
+                {
+                    self.bufs.cpu_test.pass = pass;
                 } else if layout::CPU_TEST_VIEW.contains(p) && self.stages.running() {
-                    self.cpu_test.view = match self.cpu_test.view {
+                    self.bufs.cpu_test.view = match self.bufs.cpu_test.view {
                         cpu_test::View::Totals => cpu_test::View::Stages,
                         cpu_test::View::Stages => cpu_test::View::Totals,
                     };
@@ -2017,7 +2099,7 @@ impl<'a> BatApp<'a> {
             return true;
         }
         self.screen == Screen::Main
-            && !self.cpu_test.running
+            && !self.bufs.cpu_test.running
             && matches!(self.mode, Mode::Het | Mode::Comb)
             && layout::waterfall_freq_at(x, y).is_some()
     }
@@ -2327,7 +2409,7 @@ impl<'a> BatApp<'a> {
             self.chime.input_jumped(self.samples);
         } else {
             // The host paused, so the CPU test's row has a hole in it.
-            if self.cpu_test.running {
+            if self.bufs.cpu_test.running {
                 self.stop_cpu_test();
             }
             // If the number of chains changes next, its fade has to start from what is
@@ -2752,7 +2834,7 @@ impl<'a> BatApp<'a> {
     /// button, the waterfall in HET or COMB mode (where a tap tunes), or a
     /// control on the settings screen.
     pub fn is_tappable(&self, x: i32, y: i32) -> bool {
-        if self.cpu_test.running {
+        if self.bufs.cpu_test.running {
             return true;
         }
         let p = embedded_graphics::prelude::Point::new(x, y);
@@ -2763,6 +2845,7 @@ impl<'a> BatApp<'a> {
             Screen::CpuTest => {
                 return layout::CPU_TEST_BACK.contains(p)
                     || layout::CPU_TEST_START.contains(p)
+                    || (self.bufs.cpu_test.both_passes() && layout::CPU_TEST_PASS_TABS.iter().any(|tab| tab.contains(p)))
                     || layout::CPU_TEST_CALLS.contains(p)
                     || (self.stages.running() && layout::CPU_TEST_VIEW.contains(p));
             }
@@ -2901,6 +2984,22 @@ fn build_snapshot(
         }
     }
     (lo, hi)
+}
+
+/// Writes text into a byte slice, keeping as much as fits.
+struct SliceWriter<'a> {
+    out: &'a mut [u8],
+    len: usize,
+}
+
+impl core::fmt::Write for SliceWriter<'_> {
+    fn write_str(&mut self, s: &str) -> core::fmt::Result {
+        let room = self.out.len() - self.len;
+        let n = s.len().min(room);
+        self.out[self.len..self.len + n].copy_from_slice(&s.as_bytes()[..n]);
+        self.len += n;
+        if n < s.len() { Err(core::fmt::Error) } else { Ok(()) }
+    }
 }
 
 #[cfg(test)]

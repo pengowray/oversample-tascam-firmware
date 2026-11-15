@@ -420,6 +420,15 @@ pub const CPU_TEST_GROUPS: i32 = 49;
 pub const CPU_TEST_COLUMNS: i32 = 60;
 pub const CPU_TEST_FIRST_ROW: i32 = 72;
 pub const CPU_TEST_ROW_H: i32 = 11;
+/// After a run with a recording pass: the two passes' tables, one at a time, chosen with these
+/// tabs under the table (22 rows and 3 headings end at y = 336).
+pub const CPU_TEST_PASS_TABS: [Rectangle; 2] = [
+    Rectangle::new(Point::new(6, 348), Size::new(84, 28)),
+    Rectangle::new(Point::new(94, 348), Size::new(84, 28)),
+];
+/// The log's file name and whether it is on the card yet, right of the tabs.
+pub const CPU_TEST_LOG_X: i32 = 186;
+pub const CPU_TEST_LOG_Y: i32 = 359;
 /// The test calls' switch, under the table. The whole row is the target.
 pub const CPU_TEST_CALLS: Rectangle = Rectangle::new(Point::new(6, 398), Size::new(308, 30));
 pub const CPU_TEST_CALLS_SWITCH: Rectangle = Rectangle::new(Point::new(264, 403), Size::new(40, 20));

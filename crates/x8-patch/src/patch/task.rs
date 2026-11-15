@@ -281,6 +281,7 @@ extern "C" fn dsp_task(_: isize) {
         // The clock first: a start chime's REC press waits until a clock set has finished.
         run_clock(app);
         run_remote(app);
+        super::cpu_log::take(app);
         let start = BLOCKS.load(Relaxed);
         feed(app, u32::MAX, PASS_BLOCKS);
         let processed = BLOCKS.load(Relaxed);
@@ -336,6 +337,7 @@ pub(super) extern "C" fn tick_work() {
     apply_touches(app);
     run_clock(app);
     run_remote(app);
+    super::cpu_log::take(app);
     if PLAYBACK.load(Relaxed) {
         play(app, PASS_BLOCKS);
     } else {

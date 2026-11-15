@@ -3,9 +3,9 @@
 use embedded_graphics::pixelcolor::Rgb565;
 
 use super::{
-    BODY_BOLD, CENTER, Fb, LEFT, RIGHT, SMALL, hline, no_input_notice, rate_warning, rounded, switch_control, text,
+    BODY, BODY_BOLD, CENTER, Fb, LEFT, RIGHT, SMALL, hline, no_input_notice, rate_warning, rounded, switch_control, text,
 };
-use crate::cpu_test::{Row, RowResult, View};
+use crate::cpu_test::{End, Log, MEASURE_S, Phase, RowResult, SETTLE_S, View, no_take_reason, every_row, group_heading, mix_note, row_name};
 use crate::layout::*;
 use crate::palette::*;
 use crate::{AutoVolume, BatApp, Recorder};
@@ -70,48 +70,8 @@ pub(super) const STAGE_COLUMNS: [(&str, i32); 11] = [
 pub(super) const VIEW_STAGES: &str = "Stages";
 pub(super) const VIEW_TOTALS: &str = "Totals";
 
-/// What the recorder was doing for every row.
-fn every_row(state: Recorder) -> &'static str {
-    match state {
-        Recorder::Recording => "Recording for every row.",
-        Recorder::Standby => "Record standby for every row.",
-        Recorder::Paused => "Recording paused for every row.",
-        Recorder::Stopped => "Recorder stopped for every row.",
-    }
-}
-
-/// After the recorder's state while recording: whether the take writes a MIX file, which costs CPU.
-fn mix_note(mix_file: Option<bool>) -> &'static str {
-    match mix_file {
-        Some(true) => " MIX file on.",
-        Some(false) => " MIX file off.",
-        None => "",
-    }
-}
-
 /// The line above the table when the recorder's state changed during the test.
 const STATE_CHANGED: &str = "Recorder state changed. * differs from row 1.";
-
-fn group_heading(row: &Row) -> &'static str {
-    match (row.decoders, row.volume) {
-        (true, AutoVolume::Off) => "Auto volume off, chime decoders running",
-        (true, AutoVolume::On) => "Auto volume on, chime decoders running",
-        (true, AutoVolume::BatsOnly) => "Auto volume Bats only, chime decoders running",
-        (false, AutoVolume::Off) => "Auto volume off",
-        (false, AutoVolume::On) => "Auto volume on",
-        (false, AutoVolume::BatsOnly) => "Auto volume Bats only",
-    }
-}
-
-/// A row's name.
-fn row_name(row: &Row) -> (&'static str, &'static str) {
-    let suffix = match (row.has_stereo, row.one_side) {
-        (false, _) => "",
-        (true, false) => " stereo",
-        (true, true) => " mono",
-    };
-    (row.mode.label(), suffix)
-}
 
 /// Whether the mode's own label and suffix fit before the first column of figures.
 #[cfg(test)]
@@ -160,6 +120,10 @@ fn summary(app: &BatApp, fb: Fb) {
                 "Recording, MIX file off. The test runs while recording."
             }
             Recorder::Recording => "Recording. The test runs while recording.",
+            Recorder::Standby | Recorder::Stopped if app.cpu_test_would_record() => match state {
+                Recorder::Standby => "Tests in record standby, then while recording a test take.",
+                _ => "Tests with the recorder stopped, then while recording a test take.",
+            },
             Recorder::Standby => "Record standby. Press REC to test while recording.",
             Recorder::Paused => "Recording paused. Press REC to test while recording.",
             Recorder::Stopped => "Recorder stopped. Press REC to test while recording.",
@@ -195,7 +159,7 @@ fn table(app: &BatApp, fb: Fb) {
         text(fb, &SMALL, format_args!("{BUILD_PREFIX}{build}"), LABEL_X, CPU_TEST_GROUPS, LEFT, TEXT);
     }
     text(fb, &SMALL, "% of CPU", GROUPS_X, CPU_TEST_GROUPS, LEFT, TEXT_MUTED);
-    let view = if app.stages_available() { app.cpu_test.view } else { View::Totals };
+    let view = if app.stages_available() { app.bufs.cpu_test.view } else { View::Totals };
     let columns: &[(&str, i32)] = match view {
         View::Totals => {
             text(fb, &SMALL, "frames", LOST_X - 18, CPU_TEST_GROUPS, LEFT, TEXT_MUTED);
@@ -252,19 +216,81 @@ fn totals_row(fb: Fb, result: &RowResult, y: i32) {
     problem_count(fb, result.dropped, DROP_X, y);
     let ring = Count { n: result.waiting_most, full_below: RING_FULL_BELOW };
     text(fb, &SMALL, format_args!("{ring}"), RING_X, y, RIGHT, TEXT_MUTED);
-    problem_count(fb, result.skip_percent, SKIP_X, y);
+    problem_count(fb, result.skip_percent.into(), SKIP_X, y);
 }
 
 /// A row of the Stages table. `rest` is the DSP task's time outside the app's processing:
 /// reading the input ring, queueing the output and the phone remote's buttons.
 fn stages_row(fb: Fb, result: &RowResult, y: i32) {
     let Some(stages) = result.stages else { return };
-    let rest = result.dsp_percent.saturating_sub(stages.iter().sum());
+    let rest = u32::from(result.dsp_percent).saturating_sub(stages.iter().map(|&s| u32::from(s)).sum());
     let frame = result.draw_percent.saturating_sub(result.copy_percent);
-    let values = [result.dsp_percent].into_iter().chain(stages).chain([rest, frame, result.copy_percent]);
+    let values = [result.dsp_percent.into()]
+        .into_iter()
+        .chain(stages.iter().map(|&s| u32::from(s)))
+        .chain([rest, frame.into(), result.copy_percent.into()]);
     for (value, &(_, x)) in values.zip(STAGE_COLUMNS.iter()) {
         text(fb, &SMALL, format_args!("{value}"), x, y, RIGHT, TEXT);
     }
+}
+
+/// A tab's name for a pass: the recorder's state in its first row.
+fn pass_name(state: Option<Recorder>) -> &'static str {
+    match state {
+        Some(Recorder::Recording) => "Recording",
+        Some(Recorder::Standby) => "Standby",
+        Some(Recorder::Paused) => "Paused",
+        Some(Recorder::Stopped) => "Stopped",
+        None => "Mixed",
+    }
+}
+
+pub(super) const LOG_FILE: &str = "CPU_TEST.TXT";
+pub(super) const LOG_SAVED: &str = "saved on the card";
+pub(super) const LOG_WAITING: &str = "saved when a take ends";
+pub(super) const LOG_WAITING_THIS: &str = "saved when this take ends";
+pub(super) const NO_RECORDING_PASS: &str = "No recording pass: ";
+
+/// Under the table: the tabs for the two passes, after a run that had both, or why the
+/// recording pass did not run; then the log and whether it is on the card yet.
+fn passes_and_log(app: &BatApp, fb: Fb) {
+    let test = &app.bufs.cpu_test;
+    if test.running {
+        return;
+    }
+    if test.both_passes() {
+        for (pass, tab) in CPU_TEST_PASS_TABS.iter().enumerate() {
+            let state = test.pass_rows(pass).iter().find_map(|row| row.result).and_then(|result| result.recorder);
+            // As the settings page's tabs: the pass shown has the accent fill.
+            rounded(fb, *tab, 4, if pass == test.pass { ACCENT } else { BUTTON });
+            text(fb, &BODY, pass_name(state), tab.center().x, tab.top_left.y + 19, CENTER, TEXT);
+        }
+    } else if let Some(End::NoTake(result)) = test.end {
+        let x = text(fb, &SMALL, NO_RECORDING_PASS, LABEL_X, CPU_TEST_LOG_Y + 5, LEFT, METER_YELLOW);
+        text(fb, &SMALL, format_args!("{}.", no_take_reason(result)), x, CPU_TEST_LOG_Y + 5, LEFT, METER_YELLOW);
+        return;
+    }
+    let state = match test.log {
+        Log::Waiting | Log::Due if app.is_recording() => LOG_WAITING_THIS,
+        Log::Waiting | Log::Due => LOG_WAITING,
+        Log::Saved => LOG_SAVED,
+        Log::None if !test.has_results() => {
+            // Before the first run: how long it takes, and the take it records.
+            let minutes = (test.count as u64 * (SETTLE_S + MEASURE_S)).div_ceil(60);
+            if app.cpu_test_would_record() {
+                let line = format_args!("Takes about {} min, including a {minutes} min test take.", 2 * minutes);
+                text(fb, &SMALL, line, LABEL_X, CPU_TEST_LOG_Y + 5, LEFT, TEXT_MUTED);
+            } else {
+                text(fb, &SMALL, format_args!("Takes about {minutes} min."), LABEL_X, CPU_TEST_LOG_Y + 5, LEFT, TEXT_MUTED);
+            }
+            return;
+        }
+        Log::None => return,
+    };
+    // Beside the tabs, or at the left with no tabs.
+    let x = if test.both_passes() { CPU_TEST_LOG_X } else { LABEL_X };
+    text(fb, &SMALL, LOG_FILE, x, CPU_TEST_LOG_Y, LEFT, TEXT);
+    text(fb, &SMALL, state, x, CPU_TEST_LOG_Y + 12, LEFT, TEXT_MUTED);
 }
 
 pub(super) fn draw(app: &BatApp, fb: Fb) {
@@ -280,23 +306,24 @@ pub(super) fn draw(app: &BatApp, fb: Fb) {
     }
     summary(app, fb);
     table(app, fb);
+    passes_and_log(app, fb);
 
     let (x, y) = (CPU_TEST_CALLS.top_left.x + 10, CPU_TEST_CALLS.top_left.y);
     rounded(fb, CPU_TEST_CALLS, 4, PANEL);
     text(fb, &SMALL, CALLS_LINES[0], x, y + 12, LEFT, TEXT);
     text(fb, &SMALL, CALLS_LINES[1], x, y + 25, LEFT, TEXT_MUTED);
-    switch_control(fb, CPU_TEST_CALLS_SWITCH, app.cpu_test.test_calls);
+    switch_control(fb, CPU_TEST_CALLS_SWITCH, app.bufs.cpu_test.test_calls);
 
     if app.stages_available() {
         rounded(fb, CPU_TEST_VIEW, 4, BUTTON);
-        let label = match app.cpu_test.view {
+        let label = match app.bufs.cpu_test.view {
             View::Totals => VIEW_STAGES,
             View::Stages => VIEW_TOTALS,
         };
         text(fb, &BODY_BOLD, label, CPU_TEST_VIEW.center().x, CPU_TEST_VIEW.top_left.y + 28, CENTER, TEXT);
     }
     rounded(fb, CPU_TEST_START, 4, ACCENT);
-    let has_results = app.cpu_test.has_results();
+    let has_results = app.bufs.cpu_test.has_results();
     text(
         fb,
         &BODY_BOLD,
@@ -309,19 +336,27 @@ pub(super) fn draw(app: &BatApp, fb: Fb) {
 }
 
 pub(super) const RUNNING_HELP: &str = "Tap anywhere to stop the test.";
+pub(super) const STARTING_TAKE: &str = "Starting a take for the recording pass...";
 
 /// Where the value line goes on the main screen, while the test runs.
 pub(super) fn running_line(app: &BatApp, fb: Fb) {
-    let Some(row) = app.cpu_test.current() else { return };
+    let test = &app.bufs.cpu_test;
+    let (done, all) = test.progress();
+    if test.running && test.phase == Phase::StartingTake {
+        text(fb, &SMALL, STARTING_TAKE, 8, VALUE_BASELINE - 12, LEFT, TEXT);
+        text(fb, &SMALL, RUNNING_HELP, 8, VALUE_BASELINE, LEFT, TEXT_MUTED);
+        return;
+    }
+    let Some(row) = test.current() else { return };
     let (mode, suffix) = row_name(row);
-    let left = app.cpu_test.seconds_left_in_row(app.samples, app.sample_rate as u64);
+    let left = app.bufs.cpu_test.seconds_left_in_row(app.samples, app.sample_rate as u64);
     let volume = match row.volume {
         AutoVolume::Off => "off",
         AutoVolume::On => "on",
         AutoVolume::BatsOnly => "Bats only",
     };
     let decoders = if row.decoders { ", decoders" } else { "" };
-    let line = format_args!("{mode}{suffix}, Auto volume {volume}{decoders}, {left} s left");
+    let line = format_args!("{} of {all}: {mode}{suffix}, Auto volume {volume}{decoders}, {left} s", done + 1);
     text(fb, &SMALL, line, 8, VALUE_BASELINE - 12, LEFT, TEXT);
     text(fb, &SMALL, RUNNING_HELP, 8, VALUE_BASELINE, LEFT, TEXT_MUTED);
 }

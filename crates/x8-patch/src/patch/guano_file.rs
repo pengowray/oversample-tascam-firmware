@@ -43,6 +43,8 @@ pub(super) unsafe extern "C" fn guano_hook(file: usize, size_out: usize, c: usiz
     if system_mode() <= 1 && stack_left().is_some_and(|left| left >= LOG_STACK_NEEDED) {
         // SAFETY: the recorder's task, closing a take's files.
         unsafe { super::location::write_log() };
+        // SAFETY: as above.
+        unsafe { super::cpu_log::write_log(file) };
     }
     // SAFETY: the stock function this call replaced, with its arguments.
     let size: Handler = unsafe { core::mem::transmute(stock::FILE_SIZE) };
@@ -112,7 +114,7 @@ fn stack_left() -> Option<usize> {
 }
 
 /// The path the take's file slot holding `file` was opened with.
-fn path(file: usize, out: &mut [u8; PATH_UNITS]) -> Option<&[u8]> {
+pub(super) fn path(file: usize, out: &mut [u8; PATH_UNITS]) -> Option<&[u8]> {
     let entry = (0..stock::FILE_SLOTS)
         .map(|slot| stock::TAKE_FILES + slot * stock::TAKE_FILE_STEP)
         // SAFETY: the stock table of a take's open files, which only the recorder's task changes.
@@ -123,4 +125,4 @@ fn path(file: usize, out: &mut [u8; PATH_UNITS]) -> Option<&[u8]> {
 }
 
 /// Units in a take table path: 0x200 bytes of UTF-16.
-const PATH_UNITS: usize = stock::TAKE_FILE_PATH_BYTES / 2;
+pub(super) const PATH_UNITS: usize = stock::TAKE_FILE_PATH_BYTES / 2;
