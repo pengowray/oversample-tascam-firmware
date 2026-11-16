@@ -2399,10 +2399,9 @@ card. It cannot stop the X8 starting or recording.
 
 ## Step 45 test file: 32-bit float over USB at 192 kHz (built 2026-11-16, never installed: superseded by B277)
 
-B276, deleted: it sent 2 channels of float on setting 3, whose descriptor says 8, and marked this with a rate range ending at 192,001 Hz; B277 replaces both with settings of their own. B276 was B275 (Step 44) with float over USB added; Step
-44's checks still apply, and this file replaces it. All the checks in `tools/x8patch.py` pass, and two builds give the
-same file. Nothing in this step has run on a unit, and neither has the 24-bit 192 kHz USB that it builds on (Step 39,
-B263), so check that first.
+B276 (`work/patch51`, deleted) was B275 (Step 44) with float over USB added. It sent 2 channels of float on setting 3,
+whose descriptor says 8, and marked this with a rate range ending at 192,001 Hz. B277 (Step 46) replaces both with
+settings of their own. The rest of this section describes B276 as built.
 
 **What changes.**
 
