@@ -2364,6 +2364,47 @@ B241 or an earlier build. All the checks in `tools/x8patch.py` pass on this file
 1. **Start and stop.** With Phone remote on and the phone page reloaded, do `Start recording` and `Stop recording` work as before?
 2. **Old phone page.** If a phone still has the old page cached, its commands should do nothing at all. Reload the page.
 
+## Step 45 test file: 32-bit float over USB at 192 kHz (built 2026-11-16, not yet installed)
+
+`work/patch51/#PortaX8_0276.203` (B276, SHA-256 `9c235043…e072ae4e30a9`). B275 (Step 44) with float over USB added; Step
+44's checks still apply, and this file replaces it. All the checks in `tools/x8patch.py` pass, and two builds give the
+same file. Nothing in this step has run on a unit, and neither has the 24-bit 192 kHz USB that it builds on (Step 39,
+B263), so check that first.
+
+**What changes.**
+
+- **Float on interface 2's alternate setting 3 at 192 kHz.** A host that chooses that setting (8 channels of 4 bytes
+  in its descriptor) at 192 kHz gets 2 channels of 32-bit float: INPUT 3 and INPUT 4 after the dual-gain merge, as the
+  X8 records its float tracks, so a loud call nearer the mic than the input gain allows for is not clipped. The patch
+  works the merge out for each frame from the high and low gain words, with the stock merge's state at the end of the
+  block, which moves once a block at 192 kHz (see "Merge checked against recordings"). Alternate setting 2 still sends
+  24-bit from the high gain path only, as in B263. B263 to B275 sent nothing on setting 3 at 192 kHz; a host other
+  than Oversample that chooses it now gets data it reads wrongly.
+- **Either order.** Setting 3 chosen at 192 kHz goes to the stock handler as setting 2, whose first packets fit the
+  416-byte buffers, then the samples become 4 bytes. Chosen at 96 kHz or below it is the stock 8-channel stream, and
+  a later 192 kHz switches it to 2 channels before the stock code takes the rate; back at 96 kHz it is 8 channels
+  again. The stock handler uses the setting's number only for bytes, channels and a format byte (0x152C8 to 0x15342).
+- **How Oversample knows.** The clock's top rate range now ends at 192,001 Hz instead of 192,000. It lists the same
+  rates, 96 and 192 kHz, to any host and to the stock SET CUR check. Oversample (commit `c302cd4`, not pushed) chooses
+  setting 3 at 192 kHz only when it sees that mark on a TASCAM 0x0644:0x8074, and only with its max bit depth at 32 or
+  unset; with B263 to B275 it keeps to setting 2.
+
+**Memory.** Patch region free: 9,712 bytes (816 fewer than B275). ITCM: 84,768 bytes; the audio hook grows by 16
+bytes.
+
+**What to check.** Set POWER SOURCE SELECT to BATTERY, both inputs on, record rate 192 kHz. Oversample built from
+`c302cd4` or later, sample rate 192k, Stereo.
+
+1. **24-bit first.** In Oversample, set the max bit depth to 24. Does it record stereo at 192 kHz with no gaps, at the
+   right speed? This is Step 39's check, never run.
+2. **Float.** Max bit depth unset (or 32). Does Oversample's log say interface 2, alternate setting 3, 2 channels,
+   float? Does its file play at the right speed and pitch, with no gaps or noise bursts? Is it a 32-bit float WAV?
+3. **Matches the card.** Record the same sound on the X8 (BAT DETECTOR or MANUAL, 32-bit float) and in Oversample
+   at once. Line up the two files: does Oversample's file match the X8's `_3-4` track sample for sample, sign
+   included, with a loud sound (a clap near the mic) that goes over 0 dBFS in both, and not clipped at 1.0?
+4. **Back to 96 kHz.** Change Oversample to 96 kHz, then back to 192 kHz: still sound each time?
+5. **A computer.** On a PC or Mac at 96 kHz, does the X8 still work as an 8-channel and 2-channel interface as stock?
+
 ## Step 44 test file: stereo PITCH, a CPU test while recording with a log, the real battery level (built 2026-11-15, not yet installed)
 
 `work/patch50/#PortaX8_0275.203` (B275, SHA-256 `c45109a6…dbedf82a8fb5e96474`). Built as B273 is (`opt-level = 3`;
@@ -3972,6 +4013,8 @@ Changed in Oversample commit `b2bf6a1` (2026-11-11, not pushed). Before it, the 
   and the feedback endpoint 0x83 could be taken for audio. Both are fixed.
 - The stream read every sample as 16-bit. It now takes the bytes per sample from the descriptor and keeps the top 16 bits
   of 3- and 4-byte samples, since Oversample writes USB recordings at 16 bits.
+- Since then (a1cf9df and 4b71a26, 2026-11-11 and 12) it records USB audio at the device's own depth, up to 32-bit
+  float. From `c302cd4` (2026-11-16) it takes 32-bit float stereo from B276 and later: see Step 45.
 
 ## USB power and POWER SAVE MODE (2026-11-11)
 
