@@ -69,7 +69,7 @@ use launcher::{
     icon_width_hook, phantom_off_hook, power_off_save_hook, slot_hook, text_hook, tile_hook, title_y_hook,
 };
 use mix_file::{file_mask_hook, open_take_hook};
-use usb::{usb_alt_hook, usb_config_hook, usb_init_hook, usb_reset_hook};
+use usb::{usb_alt_hook, usb_init_hook, usb_reset_hook};
 
 type Handler = unsafe extern "C" fn(usize, usize, usize, usize) -> usize;
 
@@ -124,8 +124,6 @@ pub struct Header {
     usb_alt_hook: Handler,
     /// Replaces the app change's call that turns phantom power off.
     phantom_off_hook: Handler,
-    /// Replaces the USB task's call that builds a configuration descriptor.
-    usb_config_hook: Handler,
     /// Replaces the device callback's call that sets the UAC2 packet sizes at bus reset.
     usb_reset_hook: Handler,
     /// The handle that the logo screen's lower image item gets, and the y positions of its upper and
@@ -142,7 +140,7 @@ pub struct Header {
 #[unsafe(link_section = ".header")]
 pub static X8_PATCH_HEADER: Header = Header {
     magic: *b"BATX",
-    version: 22,
+    version: 23,
     key_hook,
     rec_key_hook,
     touch_hook,
@@ -167,7 +165,6 @@ pub static X8_PATCH_HEADER: Header = Header {
     usb_init_hook,
     usb_alt_hook,
     phantom_off_hook,
-    usb_config_hook,
     usb_reset_hook,
     logo_lower: &logo::LOWER_HANDLE,
     logo_upper_y: logo_pixels::UPPER_Y,
@@ -186,6 +183,18 @@ fn patch_build() -> u32 {
 struct Slot<T>(UnsafeCell<MaybeUninit<T>>);
 // SAFETY: see each use.
 unsafe impl<T> Sync for Slot<T> {}
+
+/// Run `f` with interrupts off, putting PRIMASK back as it was.
+fn without_interrupts(f: impl FnOnce()) {
+    let primask: u32;
+    // SAFETY: reads PRIMASK and masks interrupts; restored below.
+    unsafe { core::arch::asm!("mrs {}, PRIMASK", "cpsid i", out(reg) primask, options(nomem, nostack, preserves_flags)) };
+    f();
+    if primask & 1 == 0 {
+        // SAFETY: interrupts were on before.
+        unsafe { core::arch::asm!("cpsie i", options(nomem, nostack, preserves_flags)) };
+    }
+}
 
 fn system_mode() -> u8 {
     // SAFETY: a byte the stock firmware sets before the RTOS starts.

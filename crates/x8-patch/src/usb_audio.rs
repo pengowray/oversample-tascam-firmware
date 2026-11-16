@@ -5,14 +5,13 @@
 //! The stock UAC2 audio function sends audio to the host on interface 2, in one of three
 //! alternate settings: 1 is 8 channels of 3 bytes, 2 is 2 channels of 3 bytes, 3 is 8 channels of
 //! 4 bytes. The packets are built in 416-byte buffers, and nothing in the stock code limits a
-//! packet to that size. 8 channels above 96 kHz would overrun them, so the patch keeps alternate
-//! settings 1 and 3 at 96 kHz or below.
+//! packet to that size. 8 channels above 96 kHz would overrun them, so the patch moves the
+//! buffers to 800 bytes each (`STRIDE_SITES`); until it has, it keeps settings 1 and 3 at 96 kHz
+//! or below.
 //!
-//! The patch adds alternate settings 4 (2 channels of 32-bit float) and 5 (4 channels of 32-bit
-//! float), as copies of setting 3's descriptors with fewer channels. At 192 kHz they carry INPUT 3
-//! and 4 (and 5 and 6) after the stock dual-gain merge, as the X8 records its 32-bit float
-//! tracks. At 96 kHz and below the stock audio routine fills them by itself, in its own order:
-//! the mix left and right, then INPUT 1 and 2.
+//! At 192 kHz the patch sends what the stock audio routine sends at 96 kHz and below, in the same
+//! order: the mix left and right, then INPUT 1 to 6 after the dual-gain merge, as many as the
+//! setting has, captured each frame from the stock 192 kHz routine.
 
 /// The highest rate the stock firmware offers over USB.
 pub const HIGHEST_STOCK_RATE: u32 = 96_000;
@@ -40,123 +39,23 @@ pub fn eight_channels(alt: u8) -> bool {
     matches!(alt, 1 | 3)
 }
 
-/// The stock format byte (USB state + 0x48) for 32-bit float, as its handler sets for
-/// alternate setting 3.
-pub const FLOAT_FORMAT: u8 = 4;
-/// The alternate settings the patch adds, and their channels of 32-bit float.
-pub const NEW_ALTS: [(u8, u8); 2] = [(4, 2), (5, 4)];
-
-/// The alternate setting to pass to the stock handler when the host asks for `alt` at
-/// `host_rate`. 0 makes the stock handler do nothing, so no 8-channel stream starts above 96 kHz.
-/// The stock handler sets bytes, channels and format for settings 1 to 3 only; for 4 and 5 it
-/// keeps what `before_alt` wrote and queues its first packets at that size.
-pub fn alt_to_use(alt: u8, host_rate: u32) -> u8 {
-    if eight_channels(alt) && host_rate > HIGHEST_STOCK_RATE { 0 } else { alt }
+/// The size of the packet buffers to the host: the stock 416 bytes, or 800 once the patch has
+/// moved them (`big`).
+pub fn buffer_size(big: bool) -> u32 {
+    if big { BIG_IN_PACKET } else { MAX_IN_PACKET }
 }
 
-/// For a setting the patch adds: the channels, bytes per sample and format byte to write into the
-/// USB state before the stock handler runs, at any rate.
-pub fn before_alt(alt: u8) -> Option<(u8, u8, u8)> {
-    NEW_ALTS.iter().find(|&&(a, _)| a == alt).map(|&(_, channels)| (channels, 4, FLOAT_FORMAT))
+/// The alternate setting to pass to the stock handler when the host asks for `alt` at
+/// `host_rate`. 0 makes the stock handler do nothing: with the stock buffers, no 8-channel stream
+/// starts above 96 kHz.
+pub fn alt_to_use(alt: u8, host_rate: u32, big: bool) -> u8 {
+    if !big && eight_channels(alt) && host_rate > HIGHEST_STOCK_RATE { 0 } else { alt }
 }
 
 /// The rate to give the stock code when the host sets `rate` while interface 2 is at `alt`.
 /// 96 kHz is what the stock code itself sets for a rate it does not list.
-pub fn rate_to_use(rate: u32, alt: u8) -> u32 {
-    if eight_channels(alt) && rate > HIGHEST_STOCK_RATE { HIGHEST_STOCK_RATE } else { rate }
-}
-
-/// The channels of float the audio interrupt sends at 192 kHz: 2 on setting 4 and 4 on setting
-/// 5, while the USB state still says so.
-pub fn float_channels(alt: u8, channels: u8, bytes: u8) -> Option<u8> {
-    before_alt(alt).and_then(|(want, b, _)| (channels == want && bytes == b).then_some(want))
-}
-
-/// A new setting's packet size, as `FUN_80df4a24` gives the stock settings at each bus reset: at
-/// high speed one frame more than a microframe holds at 192 kHz; at full speed the 0x184 it gives
-/// every setting.
-pub fn new_alt_packet(channels: u8, high_speed: bool) -> u16 {
-    if high_speed { largest_packet(channels, 4, RATE, true) as u16 } else { 0x184 }
-}
-
-/// Length of the stock configuration descriptor (configuration 0: mass storage and UAC2 audio).
-pub const STOCK_CONFIG_LEN: usize = 386;
-/// Where interface 2's alternate setting 3 starts in it, and interface 3 after it.
-const ALT3_AT: usize = 225;
-const IFACE3_AT: usize = 271;
-/// Bytes of one alternate setting: interface, AS_GENERAL, FORMAT_TYPE, endpoint and its
-/// class-specific endpoint descriptors.
-pub const ALT_LEN: usize = 46;
-/// Length of the configuration with the new settings.
-pub const EXTENDED_CONFIG_LEN: usize = STOCK_CONFIG_LEN + NEW_ALTS.len() * ALT_LEN;
-/// Offsets in an alternate setting: bAlternateSetting, bNrChannels and bmChannelConfig, and the
-/// endpoint's wMaxPacketSize.
-const ALT_NUMBER: usize = 3;
-const NR_CHANNELS: usize = 19;
-const CHANNEL_CONFIG: usize = 20;
-pub const MAX_PACKET: usize = 35;
-
-/// Add settings 4 and 5 to interface 2 in the configuration descriptor in `config`, which holds
-/// `len` bytes and has room for `EXTENDED_CONFIG_LEN`. Each is a copy of setting 3 (8 channels of
-/// float) with its number, channel count and channel config changed; interface 3 moves up after
-/// them, and the total length grows. Returns the new length, or None (and changes nothing) when
-/// the descriptor is not the stock one.
-pub fn extend_config(config: &mut [u8], len: usize) -> Option<usize> {
-    if len != STOCK_CONFIG_LEN || config.len() < EXTENDED_CONFIG_LEN {
-        return None;
-    }
-    let alt3 = &config[ALT3_AT..IFACE3_AT];
-    // Setting 3's interface descriptor, AS_GENERAL with 8 channels of float, then interface 3.
-    let stock = alt3[..4] == [9, 4, 2, 3]
-        && alt3[9..12] == [16, 0x24, 1]
-        && alt3[NR_CHANNELS] == 8
-        && alt3[25..31] == [6, 0x24, 2, 1, 4, 32]
-        && alt3[31..34] == [7, 5, 0x84]
-        && config[IFACE3_AT..IFACE3_AT + 4] == [9, 4, 3, 0]
-        && u16::from_le_bytes([config[2], config[3]]) as usize == STOCK_CONFIG_LEN;
-    if !stock {
-        return None;
-    }
-    let mut template = [0u8; ALT_LEN];
-    template.copy_from_slice(alt3);
-    config.copy_within(IFACE3_AT..STOCK_CONFIG_LEN, IFACE3_AT + NEW_ALTS.len() * ALT_LEN);
-    for (k, &(alt, channels)) in NEW_ALTS.iter().enumerate() {
-        let at = IFACE3_AT + k * ALT_LEN;
-        let block = &mut config[at..at + ALT_LEN];
-        block.copy_from_slice(&template);
-        block[ALT_NUMBER] = alt;
-        block[NR_CHANNELS] = channels;
-        // 2 channels are front left and right, as setting 2; 4 have no positions, as setting 3's 8.
-        let config_bits: u32 = if channels == 2 { 0x3 } else { 0 };
-        block[CHANNEL_CONFIG..CHANNEL_CONFIG + 4].copy_from_slice(&config_bits.to_le_bytes());
-    }
-    config[2..4].copy_from_slice(&(EXTENDED_CONFIG_LEN as u16).to_le_bytes());
-    Some(EXTENDED_CONFIG_LEN)
-}
-
-/// Where each new setting's wMaxPacketSize is in the extended descriptor.
-pub fn new_alt_packet_offsets() -> [usize; 2] {
-    core::array::from_fn(|k| IFACE3_AT + k * ALT_LEN + MAX_PACKET)
-}
-
-/// The stock dual-gain merge's state for one channel at the end of a block (state block at
-/// 0x29cac + 0x48 x channel): `g` make-up gain (+0x04), `c` the high-gain path's scale (+0x0c)
-/// and `w` the crossfade weight (+0x44). At 192 kHz `w` moves once a block of 4 frames, so it
-/// holds for every frame of the block.
-#[derive(Clone, Copy, Debug, PartialEq)]
-pub struct Merge {
-    pub g: f32,
-    pub c: f32,
-    pub w: f32,
-}
-
-/// One input's merged sample, as the stock routine computes it and the X8 records it to a 32-bit
-/// float track: `g x (B x w + A x c x (1 - w))`, with each word times the input's gain (+ or -
-/// 2^-31, its sign the input's phase setting). `high` and `low` are the high- and low-gain
-/// paths' words.
-pub fn merged(high: i32, low: i32, input_gain: f32, m: Merge) -> f32 {
-    let (a, b) = (high as f32 * input_gain, low as f32 * input_gain);
-    m.g * (b * m.w + a * m.c * (1.0 - m.w))
+pub fn rate_to_use(rate: u32, alt: u8, big: bool) -> u32 {
+    if !big && eight_channels(alt) && rate > HIGHEST_STOCK_RATE { HIGHEST_STOCK_RATE } else { rate }
 }
 
 /// The largest packet the stock callback builds: one frame more than a packet's share of the
@@ -166,35 +65,153 @@ pub fn largest_packet(channels: u8, bytes: u8, rate: u32, high_speed: bool) -> u
     channels as u32 * bytes as u32 * (rate / per_second + 1)
 }
 
-/// Whether the stock callback can build packets of this format in its buffers.
+/// Whether packets of this format fit buffers of `buffer` bytes.
+pub fn packet_fits_in(channels: u8, bytes: u8, rate: u32, high_speed: bool, buffer: u32) -> bool {
+    largest_packet(channels, bytes, rate, high_speed) <= buffer
+}
+
+/// Whether the stock callback can build packets of this format in its stock buffers.
 pub fn packet_fits(channels: u8, bytes: u8, rate: u32, high_speed: bool) -> bool {
-    largest_packet(channels, bytes, rate, high_speed) <= MAX_IN_PACKET
+    packet_fits_in(channels, bytes, rate, high_speed, MAX_IN_PACKET)
 }
 
 /// Whether the patch stops a stream before the stock callback builds its next packet: only above
 /// 96 kHz, where the patch has made the rate possible, and only when the packet would not fit.
 /// At 96 kHz and below the stock code decides, as before.
-pub fn must_stop(channels: u8, bytes: u8, rate: u32, high_speed: bool) -> bool {
-    rate > HIGHEST_STOCK_RATE && !packet_fits(channels, bytes, rate, high_speed)
+pub fn must_stop(channels: u8, bytes: u8, rate: u32, high_speed: bool, big: bool) -> bool {
+    rate > HIGHEST_STOCK_RATE && !packet_fits_in(channels, bytes, rate, high_speed, buffer_size(big))
 }
 
-/// Frames in the ring for a frame of `frame_bytes`, as the stock code counts them.
+/// The packet size bus reset gives the 8-channel settings once the buffers are 800 bytes: their
+/// largest packet at 192 kHz (setting 1: 8 x 3 bytes, setting 3: 8 x 4). The stock 312 and 416
+/// cover 96 kHz only.
+pub fn big_packet(alt: u8) -> Option<u16> {
+    match alt {
+        1 => Some(largest_packet(8, 3, RATE, true) as u16),
+        3 => Some(largest_packet(8, 4, RATE, true) as u16),
+        _ => None,
+    }
+}
+
+/// Frames in the ring for a frame of `frame_bytes`, as the stock code counts them
+/// (`FUN_00014c88`: the ring's 0x3400 bytes rounded down to whole frames).
 pub fn ring_frames(frame_bytes: u32) -> u32 {
     RING_BYTES / frame_bytes
 }
 
-/// One sample as the host expects it: the top 3 bytes of the 32-bit input word for 3-byte
-/// samples (as the stock packing does), or the whole word for 4-byte samples. Little-endian.
-/// Returns the bytes used.
-pub fn put_sample(word: i32, bytes: u8, out: &mut [u8]) -> usize {
-    let le = word.to_le_bytes();
-    if bytes == 3 {
-        out[..3].copy_from_slice(&le[1..]);
-        3
-    } else {
-        out[..4].copy_from_slice(&le);
+/// One frame as the stock routine has it for USB: the mix left and right, then INPUT 1 to 6.
+pub type StockFrame = [f32; 8];
+
+/// One sample as the stock 44.1 to 96 kHz routine packs it for USB (0x11B94 onward): as a float
+/// for 4-byte samples (format byte 4), unclamped; for 3-byte samples clamped to +-1, times
+/// 2147483647 as a double, truncated, and its top 3 bytes. Little-endian. Returns the bytes used.
+pub fn stock_sample(value: f32, bytes: u8, out: &mut [u8]) -> usize {
+    if bytes == 4 {
+        out[..4].copy_from_slice(&value.to_le_bytes());
         4
+    } else {
+        out[..3].copy_from_slice(&stock_word(value).to_le_bytes()[1..]);
+        3
     }
+}
+
+/// `(value.clamp(-1.0, 1.0) as f64 * 2147483647.0) as i32`, as the stock routine computes it, in
+/// single precision only: the patch has no double-precision hardware, and the library code for
+/// it is about 1.7 KB. With `a = v x 2^31` (exact in an f32), the stock result is `trunc(a - v)`.
+/// When `a` is a whole number that is `a - 1` for a positive `v` and `a + 1` for a negative one.
+/// Otherwise `a`'s fraction is at least 128 times `|v|`, so subtracting `v` crosses no whole
+/// number and the result is `trunc(a)`.
+pub fn stock_word(value: f32) -> i32 {
+    let v = if value.is_nan() { 0.0 } else { value.clamp(-1.0, 1.0) };
+    let a = v * 2_147_483_648.0;
+    if v == 1.0 {
+        return i32::MAX;
+    }
+    let whole = a as i32;
+    if whole as f32 == a {
+        if v > 0.0 {
+            whole - 1
+        } else if v < 0.0 {
+            whole + 1
+        } else {
+            0
+        }
+    } else {
+        whole
+    }
+}
+
+/// The 32-bit Thumb-2 instruction `insn` (two little-endian halfwords, as in memory) with its
+/// modified immediate (i:imm3:imm8, as in `mov.w` and `add.w` with an immediate) replaced by
+/// `value`. None when `value` cannot be encoded that way.
+pub fn with_modified_imm(insn: [u8; 4], value: u32) -> Option<[u8; 4]> {
+    let (i, imm3, imm8) = encode_modified_imm(value)?;
+    let hw1 = u16::from_le_bytes([insn[0], insn[1]]) & !(1 << 10) | (i << 10);
+    let hw2 = u16::from_le_bytes([insn[2], insn[3]]) & !(0x7 << 12 | 0xff) | (imm3 << 12) | imm8;
+    let (a, b) = (hw1.to_le_bytes(), hw2.to_le_bytes());
+    Some([a[0], a[1], b[0], b[1]])
+}
+
+/// The modified immediate of a 32-bit Thumb-2 instruction.
+pub fn modified_imm(insn: [u8; 4]) -> u32 {
+    let hw1 = u16::from_le_bytes([insn[0], insn[1]]) as u32;
+    let hw2 = u16::from_le_bytes([insn[2], insn[3]]) as u32;
+    let field = ((hw1 >> 10) & 1) << 11 | ((hw2 >> 12) & 7) << 8 | (hw2 & 0xff);
+    let imm8 = field & 0xff;
+    match field >> 8 {
+        0 => imm8,
+        1 => imm8 << 16 | imm8,
+        2 => imm8 << 24 | imm8 << 8,
+        3 => imm8 * 0x0101_0101,
+        _ => (0x80 | (field & 0x7f)).rotate_right(field >> 7),
+    }
+}
+
+/// i, imm3 and imm8 for `value` as a rotated 8-bit constant (rotations 8 to 31), the form a
+/// small multiple of a power of two takes.
+fn encode_modified_imm(value: u32) -> Option<(u16, u16, u16)> {
+    if value < 0x100 {
+        return Some((0, 0, value as u16));
+    }
+    (8..32).find_map(|rot: u32| {
+        let unrotated = value.rotate_left(rot);
+        (unrotated & !0xff == 0 && unrotated & 0x80 != 0).then(|| {
+            let field = rot << 7 | (unrotated & 0x7f);
+            ((field >> 11) as u16, ((field >> 8) & 7) as u16, (field & 0xff) as u16)
+        })
+    })
+}
+
+/// The 4 packet buffers to the host, with room for 8 channels of 4 bytes at 192 kHz.
+pub const BIG_IN_PACKET: u32 = 800;
+/// The stock code's buffer stride as it appears in each instruction that sets it: the patch
+/// replaces each with the same multiple of `BIG_IN_PACKET`.
+pub const STRIDE_SITES: [(u32, [u8; 4], u32); 7] = [
+    // FUN_00014ef0, the audio class callback: the stride it multiplies the buffer index by, and
+    // the addresses of buffers 1 to 3 it compares with.
+    (0x14fac, [0x4f, 0xf4, 0xd0, 0x71], 1),
+    (0x14fce, [0x02, 0xf5, 0xd0, 0x74], 1),
+    (0x14fd8, [0x02, 0xf5, 0x50, 0x76], 2),
+    (0x14fe2, [0x02, 0xf5, 0x9c, 0x64], 3),
+    // The interface 2 SET_INTERFACE handler: its first packets from buffers 1 to 3.
+    (0x153b2, [0x07, 0xf5, 0xd0, 0x72], 1),
+    (0x153e4, [0x07, 0xf5, 0x50, 0x72], 2),
+    (0x15416, [0x07, 0xf5, 0x9c, 0x62], 3),
+];
+
+/// A Thumb-2 `bl` at `from` to `to` (both even), or None out of range.
+pub fn thumb_bl(from: usize, to: usize) -> Option<[u16; 2]> {
+    let offset = to as i64 - (from as i64 + 4);
+    if !(-(1 << 24)..(1 << 24)).contains(&offset) {
+        return None;
+    }
+    let o = offset as u32;
+    let s = (o >> 24) & 1;
+    let (i1, i2) = ((o >> 23) & 1, (o >> 22) & 1);
+    let (j1, j2) = ((!(i1 ^ s)) & 1, (!(i2 ^ s)) & 1);
+    let hw1 = 0xf000 | s << 10 | ((o >> 12) & 0x3ff);
+    let hw2 = 0xd000 | j1 << 13 | j2 << 11 | ((o >> 1) & 0x7ff);
+    Some([hw1 as u16, hw2 as u16])
 }
 
 /// The stock SET CUR check (`FUN_00014108`): whether `rate` is in the GET RANGE answer, counting
@@ -230,127 +247,28 @@ mod tests {
         assert_eq!(STOCK_TOP_RANGE, [0x00, 0x77, 0x01, 0x00, 0x00, 0x77, 0x01, 0x00, 0, 0, 0, 0]);
     }
 
-    /// Configuration 0 as `FUN_80df471c` builds it: the 9-byte configuration descriptor and the
-    /// 23-byte mass storage interface (their bytes as built do not matter here, only their
-    /// length and wTotalLength), then the 354 bytes of audio descriptors at 0x813B69FC in V2.03.
-    fn stock_config() -> std::vec::Vec<u8> {
-        let mut config = std::vec![0u8; 32];
-        config[..4].copy_from_slice(&[9, 2, 0x82, 0x01]);
-        config.extend_from_slice(&STOCK_AUDIO);
-        assert_eq!(config.len(), STOCK_CONFIG_LEN);
-        config
-    }
-
-    const STOCK_AUDIO: [u8; 354] = [
-        0x08, 0x0b, 0x01, 0x03, 0x01, 0x00, 0x20, 0x00, 0x09, 0x04, 0x01, 0x00, 0x00, 0x01, 0x01, 0x20,
-        0x00, 0x09, 0x24, 0x01, 0x00, 0x02, 0x08, 0x4b, 0x00, 0x00, 0x08, 0x24, 0x0a, 0x07, 0x03, 0x03,
-        0x00, 0x00, 0x0c, 0x24, 0x03, 0x02, 0x01, 0x01, 0x00, 0x04, 0x07, 0x00, 0x00, 0x00, 0x11, 0x24,
-        0x02, 0x03, 0x01, 0x01, 0x00, 0x07, 0x02, 0x03, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x11,
-        0x24, 0x02, 0x04, 0x01, 0x02, 0x00, 0x07, 0x08, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
-        0x0c, 0x24, 0x03, 0x05, 0x01, 0x03, 0x00, 0x03, 0x07, 0x00, 0x00, 0x00, 0x09, 0x04, 0x02, 0x00,
-        0x00, 0x01, 0x02, 0x20, 0x00, 0x09, 0x04, 0x02, 0x01, 0x01, 0x01, 0x02, 0x20, 0x00, 0x10, 0x24,
-        0x01, 0x02, 0x00, 0x01, 0x01, 0x00, 0x00, 0x00, 0x08, 0x00, 0x00, 0x00, 0x00, 0x00, 0x06, 0x24,
-        0x02, 0x01, 0x03, 0x18, 0x07, 0x05, 0x84, 0x05, 0x38, 0x01, 0x01, 0x08, 0x25, 0x01, 0x00, 0x00,
-        0x00, 0x00, 0x00, 0x09, 0x04, 0x02, 0x02, 0x01, 0x01, 0x02, 0x20, 0x00, 0x10, 0x24, 0x01, 0x02,
-        0x00, 0x01, 0x01, 0x00, 0x00, 0x00, 0x02, 0x03, 0x00, 0x00, 0x00, 0x00, 0x06, 0x24, 0x02, 0x01,
-        0x03, 0x18, 0x07, 0x05, 0x84, 0x05, 0x4e, 0x00, 0x01, 0x08, 0x25, 0x01, 0x00, 0x00, 0x00, 0x00,
-        0x00, 0x09, 0x04, 0x02, 0x03, 0x01, 0x01, 0x02, 0x20, 0x00, 0x10, 0x24, 0x01, 0x02, 0x00, 0x01,
-        0x04, 0x00, 0x00, 0x00, 0x08, 0x00, 0x00, 0x00, 0x00, 0x00, 0x06, 0x24, 0x02, 0x01, 0x04, 0x20,
-        0x07, 0x05, 0x84, 0x05, 0xa0, 0x01, 0x01, 0x08, 0x25, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x09,
-        0x04, 0x03, 0x00, 0x00, 0x01, 0x02, 0x20, 0x00, 0x09, 0x04, 0x03, 0x01, 0x02, 0x01, 0x02, 0x20,
-        0x00, 0x10, 0x24, 0x01, 0x03, 0x00, 0x01, 0x01, 0x00, 0x00, 0x00, 0x02, 0x03, 0x00, 0x00, 0x00,
-        0x00, 0x06, 0x24, 0x02, 0x01, 0x03, 0x18, 0x07, 0x05, 0x03, 0x05, 0x4e, 0x00, 0x01, 0x08, 0x25,
-        0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x07, 0x05, 0x83, 0x11, 0x04, 0x00, 0x04, 0x09, 0x04, 0x03,
-        0x02, 0x02, 0x01, 0x02, 0x20, 0x00, 0x10, 0x24, 0x01, 0x03, 0x00, 0x01, 0x04, 0x00, 0x00, 0x00,
-        0x02, 0x03, 0x00, 0x00, 0x00, 0x00, 0x06, 0x24, 0x02, 0x01, 0x04, 0x20, 0x07, 0x05, 0x03, 0x05,
-        0x68, 0x00, 0x01, 0x08, 0x25, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x07, 0x05, 0x83, 0x11, 0x04,
-        0x00, 0x04,
-    ];
-
-    /// Walk descriptors: (offset, type, bytes).
-    fn walk(bytes: &[u8]) -> std::vec::Vec<(usize, u8, &[u8])> {
-        let mut out = std::vec::Vec::new();
-        let mut at = 0;
-        while at < bytes.len() {
-            let len = bytes[at] as usize;
-            assert!(len >= 2 && at + len <= bytes.len(), "descriptor at {at}");
-            out.push((at, bytes[at + 1], &bytes[at..at + len]));
-            at += len;
-        }
-        out
-    }
-
     #[test]
-    fn two_float_settings_are_added_to_interface_2() {
-        let stock = stock_config();
-        let mut config = stock.clone();
-        config.resize(1024, 0);
-        assert_eq!(extend_config(&mut config, STOCK_CONFIG_LEN), Some(EXTENDED_CONFIG_LEN));
-        let config = &config[..EXTENDED_CONFIG_LEN];
-        assert_eq!(EXTENDED_CONFIG_LEN, 478);
-        assert_eq!(u16::from_le_bytes([config[2], config[3]]), 478);
-        // Everything before the new settings, and interface 3 after them, is as stock.
-        assert_eq!(config[4..IFACE3_AT], stock[4..IFACE3_AT]);
-        assert_eq!(config[IFACE3_AT + 2 * ALT_LEN..], stock[IFACE3_AT..]);
-        let descriptors = walk(&config[32..]);
-        let alts: std::vec::Vec<(u8, u8)> =
-            descriptors.iter().filter(|d| d.1 == 4).map(|d| (d.2[2], d.2[3])).collect();
-        assert_eq!(alts, [(1, 0), (2, 0), (2, 1), (2, 2), (2, 3), (2, 4), (2, 5), (3, 0), (3, 1), (3, 2)]);
-        // Settings 4 and 5: float, 4-byte samples, 2 and 4 channels, endpoint 0x84.
-        for (k, &(alt, channels)) in NEW_ALTS.iter().enumerate() {
-            let at = IFACE3_AT + k * ALT_LEN;
-            let block = &config[at..at + ALT_LEN];
-            assert_eq!(block[ALT_NUMBER], alt);
-            assert_eq!(block[NR_CHANNELS], channels);
-            assert_eq!(u32::from_le_bytes(block[15..19].try_into().unwrap()), 4, "bmFormats IEEE_FLOAT");
-            assert_eq!(block[25..31], [6, 0x24, 2, 1, 4, 32]);
-            assert_eq!(block[33], 0x84);
-            assert_eq!(new_alt_packet_offsets()[k], at + MAX_PACKET);
+    fn the_buffer_stride_sites_take_800_byte_buffers() {
+        for (address, stock, multiple) in STRIDE_SITES {
+            assert_eq!(modified_imm(stock), MAX_IN_PACKET * multiple, "0x{address:x}");
+            // Re-encoding the stock value gives the stock bytes.
+            assert_eq!(with_modified_imm(stock, MAX_IN_PACKET * multiple), Some(stock), "0x{address:x}");
+            let new = with_modified_imm(stock, BIG_IN_PACKET * multiple).expect("encodable");
+            assert_eq!(modified_imm(new), BIG_IN_PACKET * multiple);
+            // Only the immediate changes: the registers and the opcode stay.
+            let mask = |b: [u8; 4]| {
+                let hw1 = u16::from_le_bytes([b[0], b[1]]) & !(1 << 10);
+                let hw2 = u16::from_le_bytes([b[2], b[3]]) & !(0x7000 | 0xff);
+                (hw1, hw2)
+            };
+            assert_eq!(mask(new), mask(stock));
         }
-        // Anything but the stock descriptor is left alone.
-        let mut other = stock.clone();
-        other[IFACE3_AT + 3] = 1;
-        other.resize(1024, 0);
-        let before = other.clone();
-        assert_eq!(extend_config(&mut other, STOCK_CONFIG_LEN), None);
-        assert_eq!(other, before);
-        let mut short = stock.clone();
-        assert_eq!(extend_config(&mut short, STOCK_CONFIG_LEN), None, "no room");
-    }
-
-    #[test]
-    fn the_new_settings_fit_at_every_rate() {
-        assert_eq!(before_alt(4), Some((2, 4, FLOAT_FORMAT)));
-        assert_eq!(before_alt(5), Some((4, 4, FLOAT_FORMAT)));
-        assert_eq!(before_alt(3), None);
-        assert_eq!(alt_to_use(4, 192_000), 4);
-        assert_eq!(alt_to_use(5, 44_100), 5);
-        assert_eq!(new_alt_packet(2, true), 200);
-        assert_eq!(new_alt_packet(4, true), 400);
-        assert!(new_alt_packet(4, true) as u32 <= MAX_IN_PACKET);
-        for rate in [44_100, 48_000, 96_000, 192_000] {
-            assert!(largest_packet(4, 4, rate, true) <= new_alt_packet(4, true) as u32);
-        }
-        assert_eq!(float_channels(5, 4, 4), Some(4));
-        assert_eq!(float_channels(4, 2, 4), Some(2));
-        assert_eq!(float_channels(4, 2, 3), None);
-        assert_eq!(float_channels(3, 8, 4), None);
-    }
-
-    #[test]
-    fn the_merge_follows_the_firmware_formula() {
-        let full = 1i32 << 30; // half of full scale
-        let gain = -1.0 / 2_147_483_648.0; // INPUT 3 and 4's default, inverted
-        // D = 20 dB: c = 0.1, g = 10.
-        let high_path = Merge { g: 10.0, c: 0.1, w: 0.0 };
-        assert!((merged(full, 0, gain, high_path) + 0.5).abs() < 1e-6, "A alone, on A's scale");
-        let low_path = Merge { w: 1.0, ..high_path };
-        assert!((merged(0, full / 10, gain, low_path) + 0.5).abs() < 1e-4, "B, D dB up");
-        // Above A's full scale only B can say how loud: 3 times full scale.
-        assert!((merged(i32::MAX, 3 * (full / 5), gain, low_path) + 3.0).abs() < 1e-3);
-        let half_way = Merge { w: 0.25, ..high_path };
-        let want = 10.0 * (0.05 * gain * 0.25 * full as f32 + 0.5 * gain * 0.1 * 0.75 * full as f32 * 2.0);
-        assert!((merged(full, full / 20, gain, half_way) - want).abs() < 1e-6);
+        // Checked against capstone: 600 is 4ff41678 as mov.w r8, 800 is 4ff44873 as mov.w r3.
+        assert_eq!(with_modified_imm([0x4f, 0xf4, 0x9c, 0x78], 600), Some([0x4f, 0xf4, 0x16, 0x78]));
+        assert_eq!(with_modified_imm([0x4f, 0xf4, 0xd0, 0x73], 800), Some([0x4f, 0xf4, 0x48, 0x73]));
+        assert_eq!(with_modified_imm([0x4f, 0xf4, 0xd0, 0x73], 801), None);
+        assert!(packet_fits_in(8, 4, 192_000, true, BIG_IN_PACKET));
+        assert!(packet_fits_in(8, 3, 192_000, true, BIG_IN_PACKET));
     }
 
     #[test]
@@ -385,51 +303,87 @@ mod tests {
 
     #[test]
     fn streams_stop_only_above_96_khz() {
-        assert!(must_stop(8, 3, 192_000, true));
-        assert!(must_stop(2, 3, 192_000, false));
-        assert!(!must_stop(2, 3, 192_000, true));
+        assert!(must_stop(8, 3, 192_000, true, false));
+        assert!(must_stop(2, 3, 192_000, false, false));
+        assert!(!must_stop(2, 3, 192_000, true, false));
+        // With 800-byte buffers 8 channels fit at 192 kHz, 3 or 4 bytes.
+        assert!(!must_stop(8, 3, 192_000, true, true));
+        assert!(!must_stop(8, 4, 192_000, true, true));
         // Full speed at 96 kHz would not fit either, but that is the stock code's case.
-        assert!(!must_stop(8, 3, 96_000, false));
-        assert!(!must_stop(8, 4, 96_000, true));
+        assert!(!must_stop(8, 3, 96_000, false, false));
+        assert!(!must_stop(8, 4, 96_000, true, false));
     }
 
     #[test]
-    fn eight_channels_stay_at_96_khz_or_below() {
-        assert_eq!(alt_to_use(1, 192_000), 0);
-        assert_eq!(alt_to_use(3, 192_000), 0);
-        assert_eq!(alt_to_use(2, 192_000), 2);
-        assert_eq!(alt_to_use(1, 96_000), 1);
-        assert_eq!(alt_to_use(0, 192_000), 0);
-        assert_eq!(rate_to_use(192_000, 1), 96_000);
-        assert_eq!(rate_to_use(192_000, 3), 96_000);
-        assert_eq!(rate_to_use(192_000, 2), 192_000);
-        assert_eq!(rate_to_use(48_000, 1), 48_000);
-        // Every combination the guard allows fits the buffers at high speed, in either order.
-        let format = |alt: u8| match (alt, before_alt(alt)) {
-            (_, Some((channels, bytes, _))) => (channels, bytes),
-            (1, _) => (8, 3),
-            (3, _) => (8, 4),
-            _ => (2, 3),
-        };
-        for alt in 0..6u8 {
-            for rate in [44_100, 48_000, 96_000, 192_000] {
-                let (channels, bytes) = format(alt_to_use(alt, rate).max(if alt >= 4 { alt } else { 0 }));
-                if alt_to_use(alt, rate) == alt && rate_to_use(rate, alt) == rate {
-                    assert!(packet_fits(channels, bytes, rate, true), "alt {alt} at {rate}");
+    fn eight_channels_wait_for_the_big_buffers() {
+        for big in [false, true] {
+            assert_eq!(alt_to_use(1, 192_000, big), if big { 1 } else { 0 });
+            assert_eq!(alt_to_use(3, 192_000, big), if big { 3 } else { 0 });
+            assert_eq!(rate_to_use(192_000, 3, big), if big { 192_000 } else { 96_000 });
+            assert_eq!(alt_to_use(2, 192_000, big), 2);
+            assert_eq!(alt_to_use(1, 96_000, big), 1);
+            assert_eq!(rate_to_use(48_000, 1, big), 48_000);
+            // Every combination allowed fits the buffers at high speed, in either order.
+            for alt in 0..4u8 {
+                let (channels, bytes) = match alt {
+                    1 => (8, 3),
+                    3 => (8, 4),
+                    _ => (2, 3),
+                };
+                for rate in [44_100, 48_000, 96_000, 192_000] {
+                    if alt_to_use(alt, rate, big) == alt && rate_to_use(rate, alt, big) == rate {
+                        assert!(packet_fits_in(channels, bytes, rate, true, buffer_size(big)), "alt {alt} at {rate}");
+                    }
                 }
             }
         }
+        assert_eq!(big_packet(1), Some(600));
+        assert_eq!(big_packet(3), Some(800));
+        assert_eq!(big_packet(2), None);
+    }
+
+    #[test]
+    fn calls_are_encoded_as_the_stock_ones() {
+        // The 192 kHz routine's recorder step call, and the same call moved to the capture stub
+        // (checked with capstone).
+        assert_eq!(thumb_bl(0x127ee, 0x177c8), Some([0xf004, 0xffeb]));
+        assert_eq!(thumb_bl(0x127ee, 0x31a94), Some([0xf01f, 0xf951]));
+        assert_eq!(thumb_bl(0, 1 << 25), None);
     }
 
     #[test]
     fn samples_are_packed_as_the_stock_code_does() {
         let mut out = [0u8; 4];
-        assert_eq!(put_sample(0x1234_5678, 3, &mut out), 3);
-        assert_eq!(out[..3], [0x56, 0x34, 0x12]);
-        assert_eq!(put_sample(-256, 3, &mut out), 3);
-        assert_eq!(out[..3], [0xff, 0xff, 0xff]);
-        assert_eq!(put_sample(0x1234_5678, 4, &mut out), 4);
-        assert_eq!(out, [0x78, 0x56, 0x34, 0x12]);
+        // Float: as is, above 1.0 too.
+        assert_eq!(stock_sample(1.5, 4, &mut out), 4);
+        assert_eq!(out, 1.5f32.to_le_bytes());
+        // 24-bit: clamped, scaled to 2^31 - 1, truncated, top 3 bytes.
+        assert_eq!(stock_sample(1.5, 3, &mut out), 3);
+        assert_eq!(out[..3], [0xff, 0xff, 0x7f]);
+        assert_eq!(stock_sample(-1.0, 3, &mut out), 3);
+        assert_eq!(out[..3], [0x00, 0x00, 0x80]);
+        assert_eq!(stock_sample(0.5, 3, &mut out), 3);
+        assert_eq!(out[..3], (((0.5f64 * 2_147_483_647.0) as i32).to_le_bytes())[1..]);
+        // The single-precision word equals the stock double-precision one for every f32 tried:
+        // edges, powers of two, tiny values, and a spread across the whole range.
+        let stock = |v: f32| (v.clamp(-1.0, 1.0) as f64 * 2_147_483_647.0) as i32;
+        let mut values = std::vec![0.0f32, -0.0, 1.0, -1.0, 1.5, -1.5, f32::MIN_POSITIVE, 1e-30, -1e-30];
+        for e in -40..1 {
+            let p = 2f32.powi(e);
+            values.extend([p, -p, p * 1.000_001, -p * 0.999_999]);
+        }
+        let mut x = 0x1234_5678u32;
+        for _ in 0..200_000 {
+            x ^= x << 13;
+            x ^= x >> 17;
+            x ^= x << 5;
+            values.push(f32::from_bits(x & 0xbfff_ffff)); // magnitude below 2
+        }
+        for v in values {
+            assert_eq!(stock_word(v), stock(v), "{v:e}");
+        }
+        assert_eq!(stock_sample(0.0, 3, &mut out), 3);
+        assert_eq!(out[..3], [0, 0, 0]);
     }
 
     #[test]

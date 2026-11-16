@@ -32,20 +32,6 @@ pub const INPUT_BLOCKS: usize = 0x2000_e340;
 /// high gain path of its dual-gain pair). EXT IN uses the words of inputs
 /// 5 and 6.
 pub const INPUT_WORDS: [u32; 6] = [2, 5, 0, 6, 8, 11];
-/// The low gain path's word for inputs 3 to 6 (work/notes/audio.md, B[2] to B[5]).
-pub const LOW_GAIN_WORDS_3_6: [u32; 4] = [3, 9, 7, 10];
-/// DSP state + 0x623: 1 when INPUT 5 and 6 carry EXT IN, and the merge is skipped for them.
-pub const EXT_IN_ON_5_6: *const u8 = 0x0002_a2cf as *const u8;
-/// The dual-gain merge's state, one block of 0x48 bytes per channel (inputs 1 to 6 are channels 0
-/// to 5): make-up gain g, the high gain path's scale c and the crossfade weight w, current values.
-pub const MERGE_STATE: usize = 0x0002_9cac;
-pub const MERGE_STEP: usize = 0x48;
-pub const MERGE_G: usize = 0x04;
-pub const MERGE_C: usize = 0x0c;
-pub const MERGE_W: usize = 0x44;
-/// Each channel's input gain, current value (+ or - 2^-31, or 0 muted), every 0x14 bytes.
-pub const INPUT_GAIN: usize = 0x0002_9e60;
-pub const INPUT_GAIN_STEP: usize = 0x14;
 /// DSP state + 0x622: 1 when tracks hear inputs 1 and 2 swapped.
 pub const SWAP_INPUTS_1_2: *const u8 = 0x0002_a2ce as *const u8;
 /// Settings + 0x30, one byte every 0x20 bytes for tracks 1 to 6: the pair
@@ -336,27 +322,37 @@ pub const USB_STATE: *const usize = 0x2000_0240 as *const usize;
 pub const USB_RATE: usize = 0x34;
 pub const USB_BYTES: usize = 0x46;
 pub const USB_CHANNELS: usize = 0x47;
-/// The configuration descriptor that `FUN_80df471c` builds (1,024 bytes of room; the next object
-/// starts at 0x2000F400), and its length as the device stack sends it (device table + 0x74,
-/// stored at 0x80DF48C6; GET_DESCRIPTOR answers with this, not wTotalLength).
+/// The configuration descriptor that `FUN_80df471c` builds, and the offsets in it of interface 2's
+/// alternate settings 1 and 3's endpoint descriptors (7 bytes: wMaxPacketSize at + 4).
 pub const USB_CONFIG: *mut u8 = 0x2000_f000 as *mut u8;
-pub const USB_CONFIG_ROOM: usize = 0x400;
-pub const USB_CONFIG_LEN: *mut u32 = 0x8196_bc10 as *mut u32;
-/// `FUN_80df471c(n)`, which builds configuration n there, and `FUN_80df4a24(handle, speed)`, which
-/// sets the UAC2 endpoints' packet sizes at each bus reset (speed 2 is high speed).
-pub const USB_BUILD_CONFIG: usize = 0x80df_471d;
+pub const USB_CONFIG_ALT1_ENDPOINT: usize = 164;
+pub const USB_CONFIG_ALT3_ENDPOINT: usize = 256;
+/// The device stack's endpoint records for interface 2's alternate settings 1 and 3 (6 bytes:
+/// address, attributes, u16 packet size, interval), which bus reset updates and SET_INTERFACE
+/// opens the endpoint with.
+pub const USB_ALT1_RECORD: *mut u8 = 0x8196_bbf4 as *mut u8;
+pub const USB_ALT3_RECORD: *mut u8 = 0x8196_bc04 as *mut u8;
+/// `FUN_80df4a24(handle, speed)`, which sets the UAC2 endpoints' packet sizes at each bus reset
+/// (speed 2 is high speed).
 pub const USB_BUS_RESET: usize = 0x80df_4a25;
-/// Interface 2's list of alternate settings, as the device stack's audio class searches it on
-/// SET_INTERFACE (`FUN_80e234ec`): the pointer and the count (a byte, compared with the index)
-/// in the interface record at 0x8196BD74. Stock: 16-byte entries {alt, 0, 0, 0, endpoint count,
-/// 0, 0, 0, endpoint record pointer, 0} for alts 0 to 3, and count 5, whose fifth entry is
-/// interface 3's alt 0.
-pub const IF2_ALT_LIST: *mut usize = 0x8196_bd78 as *mut usize;
-pub const IF2_ALT_COUNT: *mut u32 = 0x8196_bd7c as *mut u32;
-pub const IF2_STOCK_ALT_LIST: usize = 0x8196_bce8;
+/// The literal (ITCM) holding the address of the 4 packet buffers to the host, 0x2000BE60, read
+/// by the audio class callback and the SET_INTERFACE handler.
+pub const USB_IN_BUFFERS_LITERAL: *mut u32 = 0x0001_5858 as *mut u32;
+pub const USB_STOCK_IN_BUFFERS: u32 = 0x2000_be60;
+/// In the 176.4/192 kHz audio routine (ITCM 0x12368), the call to the recorder step
+/// `FUN_000177c8`, once a frame, with r0 = the DSP state 0x20010308 and the frame index (0 to 3)
+/// at [sp + 4]. At that point the state holds what the 44.1 to 96 kHz routine sends to USB: the mix
+/// at +0xA8 and +0xAC, and INPUT 1 to 6 at +0x50 to +0x64.
+pub const RECORDER_STEP_CALL: *mut u16 = 0x0001_27ee as *mut u16;
+pub const RECORDER_STEP_CALL_STOCK: [u16; 2] = [0xf004, 0xffeb];
+pub const RECORDER_STEP: usize = 0x0001_77c9;
+/// ITCM between the end of the stock code (0x31a92) and the patch's own ITCM code (0x31b00), which
+/// nothing stock refers to: room for the capture stub.
+pub const ITCM_GAP: usize = 0x0003_1a94;
+pub const ITCM_GAP_END: usize = 0x0003_1b00;
+/// DSP state + 0x62D: 1 while the transport plays, when the stock routine sends zeros to USB.
+pub const TRANSPORT_PLAYING: *const u8 = 0x0002_a2d9 as *const u8;
 
-/// The stock handler's format byte: 1 for 3-byte samples, 4 for 4-byte (0x152C8 to 0x15342).
-pub const USB_FORMAT: usize = 0x48;
 pub const USB_WRITE_OFFSET: usize = 0x5c;
 /// The ring of audio for the host, which the audio class callback copies packets from.
 pub const USB_RING: *mut u8 = 0x2000_0254 as *mut u8;
