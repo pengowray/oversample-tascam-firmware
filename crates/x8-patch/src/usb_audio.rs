@@ -26,8 +26,11 @@ pub const RING_BYTES: u32 = 0x3400;
 /// The third sub-range of the clock's GET RANGE answer, {minimum, maximum, resolution} as
 /// little-endian words: 96 kHz only in the stock firmware.
 pub const STOCK_TOP_RANGE: [u8; 12] = range(HIGHEST_STOCK_RATE, HIGHEST_STOCK_RATE, 0);
-/// The patch's third sub-range: 96 kHz to 192 kHz in steps of 96 kHz, so 96 and 192 kHz.
-pub const WIDE_TOP_RANGE: [u8; 12] = range(HIGHEST_STOCK_RATE, RATE, HIGHEST_STOCK_RATE);
+/// The patch's third sub-range: 96 kHz up to `FLOAT_MARK` in steps of 96 kHz, so 96 and 192 kHz.
+pub const WIDE_TOP_RANGE: [u8; 12] = range(HIGHEST_STOCK_RATE, FLOAT_MARK, HIGHEST_STOCK_RATE);
+/// The sub-range's maximum: 1 Hz above 192 kHz, which lists the same rates, tells Oversample that
+/// alternate setting 3 at 192 kHz carries float. B263 to B275 have 192,000 here.
+pub const FLOAT_MARK: u32 = RATE + 1;
 
 const fn range(min: u32, max: u32, res: u32) -> [u8; 12] {
     let (a, b, c) = (min.to_le_bytes(), max.to_le_bytes(), res.to_le_bytes());
@@ -226,7 +229,7 @@ mod tests {
         }
         assert!(!listed(&stock, 192_000));
         assert!(listed(&wide, 192_000));
-        for rate in [88_200, 144_000, 176_400, 288_000, 384_000] {
+        for rate in [88_200, 144_000, 176_400, 192_001, 288_000, 384_000] {
             assert!(!listed(&wide, rate), "{rate}");
         }
     }
