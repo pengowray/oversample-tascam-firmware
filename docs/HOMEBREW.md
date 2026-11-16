@@ -2364,6 +2364,37 @@ B241 or an earlier build. All the checks in `tools/x8patch.py` pass on this file
 1. **Start and stop.** With Phone remote on and the phone page reloaded, do `Start recording` and `Stop recording` work as before?
 2. **Old phone page.** If a phone still has the old page cached, its commands should do nothing at all. Reload the page.
 
+## Step 48 test file: each input's settings in the GUANO metadata (built 2026-11-17, not yet installed)
+
+`work/patch54/#PortaX8_0279.203` (B279, SHA-256 `007081b9…eea9fdd87`). B278 (Step 47) with four more GUANO fields;
+Step 47's checks still apply, and this file replaces it. All the checks in `tools/x8patch.py` pass, and two builds
+give the same file. Nothing in this step has run on a unit.
+
+**What changes.** A take from BAT DETECTOR now has these fields in its GUANO metadata, after the pause fields. Each
+value has one item for each channel of the file, `track:setting`:
+
+```
+X8Bat|Input Source: 3:EXT MIC,4:EXT MIC
+X8Bat|Input Gain: 3:HIGH,4:HIGH
+X8Bat|Input Level: 3:55,4:55
+X8Bat|Auto Level: 3:OFF,4:OFF
+```
+
+The values are copied from the XRI text that the stock firmware writes in the same file's header. See
+[The input settings in GUANO, and the `.bin` file](#the-input-settings-in-guano-and-the-bin-file-2026-11-17). A
+`_MIX.wav` file gets none of the four fields, because its XRI text has no input settings.
+
+**Memory.** Patch region free: 6,656 bytes (816 fewer than B278). No new stock hook site (header version 23).
+
+**What to check.**
+
+1. **The fields.** Record a take from BAT DETECTOR and open its `_3-4.wav` (or other track file) in BAT PLAYBACK's
+   file information, or on a computer. Are the four fields there, and do they match the XRI section's SOURCE, INPUT
+   GAIN, LEVEL and AUTO_LEVEL?
+2. **A changed setting.** Change INPUT 3's gain between LOW and HIGH in MANUAL, record again from BAT DETECTOR. Does
+   `X8Bat|Input Gain` follow?
+3. **The MIX file**, if one is written: it has the other GUANO fields and none of these four?
+
 ## Step 47 test file: USB at 192 kHz with the stock channels, 8 channels included (built 2026-11-16, not yet installed)
 
 `work/patch53/#PortaX8_0278.203` (B278, SHA-256 `cc0bb09d…2424973bcb350`). B275 (Step 44) with USB at 192 kHz made
@@ -3640,6 +3671,58 @@ nothing with under 2 KB free or on a stack the table does not list.
   length as its size less the header (`local_2ac = size - piVar28[1]`), so it would count the chunk's bytes as audio. Reasoned
   from the code, not run.
 - Which task runs the split, and so whether split files get GUANO (see Stack).
+
+### The input settings in GUANO, and the `.bin` file (2026-11-17)
+
+Read in V2.03 with the `work/ghidra-rec` project, and checked against the 222 X8 WAV files and 117 `.bin` files on the
+archive drive. Built as [Step 48](#step-48-test-file-each-inputs-settings-in-the-guano-metadata-built-2026-11-17-not-yet-installed).
+
+**The XRI text has the input settings.** `FUN_80df6228` builds the `bext` chunk's CodingHistory (0x200 bytes at `bext` +
+602, file offset 622) each time a header is built, so also when `FUN_80db216c` rewrites the header at the end of a take:
+
+```
+T=XRI 008c;XRI VER=0002;MAKER=TASCAM;MODEL=X8;FW VER=2.03;SOURCE=3:EXT MIC,4:EXT MIC;INPUT GAIN=3:HIGH,4:HIGH;LEVEL=3:55,4:55;AUTO_LEVEL=3:OFF,4:OFF;,
+```
+
+| XRI key | GUANO field | Values | Where the firmware reads it |
+|---|---|---|---|
+| `SOURCE` | `X8Bat|Input Source` | `INT MIC`, `PLUG IN`, `EXT MIC`, `LINE IN`, `EXT IN`, `USB` | `FUN_80df6ba0`: the track's source (settings + 0x30 + track × 0x20) and, for inputs 3 to 6, mic or line (settings + 0x258 to + 0x25B) |
+| `INPUT GAIN` | `X8Bat|Input Gain` | `LOW`, `HIGH` | `FUN_80df6d20`: settings + 0x25C to + 0x261, one byte for each input |
+| `LEVEL` | `X8Bat|Input Level` | 0 to 70 (0 to 76 for EXT IN) | `FUN_80df6e60`: 16-bit values at settings + 0x174 to + 0x186 |
+| `AUTO_LEVEL` | `X8Bat|Auto Level` | `ON`, `OFF` | `FUN_80df7144`: settings + 0x34 + track × 0x20 |
+
+The number before each `:` is the track, which is also the number in the file's name. The text is empty when settings
++ 0x1DF or settings + 0x215 is 0; which menu items those are was not traced, and all 222 files have the text. A MIX
+file's text ends after `FW VER`. The settings are read when the header is built, so the values are those at the end of
+the file.
+
+**What the patch does.** `guano_hook` already has the rewritten header in the stock buffer. It passes the 514 bytes at
+offset 622 to `take_guano::write_chunk` when the `bext` chunk is at offset 12, and `write_chunk` copies the four values
+as they are. No settings are read from RAM, so the fields cannot disagree with the XRI text. The host test
+`input_settings_come_from_the_xri_text` uses the text of `260430_0071_3-4.wav`, and `append_to_a_file` was run on that
+file. The longest chunk is under 600 bytes of the 1 KB buffer (`the_longest_chunk_fits`).
+
+**The `.bin` file has the mixer, not the inputs.** Each take's `<name>.bin` is 268 bytes. `FUN_80db2102` fills it at
+the end of a take and `FUN_80db037c` reads it:
+
+| Offset | Bytes | What | Source |
+|---|---|---|---|
+| 0 | 4 | Version, 1. The reader fills offset 0x40 onwards with defaults when it reads version 0 | |
+| 4 | 4 | The take's length in whole seconds (frames / sample rate). Matches the files: `260430_0070` has 157 here and 157.7 s of audio | recorder state |
+| 8 | 4 | The app (settings + 0x214; 2 is MANUAL), then settings + 0x215 to + 0x217 | settings |
+| 0xC | 4 | Settings + 0x218 to + 0x21B. `00 32 64 00` in all 117 files; meaning not traced | settings |
+| 0x10 | 36 | 9 entries of 4 bytes, copied from settings + 0x21C. Bytes 0 and 1 vary between files: byte 0 is 0x61 by default and byte 1 is 0, 20 or 40 (40 on the right track of a stereo pair). These fit the mixer's level and pan for tracks 1 to 6, then three more entries, but the code that uses them was not read | settings |
+| 0x37 | 1, then 4 and 4 at 0x38 | Not traced | |
+| 0x40 | 6 × 0x20 | One block for each track, default from `FUN_80da7764`. The same in all 117 files; by its place and size, the track's EQ. Not traced | settings + 0xAF4 in some apps |
+| 0x100 | 12 | Defaults 0x78, 4, 0x32, 0, 2, 0x1B. The same in all 117 files; possibly reverb. Not traced | settings + 0xAE8 in some apps |
+
+Nothing in the file is an input's source, gain or phantom power, and the mixer settings change only the MIX file and
+what is heard, not a track's own file. So GUANO takes nothing from it. The patch could not read the file in any case:
+it is written after `guano_hook` runs.
+
+**Not in the XRI text.** Phantom power (settings + 0x254 to + 0x257, and the voltage at settings + 0x1DD), low cut, the
+limiter and the other items of an input's settings screen. Adding phantom power means reading the settings in RAM and
+working out which input a track hears from its source byte. The other items' places in the settings were not found.
 
 ## Setting the clock, locations and pauses (2026-11-08)
 

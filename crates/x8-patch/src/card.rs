@@ -328,6 +328,7 @@ mod tests {
                 utc_offset_minutes: None,
                 location_e6: Some((-36_123_456, 146_000_007)),
                 pauses: None,
+                xri: guano::coding_history(&f[..5548]),
             };
             let mut chunk = [0u8; 1024];
             let n = crate::take_guano::write_chunk(&header, &recorder, &mut chunk).unwrap();

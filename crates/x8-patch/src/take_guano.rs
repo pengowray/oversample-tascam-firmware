@@ -25,7 +25,19 @@ pub struct Recorder<'a> {
     pub location_e6: Option<(i32, i32)>,
     /// For a take from a bat tile: how many times it was paused, and for how long in all, in ms.
     pub pauses: Option<(u32, u32)>,
+    /// The XRI text the X8 has just written in the file's header (the `bext` chunk's
+    /// CodingHistory), which holds each input's settings. Read up to its first NUL.
+    pub xri: Option<&'a [u8]>,
 }
+
+/// The X8's XRI keys that describe the inputs, and the GUANO field each one goes in. The value is
+/// copied as the X8 wrote it, one item for each channel of the file: `3:EXT MIC,4:EXT MIC`.
+const INPUT_FIELDS: [(&str, &str); 4] = [
+    ("SOURCE", "X8Bat|Input Source"),
+    ("INPUT GAIN", "X8Bat|Input Gain"),
+    ("LEVEL", "X8Bat|Input Level"),
+    ("AUTO_LEVEL", "X8Bat|Auto Level"),
+];
 
 /// Millionths of a degree as decimal degrees, with integer arithmetic: `-36.123456`.
 pub struct Degrees(pub i32);
@@ -36,6 +48,16 @@ impl fmt::Display for Degrees {
         let size = self.0.unsigned_abs();
         write!(f, "{sign}{}.{:06}", size / 1_000_000, size % 1_000_000)
     }
+}
+
+/// The GUANO field and the value for one `KEY=value` part of the XRI text, if it is one of
+/// [`INPUT_FIELDS`]. Worked through as bytes and kept out of line: both keep the patch small.
+#[inline(never)]
+fn input_field(part: &[u8]) -> Option<(&'static str, &str)> {
+    INPUT_FIELDS.iter().find_map(|&(key, field)| {
+        let value = part.strip_prefix(key.as_bytes())?.strip_prefix(b"=")?;
+        Some((field, core::str::from_utf8(value).ok()?))
+    })
 }
 
 /// One line of the location log: the phone's local time with its UTC offset, latitude and
@@ -109,6 +131,12 @@ pub fn write_chunk(header: &Header, recorder: &Recorder, out: &mut [u8]) -> Opti
     if let Some((count, ms)) = recorder.pauses {
         chunk.field("X8Bat|Pauses", count).field("X8Bat|Paused", format_args!("{}.{:03}", ms / 1000, ms % 1000));
     }
+    // The inputs' settings, as they were when the file closed. A MIX file's XRI text has none.
+    for part in recorder.xri.unwrap_or_default().split(|&b| b == b';' || b == 0) {
+        if let Some((field, value)) = input_field(part) {
+            chunk.field(field, value);
+        }
+    }
     chunk.finish()
 }
 
@@ -126,6 +154,7 @@ mod tests {
         utc_offset_minutes: None,
         location_e6: None,
         pauses: None,
+        xri: None,
     };
 
     /// A header as the X8 writes one, 5548 bytes before the audio.
@@ -194,6 +223,48 @@ mod tests {
         assert!(t.ends_with("X8Bat|Pauses: 2\nX8Bat|Paused: 34.567\n"), "{t}");
     }
 
+    /// The XRI text of 260430_0071_3-4.wav, and of its MIX file.
+    const XRI: &[u8] = b"T=XRI 008c;XRI VER=0002;MAKER=TASCAM;MODEL=X8;FW VER=2.03;SOURCE=3:EXT MIC,4:EXT MIC;\
+INPUT GAIN=3:HIGH,4:HIGH;LEVEL=3:55,4:55;AUTO_LEVEL=3:OFF,4:OFF;,";
+    const XRI_MIX: &[u8] = b"T=XRI 0034;XRI VER=0002;MAKER=TASCAM;MODEL=X8;FW VER=2.03;,";
+
+    #[test]
+    fn input_settings_come_from_the_xri_text() {
+        let recorder = Recorder { pauses: Some((0, 0)), xri: Some(XRI), ..RECORDER };
+        let t = text(&header(192_000 * 8, 8, b"2026-11-06", b"19:08:08"), &recorder);
+        assert!(
+            t.ends_with(
+                "X8Bat|Paused: 0.000\n\
+                 X8Bat|Input Source: 3:EXT MIC,4:EXT MIC\n\
+                 X8Bat|Input Gain: 3:HIGH,4:HIGH\n\
+                 X8Bat|Input Level: 3:55,4:55\n\
+                 X8Bat|Auto Level: 3:OFF,4:OFF\n"
+            ),
+            "{t}"
+        );
+        let mix = Recorder { xri: Some(XRI_MIX), ..RECORDER };
+        assert!(!text(&header(192_000 * 8, 8, b"2026-11-06", b"19:08:08"), &mix).contains("X8Bat|"));
+    }
+
+    /// Every field at its longest fits the 1 KB the patch builds the chunk in.
+    #[test]
+    fn the_longest_chunk_fits() {
+        let xri = b"T=XRI 00a0;XRI VER=0002;MAKER=TASCAM;MODEL=X8;FW VER=2.03;SOURCE=5:EXT MIC,6:EXT MIC;\
+INPUT GAIN=5:HIGH,6:HIGH;LEVEL=5:70,6:70;AUTO_LEVEL=5:OFF,6:OFF;,";
+        let recorder = Recorder {
+            file_name: Some("261106_0090F_5-6.wav"),
+            phone_now: Some(1_793_995_808),
+            utc_offset_minutes: Some(-210),
+            location_e6: Some((-36_123_456, -146_000_007)),
+            pauses: Some((u32::MAX, u32::MAX)),
+            xri: Some(xri),
+            ..RECORDER
+        };
+        let mut out = [0u8; 0x400];
+        let n = write_chunk(&header(u32::MAX - 5548, 8, b"2026-11-06", b"19:08:08"), &recorder, &mut out).unwrap();
+        assert!(n < 600, "{n}");
+    }
+
     #[test]
     fn the_start_can_fall_on_the_day_before() {
         let t = text(&header(120 * 192_000 * 8, 8, b"2024-03-01", b"00:00:30"), &RECORDER);
@@ -228,6 +299,7 @@ mod tests {
             utc_offset_minutes: None,
             location_e6: None,
             pauses: None,
+            xri: None,
         };
         let t = text(&header(192_000 * 8, 8, b"2026-11-06", b"19:08:08"), &recorder);
         assert!(t.contains("Firmware Version: V2.03 with bat patch\n"));
@@ -264,6 +336,7 @@ mod tests {
             utc_offset_minutes: None,
             location_e6: None,
             pauses: None,
+            xri: guano::coding_history(&head[..n]),
         };
         let mut out = [0u8; 0x400];
         let added = write_chunk(&header, &recorder, &mut out).unwrap();
