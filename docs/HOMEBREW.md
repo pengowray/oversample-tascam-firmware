@@ -2364,9 +2364,46 @@ B241 or an earlier build. All the checks in `tools/x8patch.py` pass on this file
 1. **Start and stop.** With Phone remote on and the phone page reloaded, do `Start recording` and `Stop recording` work as before?
 2. **Old phone page.** If a phone still has the old page cached, its commands should do nothing at all. Reload the page.
 
-## Step 46 test file: 2 and 4 channels of 32-bit float over USB, as settings of their own (built 2026-11-16, not yet installed)
+## Step 47 test file: USB at 192 kHz with the stock channels, 8 channels included (built 2026-11-16, not yet installed)
 
-`work/patch52/#PortaX8_0277.203` (B277, SHA-256 `24c503b8…4d9eff4a5`). B275 (Step 44) with two USB alternate settings
+`work/patch53/#PortaX8_0278.203` (B278, SHA-256 `cc0bb09d…2424973bcb350`). B275 (Step 44) with USB at 192 kHz made
+like stock; Step 44's checks still apply, and this file replaces it. All the checks in `tools/x8patch.py` pass, and
+two builds give the same file. Nothing in this step has run on a unit, and neither has any 192 kHz USB (Step 39).
+
+**What changes.** The X8 offers its stock USB settings, unchanged, at 192 kHz as well as 44.1, 48 and 96 kHz, and at
+192 kHz sends the same channels in the same order as stock: 8 channels (setting 1, 24-bit; setting 3, 32-bit float) of
+the mix L/R and INPUT 1 to 6, or 2 channels (setting 2) of the mix. See "What the X8 presents over USB" for the table
+and how it is done. Two changes from B263 to B275: setting 2 at 192 kHz is now the mix, not INPUT 3 and 4; and the
+8-channel settings now work at 192 kHz.
+
+**For bats on INPUT 3 and 4** they are channels 5 and 6 of setting 1 or 3, or in setting 2 if MANUAL's mix carries
+them (by default INPUT 3 is panned hard left and INPUT 4 hard right, at 0 dB). Oversample takes setting 2, the mix,
+24-bit, until it can take channels from an 8-channel setting.
+
+**Memory.** Patch region free: 7,472 bytes (3,056 fewer than B275). DTCM: 154,128 of 156,416 bytes (the buffers take
+3,200). Header version 23.
+
+**Risk.** The patch now rewrites stock ITCM code at start-up: 7 instructions and a literal in the USB code, before
+the device stack starts, and one call in the 192 kHz audio routine, with interrupts off. Each is checked against its
+stock bytes first and left alone on any mismatch. A mistake here could stop USB audio, or the 192 kHz audio routine
+(and with it recording at 192 kHz), until the next update from the card.
+
+**What to check.** In this order.
+
+1. **Start-up, and recording at 192 kHz without USB.** Does the X8 start, open MANUAL and BAT DETECTOR, and record a
+   192 kHz take that plays back cleanly? The redirected call is in the 192 kHz audio routine, so this comes first.
+2. **A computer at 96 kHz.** USB audio interface and card reader as before? 2 and 8 channels, 24-bit and float?
+3. **A computer at 192 kHz.** 8 channels of float (on a Mac, Audio MIDI Setup; on Linux, `arecord -D hw:X8 -c 8 -f
+   FLOAT_LE -r 192000`): mix, INPUT 1 to 6 in that order, no gaps, no clicks? Then 8 channels 24-bit, then 2 channels.
+4. **Matches the card.** Record the same sound on the card (32-bit float) and over USB at 192 kHz in float at once:
+   do channels 5 and 6 match the take's `_3-4` track sample for sample, including a sound loud enough to go over 0
+   dBFS?
+5. **Oversample at 192 kHz** (POWER SOURCE SELECT at BATTERY): stereo mix, no gaps.
+6. **Switching.** Change between 96 and 192 kHz, and between settings, while connected: sound each time?
+
+## Step 46 test file: 2 and 4 channels of 32-bit float over USB, as settings of their own (built 2026-11-16, never installed: superseded by B278)
+
+B277 (`work/patch52`, deleted) was withdrawn for B278, which keeps the stock settings and their channel order at 192 kHz instead. The rest of this section describes B277 as built. B275 (Step 44) with two USB alternate settings
 added; Step 44's checks still apply, and this file replaces it. All the checks in `tools/x8patch.py` pass, and two
 builds give the same file. Nothing in this step has run on a unit, and neither has the 24-bit 192 kHz USB it builds on
 (Step 39, B263).
@@ -3994,51 +4031,47 @@ chooses an alternate setting: a computer's USB audio driver picks it from the fo
 MIDI Setup), and Oversample picks it itself. In UAC2 the rate belongs to the clock, so every setting is offered at every
 listed rate.
 
-**Interface 2, audio to the host.**
+**Interface 2, audio to the host.** The descriptors are stock in every build; only the rates and what is sent change.
 
-| Alt | Format | Packet (high speed) | 44.1 to 96 kHz (the stock audio routine) | 192 kHz, B263 to B275 | 192 kHz, B277 |
-|---|---|---|---|---|---|
-| 0 | No audio | | Nothing | Nothing | Nothing |
-| 1 | 8 ch, 24-bit PCM | 312 | Mix L, mix R, INPUT 1 to 6 | Refused (sends nothing) | Refused |
-| 2 | 2 ch, 24-bit PCM | 150 (78 stock) | Mix L, mix R | INPUT 3 and 4, high gain path only | As B275 |
-| 3 | 8 ch, 32-bit float | 416 | Mix L, mix R, INPUT 1 to 6 | Refused | Refused |
-| 4 (B277) | 2 ch, 32-bit float | 200 | Mix L, mix R | | INPUT 3 and 4, merged |
-| 5 (B277) | 4 ch, 32-bit float | 400 | Mix L, mix R, INPUT 1 and 2 | | INPUT 3 to 6, merged |
+| Alt | Format | Packet (high speed) | Channels, in order | 44.1 to 96 kHz | 192 kHz, B263 to B275 | 192 kHz, B278 |
+|---|---|---|---|---|---|---|
+| 0 | No audio | | | | | |
+| 1 | 8 ch, 24-bit PCM | 312 (600 from B278) | Mix L, mix R, INPUT 1 to 6 | Stock | Refused (sends nothing) | As stock |
+| 2 | 2 ch, 24-bit PCM | 150 (78 stock) | Mix L, mix R | Stock | INPUT 3 and 4, high gain path only | As stock |
+| 3 | 8 ch, 32-bit float | 416 (800 from B278) | Mix L, mix R, INPUT 1 to 6 | Stock | Refused | As stock |
 
-- **The stock routine's channels** (0x11B94 onward): the stereo mix (0x200103A8 and AC), then inputs 1 to 6 after
-  the dual-gain merge and input gain, taken before the faders; inputs 1 and 2 also pass the built-in mic's EQ. It packs
-  as many channels as the USB state says, in that order, as float when the format byte (+0x48) is 4.
-- **Merged** means INPUT 3 to 6 as the X8 records them to its 32-bit float tracks: the high and low gain paths joined
-  by the stock dual-gain merge, so a sound louder than the input gain allows for goes above 1.0 instead of clipping.
-  When INPUT 5 and 6 carry EXT IN, the stock code skips their merge, and so does the patch.
-- **Refused above 96 kHz:** 8 channels need 600 or 800 bytes a packet, more than the 416-byte packet buffers at
-  0x2000BE60. Moving the buffers to the patch's DTCM (3.2 KB) and patching 8 sites in ITCM and 2 in the image would
-  allow it; not done.
+- **The channels** are what the stock audio routine sends (0x11B94 onward, and its 192 kHz counterpart 0x12368 has the
+  same values): the stereo mix (DSP state + 0xA8 and + 0xAC, 0x200103B0 and B4), then INPUT 1 to 6. Each input is the
+  X8's two converters for it, high and low gain, joined by its dual-gain merge into one signal, times the input gain:
+  the same signal as its 32-bit float track, so in float a sound louder than the input gain allows for goes above 1.0
+  instead of clipping. Taken before the faders; INPUT 1 and 2 also pass the built-in mic's EQ. The mix follows the
+  faders and pans, and lags the inputs by one frame, as stock.
+- **Formats.** Float is sent as is. 24-bit is clamped to +-1, times 2,147,483,647, truncated, and the top 3 bytes,
+  as stock. While the transport plays, every channel is 0, as stock.
 - **Interface 3, audio from the host:** alt 1 is 2 ch 24-bit, alt 2 is 2 ch float, at 44.1 to 96 kHz. At 192 kHz
   nothing reads it.
 - **Clock rates (GET RANGE):** stock 44.1, 48 and 96 kHz; from B263 also 192 kHz.
 
-**How the patch adds settings 4 and 5** (all high confidence from the code unless marked):
+**How B278 sends the stock channels at 192 kHz** (high confidence from the code unless marked):
 
-- **The descriptor.** `FUN_80df471c(n)` builds configuration n at 0x2000F000 (1,024 bytes of room: nothing references
-  the rest, and the next object starts at 0x2000F400; medium-high) at the USB task's start and at each plug-in or mode
-  change, from `FUN_80df48d0`. A hook on that call (0x80DF48F2) inserts the two settings, copies of setting 3 with
-  their number, bNrChannels and bmChannelConfig changed, before interface 3, and sets wTotalLength and the stored length
-  at 0x8196BC10 (which GET_DESCRIPTOR answers with) to 478. bNumInterfaces is counted by the build itself. Anything but
-  the stock 386-byte descriptor is left alone.
-- **Opening the endpoint.** On SET_INTERFACE the device stack's audio class (`FUN_80e234ec`) searches interface 2's
-  list (pointer 0x8196BD78, count byte 0x8196BD7C) for the alt and opens endpoint 0x84 with the size in that entry's
-  endpoint record; an alt not in the list opens nothing, with no error to the host. `prepare()` points the stack at a
-  6-entry copy in the patch: the stock entries for alts 0 to 3 (still using the stock endpoint records, which bus reset
-  updates), then 4 and 5 with records of their own.
-- **Packet sizes.** At bus reset `FUN_80df4a24` (called at 0x80DC6F50) writes the stock settings' sizes and gives any
-  other setting 0. A hook on that call then writes 200 and 400 bytes (at high speed) into the descriptor and the two
-  records. The controller takes up to 1,024 bytes a packet without high-bandwidth mode (ITCM 0x274CC).
-- **Format.** The stock SET_INTERFACE handler (ITCM 0x152C8) sets bytes, channels and format for settings 1 to 3 only,
-  then clears the ring and queues 4 packets. The patch's hook writes 4 bytes, 2 or 4 channels and format 4 first, with
-  interrupts off, so those first packets are already the right size.
-- **The stream.** At 96 kHz and below the stock routine fills the new settings by itself (see the table). At 192 kHz
-  the patch fills them in the audio interrupt, as it fills setting 2 since B263.
+- **Capture.** The stock 192 kHz routine (ITCM 0x12368) never writes the USB ring, and it keeps only the last frame of
+  each 4-frame block in its variables. But once a frame it calls the recorder step (`bl FUN_000177c8` at 0x127EE), with
+  r0 = the DSP state and the frame index at [sp + 4], when the state holds the final mix and inputs. At start-up the
+  patch copies a 68-byte stub into the ITCM after the stock code (0x31A94; the stock code ends at 0x31A92 and nothing
+  refers to the rest) and points that call at it. The stub copies the 8 values into the frame's row and goes on to the
+  recorder step with the registers as they came. The audio hook, which runs after the stock routine in the same
+  interrupt, packs the block's 4 frames into the ring. Not settled: whether anything copies ITCM from flash again
+  after start-up, which would undo the redirected call (the stream would then be silent).
+- **Bigger packet buffers.** 8 channels at 192 kHz need 600 bytes a packet (24-bit) or 800 (float), more than the
+  stock buffers' 416. The patch moves the 4 buffers to its own DTCM at 800 bytes each: the literal at 0x15858 with
+  their address, and the stride in 7 instructions of the audio class callback and the SET_INTERFACE handler (0x14FAC,
+  0x14FCE, 0x14FD8, 0x14FE2, 0x153B2, 0x153E4, 0x15416), each checked against its stock bytes first. The device stack
+  opens the endpoint with the size in its endpoint record, and bus reset (`FUN_80df4a24`, called at 0x80DC6F50) sets
+  those from constants, so a hook on that call then gives settings 1 and 3 600 and 800 bytes at high speed, in the
+  descriptor and the records. The controller takes up to 1,024 bytes a packet without high-bandwidth mode (ITCM
+  0x274CC). If any check fails, settings 1 and 3 stay refused above 96 kHz, as in B263 to B275.
+- **Adding settings** (B277, withdrawn) also works: a hook on the descriptor build, a longer list for the device
+  stack's lookup (0x8196BD78, count 0x8196BD7C), and sizes after bus reset. Recorded in Step 46.
 
 ### Patch plan
 
