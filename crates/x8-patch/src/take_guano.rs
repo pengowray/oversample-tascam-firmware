@@ -50,6 +50,15 @@ impl fmt::Display for Degrees {
     }
 }
 
+/// The XRI text's place in a header the X8 wrote: the `bext` chunk comes first, and CodingHistory
+/// is the last 514 of its 1,116 bytes. The text ends at its first NUL; the bytes after it are 0.
+/// [`guano::coding_history`] finds the same text in any WAV file, and takes more of the patch.
+pub fn xri_in_header(header: &[u8]) -> Option<&[u8]> {
+    const BEXT_AT: usize = 12;
+    const TEXT: core::ops::Range<usize> = BEXT_AT + 8 + 602..BEXT_AT + 8 + 1116;
+    header.get(TEXT).filter(|_| header[BEXT_AT..BEXT_AT + 8] == *b"bext\x5c\x04\0\0")
+}
+
 /// The GUANO field and the value for one `KEY=value` part of the XRI text, if it is one of
 /// [`INPUT_FIELDS`]. Worked through as bytes and kept out of line: both keep the patch small.
 #[inline(never)]
@@ -246,6 +255,24 @@ INPUT GAIN=3:HIGH,4:HIGH;LEVEL=3:55,4:55;AUTO_LEVEL=3:OFF,4:OFF;,";
         assert!(!text(&header(192_000 * 8, 8, b"2026-11-06", b"19:08:08"), &mix).contains("X8Bat|"));
     }
 
+    /// A whole header as the X8 lays it out, read the way the patch reads it: the text is found
+    /// at its fixed place, and the zero bytes after it add nothing.
+    #[test]
+    fn the_xri_text_is_read_from_its_place_in_the_header() {
+        let mut bytes = std::vec![0u8; 5548];
+        bytes[..20].copy_from_slice(b"RIFF\0\0\0\0WAVEbext\x5c\x04\0\0");
+        bytes[622..622 + XRI.len()].copy_from_slice(XRI);
+        let xri = xri_in_header(&bytes).unwrap();
+        assert_eq!((xri.len(), guano::coding_history(&bytes)), (514, Some(XRI)));
+        let t = text(&header(192_000 * 8, 8, b"2026-11-06", b"19:08:08"), &Recorder { xri: Some(xri), ..RECORDER });
+        assert!(t.ends_with("X8Bat|Input Level: 3:55,4:55\nX8Bat|Auto Level: 3:OFF,4:OFF\n"), "{t}");
+        assert_eq!(t.matches("X8Bat|").count(), 4);
+        // Another layout, or a header cut short, gives no text.
+        bytes[16] = 0x5e;
+        assert_eq!(xri_in_header(&bytes), None);
+        assert_eq!(xri_in_header(&bytes[..1000]), None);
+    }
+
     /// Every field at its longest fits the 1 KB the patch builds the chunk in.
     #[test]
     fn the_longest_chunk_fits() {
@@ -336,7 +363,7 @@ INPUT GAIN=5:HIGH,6:HIGH;LEVEL=5:70,6:70;AUTO_LEVEL=5:OFF,6:OFF;,";
             utc_offset_minutes: None,
             location_e6: None,
             pauses: None,
-            xri: guano::coding_history(&head[..n]),
+            xri: xri_in_header(&head[..n]),
         };
         let mut out = [0u8; 0x400];
         let added = write_chunk(&header, &recorder, &mut out).unwrap();

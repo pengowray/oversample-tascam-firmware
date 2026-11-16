@@ -18,10 +18,6 @@ const HEADER_READ: usize = 0x2000;
 const CHUNK_AT: usize = 0x8000;
 const CHUNK_BYTES: usize = 0x400;
 const _: () = assert!(HEADER_READ <= CHUNK_AT && CHUNK_AT + CHUNK_BYTES <= stock::HEADER_BUFFER_BYTES);
-/// Where the stock header has its XRI text: the `bext` chunk comes first, and CodingHistory is
-/// the last 514 of its 1,116 bytes.
-const XRI_AT: usize = 20 + 602;
-const XRI_BYTES: usize = 1116 - 602;
 /// Free stack the hook requires before it adds a chunk. It uses about 0.7 KB (its frame and the
 /// text formatting); the rest is a margin.
 const STACK_NEEDED: usize = 2048;
@@ -85,7 +81,7 @@ unsafe fn add_guano(file: usize) -> Option<()> {
         utc_offset_minutes,
         location_e6: super::location::for_take(),
         pauses: super::pauses::for_take(),
-        xri: header_bytes.get(XRI_AT..XRI_AT + XRI_BYTES).filter(|_| header_bytes[12..16] == *b"bext"),
+        xri: take_guano::xri_in_header(header_bytes),
     };
     // SAFETY: as above; CHUNK_AT + CHUNK_BYTES is within the buffer and after the header.
     let out = unsafe { slice::from_raw_parts_mut(stock::HEADER_BUFFER.add(CHUNK_AT), CHUNK_BYTES) };

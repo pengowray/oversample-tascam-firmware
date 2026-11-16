@@ -2366,7 +2366,7 @@ B241 or an earlier build. All the checks in `tools/x8patch.py` pass on this file
 
 ## Step 48 test file: each input's settings in the GUANO metadata (built 2026-11-17, not yet installed)
 
-`work/patch54/#PortaX8_0279.203` (B279, SHA-256 `007081b9…eea9fdd87`). B278 (Step 47) with four more GUANO fields;
+`work/patch54/#PortaX8_0279.203` (B279, SHA-256 `788059fd…a06588b9d7`). B278 (Step 47) with four more GUANO fields;
 Step 47's checks still apply, and this file replaces it. All the checks in `tools/x8patch.py` pass, and two builds
 give the same file. Nothing in this step has run on a unit.
 
@@ -2384,7 +2384,7 @@ The values are copied from the XRI text that the stock firmware writes in the sa
 [The input settings in GUANO, and the `.bin` file](#the-input-settings-in-guano-and-the-bin-file-2026-11-17). A
 `_MIX.wav` file gets none of the four fields, because its XRI text has no input settings.
 
-**Memory.** Patch region free: 6,656 bytes (816 fewer than B278). No new stock hook site (header version 23).
+**Memory.** Patch region free: 6,624 bytes (848 fewer than B278). No new stock hook site (header version 23).
 
 **What to check.**
 
@@ -3692,14 +3692,14 @@ T=XRI 008c;XRI VER=0002;MAKER=TASCAM;MODEL=X8;FW VER=2.03;SOURCE=3:EXT MIC,4:EXT
 | `AUTO_LEVEL` | `X8Bat|Auto Level` | `ON`, `OFF` | `FUN_80df7144`: settings + 0x34 + track × 0x20 |
 
 The number before each `:` is the track, which is also the number in the file's name. The text is empty when settings
-+ 0x1DF or settings + 0x215 is 0; which menu items those are was not traced, and all 222 files have the text. A MIX
++ 0x1DF or settings + 0x215 (the file mode, 3 by default) is 0; the menu item for + 0x1DF was not traced, and the patch
+writes neither. All 222 files have the text, and so do the 19 of them that the patch added GUANO to (B254 to B272). A MIX
 file's text ends after `FW VER`. The settings are read when the header is built, so the values are those at the end of
 the file.
 
-**What the patch does.** `guano_hook` already has the rewritten header in the stock buffer. It passes the 514 bytes at
-offset 622 to `take_guano::write_chunk` when the `bext` chunk is at offset 12, and `write_chunk` copies the four values
-as they are. No settings are read from RAM, so the fields cannot disagree with the XRI text. The host test
-`input_settings_come_from_the_xri_text` uses the text of `260430_0071_3-4.wav`, and `append_to_a_file` was run on that
+**What the patch does.** `guano_hook` already has the rewritten header in the stock buffer. `take_guano::xri_in_header` gives it the 514 bytes
+at offset 622 when a 1,116-byte `bext` chunk is at offset 12, and `write_chunk` copies the four values as they are. No settings are read from RAM, so the fields cannot disagree with the XRI text. The host tests
+`input_settings_come_from_the_xri_text` and `the_xri_text_is_read_from_its_place_in_the_header` use the text of `260430_0071_3-4.wav`, and `append_to_a_file` was run on that
 file. The longest chunk is under 600 bytes of the 1 KB buffer (`the_longest_chunk_fits`).
 
 **The `.bin` file has the mixer, not the inputs.** Each take's `<name>.bin` is 268 bytes. `FUN_80db2102` fills it at
