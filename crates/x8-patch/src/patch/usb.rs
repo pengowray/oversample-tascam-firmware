@@ -1,14 +1,15 @@
-//! 192 kHz stereo over USB: widens the clock's rate list, sends INPUT 3 and INPUT 4 to the host at
-//! 192 kHz (3-byte samples on interface 2's alternate setting 2, 32-bit float after the dual-gain
-//! merge on alternate setting 3), and keeps alternate setting 1 at 96 kHz or below. See
-//! docs/HOMEBREW.md, "192 kHz stereo over USB", and x8_patch::usb_audio for the decisions.
+//! 192 kHz over USB: widens the clock's rate list, adds interface 2's alternate settings 4 (2
+//! channels of 32-bit float) and 5 (4 channels), sends INPUT 3 to 6 to the host at 192 kHz, and
+//! keeps the 8-channel settings 1 and 3 at 96 kHz or below. See docs/HOMEBREW.md, "192 kHz stereo
+//! over USB", and x8_patch::usb_audio for the decisions.
 
 use core::ptr;
 use core::sync::atomic::{AtomicBool, AtomicU32, Ordering::Acquire, Ordering::Relaxed, Ordering::Release};
 
 use x8_patch::usb_audio::{
-    FOUR_BYTE_FORMAT, Merge, STOCK_TOP_RANGE, WIDE_TOP_RANGE, after_alt, alt_to_use, float_channels, merged,
-    must_stop, put_sample, rate_to_use, ring_frames, sends_float,
+    EXTENDED_CONFIG_LEN, Merge, NEW_ALTS, STOCK_CONFIG_LEN, STOCK_TOP_RANGE, WIDE_TOP_RANGE, alt_to_use, before_alt,
+    extend_config, float_channels, merged, must_stop, new_alt_packet, new_alt_packet_offsets, put_sample,
+    rate_to_use, ring_frames,
 };
 
 use super::{Handler, read_byte, stock, system_mode};
@@ -16,6 +17,8 @@ use super::{Handler, read_byte, stock, system_mode};
 /// Set once the start-up has replaced all three class callback words and widened the rate list.
 /// Until then the stock code runs unchanged.
 pub(super) static USB_READY: AtomicBool = AtomicBool::new(false);
+/// Set once the device stack's list has alternate settings 4 and 5, so the descriptor may show them.
+static ALTS_READY: AtomicBool = AtomicBool::new(false);
 /// The audio interrupt's write position in the ring, in frames.
 static RING_WRITE: AtomicU32 = AtomicU32::new(0);
 
@@ -43,8 +46,58 @@ fn high_speed() -> bool {
     read_byte(stock::USB_SPEED) >= 2
 }
 
+/// Interface 2's list of alternate settings with the patch's two: the stock entries for alts 0 to
+/// 3 (still pointing at the stock endpoint records, which bus reset updates), then 4 and 5, each
+/// with one endpoint record of its own. The device stack reads it on every SET_CONFIGURATION and
+/// SET_INTERFACE.
+#[repr(C, align(4))]
+struct AltList([[u8; 16]; 6]);
+#[repr(C, align(4))]
+struct EndpointRecords([[u8; 8]; 2]);
+static mut ALT_LIST: AltList = AltList([[0; 16]; 6]);
+static mut ENDPOINTS: EndpointRecords = EndpointRecords([[0; 8]; 2]);
+
+/// Point the device stack at the longer list. Harmless with the stock descriptor: a host cannot
+/// choose settings it was never shown.
+///
+/// # Safety
+/// Only from `prepare`, before the device stack starts.
+unsafe fn add_alts() -> bool {
+    // SAFETY: the stock interface record and list in `.data`, and the patch's own statics, which
+    // nothing else touches until the stack is pointed at them.
+    unsafe {
+        if ptr::read_volatile(stock::IF2_ALT_LIST) != stock::IF2_STOCK_ALT_LIST
+            || ptr::read_volatile(stock::IF2_ALT_COUNT) != 5
+        {
+            return false;
+        }
+        let list = &mut *ptr::addr_of_mut!(ALT_LIST);
+        let records = &mut *ptr::addr_of_mut!(ENDPOINTS);
+        let stock_list = stock::IF2_STOCK_ALT_LIST as *const [u8; 16];
+        for (alt, entry) in list.0.iter_mut().enumerate().take(4) {
+            *entry = ptr::read_volatile(stock_list.add(alt));
+            if entry[0] != alt as u8 {
+                return false;
+            }
+        }
+        for (k, &(alt, channels)) in NEW_ALTS.iter().enumerate() {
+            let size = new_alt_packet(channels, true).to_le_bytes();
+            // {endpoint 0x84, isochronous, size, interval byte 0}, as the stock records.
+            records.0[k] = [0x84, 0x01, size[0], size[1], 0, 0, 0, 0];
+            let entry = &mut list.0[4 + k];
+            *entry = [0; 16];
+            entry[0] = alt;
+            entry[4] = 1;
+            entry[8..12].copy_from_slice(&(records.0[k].as_ptr() as usize as u32).to_le_bytes());
+        }
+        ptr::write_volatile(stock::IF2_ALT_LIST, list.0.as_ptr() as usize);
+        ptr::write_volatile(stock::IF2_ALT_COUNT, 6);
+    }
+    true
+}
+
 /// The changes, all or none: the class callback words first, then the rate list, so that 192 kHz
-/// is offered only with the guard in place.
+/// is offered only with the guard in place, then the list of alternate settings.
 fn prepare() {
     if USB_READY.load(Relaxed) {
         return;
@@ -66,6 +119,7 @@ fn prepare() {
         for (k, &b) in WIDE_TOP_RANGE.iter().enumerate() {
             ptr::write_volatile(stock::USB_TOP_RANGE.add(k), b);
         }
+        ALTS_READY.store(add_alts(), Release);
     }
     USB_READY.store(true, Release);
 }
@@ -85,26 +139,24 @@ pub(super) unsafe extern "C" fn usb_init_hook(a: usize, b: usize, c: usize, d: u
 pub(super) unsafe extern "C" fn usb_alt_hook(handle: usize, interface: usize, alt: usize, d: usize) -> usize {
     let state = state();
     let ready = USB_READY.load(Acquire) && state != 0;
-    let rate = if ready { state_word(state, stock::USB_RATE) } else { 0 };
-    let stock_alt = if ready { alt_to_use(alt as u8, rate) as usize } else { alt };
+    if ready && let Some((channels, bytes, format)) = before_alt(alt as u8) {
+        // The stock handler sets these for alternate settings 1 to 3 only. Written first, so its
+        // first packets are this format's size. Interrupts off: the audio interrupt reads them.
+        without_interrupts(|| {
+            set_state_byte(state, stock::USB_BYTES, bytes);
+            set_state_byte(state, stock::USB_CHANNELS, channels);
+            set_state_byte(state, stock::USB_FORMAT, format);
+        });
+    }
+    let alt = if ready { alt_to_use(alt as u8, state_word(state, stock::USB_RATE)) as usize } else { alt };
     // SAFETY: the stock function this call replaced, with its arguments.
     let handler: Handler = unsafe { core::mem::transmute(stock::USB_SET_ALT_IF2) };
-    let result = unsafe { handler(handle, interface, stock_alt, d) };
-    if ready && let Some((channels, bytes)) = after_alt(alt as u8, rate) {
-        // Float at 192 kHz: the stock handler set up 2 channels of 3 bytes and queued its first
-        // packets; from the next packet each sample is 4 bytes.
-        set_state_byte(state, stock::USB_BYTES, bytes);
-        set_state_byte(state, stock::USB_CHANNELS, channels);
-        set_state_byte(state, stock::USB_FORMAT, FOUR_BYTE_FORMAT);
-    }
-    result
+    unsafe { handler(handle, interface, alt, d) }
 }
 
 /// Wraps the audio class callback once `prepare` has put it in the class config list.
 unsafe extern "C" fn class_callback(handle: usize, event: usize, param: usize, d: usize) -> usize {
     let state = state();
-    // Channels to write after the stock code has taken a new rate.
-    let mut channels_after = None;
     if state != 0 && param != 0 && stock::USB_EVENT_SET_RATE.contains(&event) {
         // SAFETY: the stock request block: the data pointer, its length and the setup stage flag.
         unsafe {
@@ -112,27 +164,14 @@ unsafe extern "C" fn class_callback(handle: usize, event: usize, param: usize, d
             let len = ptr::read_volatile((param + 8) as *const u32);
             if ptr::read_volatile((param + 0xc) as *const u8) != 1 && len == 4 && !data.is_null() {
                 let rate = u32::from_le_bytes([0, 1, 2, 3].map(|k| ptr::read_volatile(data.add(k))));
-                let alt = read_byte(stock::USB_ALT_IF2);
-                let allowed = rate_to_use(rate, alt);
+                let allowed = rate_to_use(rate, read_byte(stock::USB_ALT_IF2));
                 if allowed != rate {
                     for (k, b) in allowed.to_le_bytes().into_iter().enumerate() {
                         ptr::write_volatile(data.add(k), b);
                     }
                 }
-                match float_channels(alt, allowed) {
-                    Some((channels, true)) => set_state_byte(state, stock::USB_CHANNELS, channels),
-                    Some((channels, false)) => channels_after = Some(channels),
-                    None => {}
-                }
             }
         }
-    }
-    if let Some(channels) = channels_after {
-        // SAFETY: the stock callback, with its arguments.
-        let stock_callback: Handler = unsafe { core::mem::transmute(stock::USB_AUDIO_CALLBACK) };
-        let result = unsafe { stock_callback(handle, event, param, d) };
-        set_state_byte(state, stock::USB_CHANNELS, channels);
-        return result;
     }
     if state != 0
         && event == stock::USB_EVENT_SENT
@@ -164,11 +203,10 @@ pub(super) fn on_block(input: *const i32) {
     // calls it.
     let count: Handler = unsafe { core::mem::transmute(stock::USB_COUNT_FRAMES) };
     unsafe { count(4, 0, 0, 0) };
-    let alt = read_byte(stock::USB_ALT_IF2);
-    if alt == 2 {
-        feed(input);
-    } else if alt == 3 {
-        feed_float(input);
+    match read_byte(stock::USB_ALT_IF2) {
+        2 => feed(input),
+        4 | 5 => feed_float(input),
+        _ => {}
     }
 }
 
@@ -203,37 +241,46 @@ fn feed(input: *const i32) {
     unsafe { ptr::write_volatile((state + stock::USB_WRITE_OFFSET) as *mut u32, write * frame_bytes) };
 }
 
-/// Writes the block's 4 frames of INPUT 3 and INPUT 4 into the ring as 32-bit floats, after the
-/// dual-gain merge, with the stock merge's state at the end of this block (it moves once a block
-/// at 192 kHz). Not inlined, so it stays in SDRAM.
+/// Writes the block's 4 frames of INPUT 3 to 4 (setting 4) or 3 to 6 (setting 5) into the ring
+/// as 32-bit floats, after the dual-gain merge, with the stock merge's state at the end of this
+/// block (it moves once a block at 192 kHz). Not inlined, so it stays in SDRAM.
 #[inline(never)]
 fn feed_float(input: *const i32) {
     let state = state();
-    if !sends_float(read_byte(stock::USB_ALT_IF2), state_byte(state, stock::USB_CHANNELS), state_byte(state, stock::USB_BYTES)) {
+    let alt = read_byte(stock::USB_ALT_IF2);
+    let Some(channels) = float_channels(alt, state_byte(state, stock::USB_CHANNELS), state_byte(state, stock::USB_BYTES))
+    else {
         return;
-    }
-    // INPUT 3 and 4 are merge channels 2 and 3.
+    };
+    let channels = channels as usize;
     let read = |at: usize| -> f32 {
         // SAFETY: words of the stock DSP state in ITCM, which the audio routine has just updated.
         unsafe { ptr::read_volatile(at as *const f32) }
     };
-    let side = |channel: usize| {
+    // INPUT 3 to 6 are merge channels 2 to 5. For INPUT 5 and 6 the stock routine skips the merge
+    // when the byte at 0x2A2CF is 1 (EXT IN), and uses the high gain path alone.
+    let ext_in = read_byte(stock::EXT_IN_ON_5_6) == 1;
+    let mut sides = [(Merge { g: 1.0, c: 1.0, w: 0.0 }, 0.0f32); 4];
+    for (k, side) in sides.iter_mut().enumerate().take(channels) {
+        let channel = 2 + k;
         let at = stock::MERGE_STATE + stock::MERGE_STEP * channel;
-        let merge = Merge { g: read(at + stock::MERGE_G), c: read(at + stock::MERGE_C), w: read(at + stock::MERGE_W) };
-        (merge, read(stock::INPUT_GAIN + stock::INPUT_GAIN_STEP * channel))
-    };
-    let sides = [side(2), side(3)];
-    let high = [stock::INPUT_WORDS[2] as usize, stock::INPUT_WORDS[3] as usize];
-    let low = stock::LOW_GAIN_WORDS_3_4.map(|w| w as usize);
-    let frames = ring_frames(8);
+        let merge = if ext_in && channel >= 4 {
+            Merge { g: 1.0, c: 1.0, w: 0.0 }
+        } else {
+            Merge { g: read(at + stock::MERGE_G), c: read(at + stock::MERGE_C), w: read(at + stock::MERGE_W) }
+        };
+        *side = (merge, read(stock::INPUT_GAIN + stock::INPUT_GAIN_STEP * channel));
+    }
+    let frame_bytes = 4 * channels as u32;
+    let frames = ring_frames(frame_bytes);
     let mut write = RING_WRITE.load(Relaxed) % frames;
     for k in 0..4 {
-        for (ear, &(merge, gain)) in sides.iter().enumerate() {
+        for (ear, &(merge, gain)) in sides.iter().enumerate().take(channels) {
             // SAFETY: words of this block's input frames, and a whole frame inside the ring.
             unsafe {
-                let a = ptr::read_volatile(input.add(12 * k + high[ear]));
-                let b = ptr::read_volatile(input.add(12 * k + low[ear]));
-                let at = stock::USB_RING.add((write * 8) as usize + 4 * ear);
+                let a = ptr::read_volatile(input.add(12 * k + stock::INPUT_WORDS[2 + ear] as usize));
+                let b = ptr::read_volatile(input.add(12 * k + stock::LOW_GAIN_WORDS_3_6[ear] as usize));
+                let at = stock::USB_RING.add((write * frame_bytes) as usize + 4 * ear);
                 for (j, byte) in merged(a, b, gain, merge).to_le_bytes().into_iter().enumerate() {
                     ptr::write_volatile(at.add(j), byte);
                 }
@@ -243,5 +290,62 @@ fn feed_float(input: *const i32) {
     }
     RING_WRITE.store(write, Relaxed);
     // SAFETY: the write offset word of the stock USB audio state, as `FUN_00014b84` stores it.
-    unsafe { ptr::write_volatile((state + stock::USB_WRITE_OFFSET) as *mut u32, write * 8) };
+    unsafe { ptr::write_volatile((state + stock::USB_WRITE_OFFSET) as *mut u32, write * frame_bytes) };
+}
+
+/// Run `f` with interrupts off, putting PRIMASK back as it was.
+fn without_interrupts(f: impl FnOnce()) {
+    let primask: u32;
+    // SAFETY: reads PRIMASK and masks interrupts; restored below.
+    unsafe { core::arch::asm!("mrs {}, PRIMASK", "cpsid i", out(reg) primask, options(nomem, nostack, preserves_flags)) };
+    f();
+    if primask & 1 == 0 {
+        // SAFETY: interrupts were on before.
+        unsafe { core::arch::asm!("cpsie i", options(nomem, nostack, preserves_flags)) };
+    }
+}
+
+/// Replaces `FUN_80df48d0`'s call to `FUN_80df471c(n)`, which builds configuration n at each start
+/// and plug-in. For configuration 0 (mass storage and UAC2 audio), adds alternate settings 4 and 5
+/// to the stock descriptor, once the device stack's list has them.
+pub(super) unsafe extern "C" fn usb_config_hook(n: usize, b: usize, c: usize, d: usize) -> usize {
+    // SAFETY: the stock function this call replaced, with its arguments.
+    let build: Handler = unsafe { core::mem::transmute(stock::USB_BUILD_CONFIG) };
+    let result = unsafe { build(n, b, c, d) };
+    if n == 0 && system_mode() <= 1 && ALTS_READY.load(Acquire) {
+        // SAFETY: the descriptor buffer the build has just filled, which the device stack reads
+        // only after the run call that follows, and its stored length.
+        unsafe {
+            let len = ptr::read_volatile(stock::USB_CONFIG_LEN) as usize;
+            let config = core::slice::from_raw_parts_mut(stock::USB_CONFIG, stock::USB_CONFIG_ROOM);
+            if len == STOCK_CONFIG_LEN
+                && let Some(new_len) = extend_config(config, len)
+            {
+                ptr::write_volatile(stock::USB_CONFIG_LEN, new_len as u32);
+            }
+        }
+    }
+    result
+}
+
+/// Replaces the device callback's call to `FUN_80df4a24(handle, speed)` at bus reset, which sets
+/// every stock setting's packet size and gives the ones it does not know 0. Then sets settings 4
+/// and 5's, in the descriptor and in their endpoint records.
+pub(super) unsafe extern "C" fn usb_reset_hook(handle: usize, speed: usize, c: usize, d: usize) -> usize {
+    // SAFETY: the stock function this call replaced, with its arguments.
+    let reset: Handler = unsafe { core::mem::transmute(stock::USB_BUS_RESET) };
+    let result = unsafe { reset(handle, speed, c, d) };
+    // SAFETY: as in usb_config_hook; the endpoint records are the patch's own.
+    unsafe {
+        if ptr::read_volatile(stock::USB_CONFIG_LEN) as usize == EXTENDED_CONFIG_LEN {
+            let records = &mut *ptr::addr_of_mut!(ENDPOINTS);
+            for (k, (&(_, channels), &at)) in NEW_ALTS.iter().zip(&new_alt_packet_offsets()).enumerate() {
+                let size = new_alt_packet(channels, speed == 2).to_le_bytes();
+                ptr::write_volatile(stock::USB_CONFIG.add(at), size[0]);
+                ptr::write_volatile(stock::USB_CONFIG.add(at + 1), size[1]);
+                records.0[k][2..4].copy_from_slice(&size);
+            }
+        }
+    }
+    result
 }

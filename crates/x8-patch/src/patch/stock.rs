@@ -32,8 +32,10 @@ pub const INPUT_BLOCKS: usize = 0x2000_e340;
 /// high gain path of its dual-gain pair). EXT IN uses the words of inputs
 /// 5 and 6.
 pub const INPUT_WORDS: [u32; 6] = [2, 5, 0, 6, 8, 11];
-/// The low gain path's word for inputs 3 and 4 (work/notes/audio.md, B[2] and B[3]).
-pub const LOW_GAIN_WORDS_3_4: [u32; 2] = [3, 9];
+/// The low gain path's word for inputs 3 to 6 (work/notes/audio.md, B[2] to B[5]).
+pub const LOW_GAIN_WORDS_3_6: [u32; 4] = [3, 9, 7, 10];
+/// DSP state + 0x623: 1 when INPUT 5 and 6 carry EXT IN, and the merge is skipped for them.
+pub const EXT_IN_ON_5_6: *const u8 = 0x0002_a2cf as *const u8;
 /// The dual-gain merge's state, one block of 0x48 bytes per channel (inputs 1 to 6 are channels 0
 /// to 5): make-up gain g, the high gain path's scale c and the crossfade weight w, current values.
 pub const MERGE_STATE: usize = 0x0002_9cac;
@@ -334,6 +336,25 @@ pub const USB_STATE: *const usize = 0x2000_0240 as *const usize;
 pub const USB_RATE: usize = 0x34;
 pub const USB_BYTES: usize = 0x46;
 pub const USB_CHANNELS: usize = 0x47;
+/// The configuration descriptor that `FUN_80df471c` builds (1,024 bytes of room; the next object
+/// starts at 0x2000F400), and its length as the device stack sends it (device table + 0x74,
+/// stored at 0x80DF48C6; GET_DESCRIPTOR answers with this, not wTotalLength).
+pub const USB_CONFIG: *mut u8 = 0x2000_f000 as *mut u8;
+pub const USB_CONFIG_ROOM: usize = 0x400;
+pub const USB_CONFIG_LEN: *mut u32 = 0x8196_bc10 as *mut u32;
+/// `FUN_80df471c(n)`, which builds configuration n there, and `FUN_80df4a24(handle, speed)`, which
+/// sets the UAC2 endpoints' packet sizes at each bus reset (speed 2 is high speed).
+pub const USB_BUILD_CONFIG: usize = 0x80df_471d;
+pub const USB_BUS_RESET: usize = 0x80df_4a25;
+/// Interface 2's list of alternate settings, as the device stack's audio class searches it on
+/// SET_INTERFACE (`FUN_80e234ec`): the pointer and the count (a byte, compared with the index)
+/// in the interface record at 0x8196BD74. Stock: 16-byte entries {alt, 0, 0, 0, endpoint count,
+/// 0, 0, 0, endpoint record pointer, 0} for alts 0 to 3, and count 5, whose fifth entry is
+/// interface 3's alt 0.
+pub const IF2_ALT_LIST: *mut usize = 0x8196_bd78 as *mut usize;
+pub const IF2_ALT_COUNT: *mut u32 = 0x8196_bd7c as *mut u32;
+pub const IF2_STOCK_ALT_LIST: usize = 0x8196_bce8;
+
 /// The stock handler's format byte: 1 for 3-byte samples, 4 for 4-byte (0x152C8 to 0x15342).
 pub const USB_FORMAT: usize = 0x48;
 pub const USB_WRITE_OFFSET: usize = 0x5c;

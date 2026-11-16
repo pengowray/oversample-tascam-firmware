@@ -6,12 +6,13 @@
 //! alternate settings: 1 is 8 channels of 3 bytes, 2 is 2 channels of 3 bytes, 3 is 8 channels of
 //! 4 bytes. The packets are built in 416-byte buffers, and nothing in the stock code limits a
 //! packet to that size. 8 channels above 96 kHz would overrun them, so the patch keeps alternate
-//! setting 1 at 96 kHz or below.
+//! settings 1 and 3 at 96 kHz or below.
 //!
-//! Alternate setting 3 above 96 kHz carries 2 channels of 32-bit float instead of 8 of 4-byte
-//! PCM: INPUT 3 and INPUT 4 after the stock dual-gain merge, as the X8 records them to its 32-bit
-//! float tracks. Its descriptor still says 8 channels: a host has to know this (Oversample does).
-//! B263 to B275 sent nothing in this case, so no host relied on it.
+//! The patch adds alternate settings 4 (2 channels of 32-bit float) and 5 (4 channels of 32-bit
+//! float), as copies of setting 3's descriptors with fewer channels. At 192 kHz they carry INPUT 3
+//! and 4 (and 5 and 6) after the stock dual-gain merge, as the X8 records its 32-bit float
+//! tracks. At 96 kHz and below the stock audio routine fills them by itself, in its own order:
+//! the mix left and right, then INPUT 1 and 2.
 
 /// The highest rate the stock firmware offers over USB.
 pub const HIGHEST_STOCK_RATE: u32 = 96_000;
@@ -26,11 +27,8 @@ pub const RING_BYTES: u32 = 0x3400;
 /// The third sub-range of the clock's GET RANGE answer, {minimum, maximum, resolution} as
 /// little-endian words: 96 kHz only in the stock firmware.
 pub const STOCK_TOP_RANGE: [u8; 12] = range(HIGHEST_STOCK_RATE, HIGHEST_STOCK_RATE, 0);
-/// The patch's third sub-range: 96 kHz up to `FLOAT_MARK` in steps of 96 kHz, so 96 and 192 kHz.
-pub const WIDE_TOP_RANGE: [u8; 12] = range(HIGHEST_STOCK_RATE, FLOAT_MARK, HIGHEST_STOCK_RATE);
-/// The sub-range's maximum: 1 Hz above 192 kHz, which lists the same rates, tells Oversample that
-/// alternate setting 3 at 192 kHz carries float. B263 to B275 have 192,000 here.
-pub const FLOAT_MARK: u32 = RATE + 1;
+/// The patch's third sub-range: 96 kHz to 192 kHz in steps of 96 kHz, so 96 and 192 kHz.
+pub const WIDE_TOP_RANGE: [u8; 12] = range(HIGHEST_STOCK_RATE, RATE, HIGHEST_STOCK_RATE);
 
 const fn range(min: u32, max: u32, res: u32) -> [u8; 12] {
     let (a, b, c) = (min.to_le_bytes(), max.to_le_bytes(), res.to_le_bytes());
@@ -42,49 +40,103 @@ pub fn eight_channels(alt: u8) -> bool {
     matches!(alt, 1 | 3)
 }
 
-/// The alternate setting that carries float above 96 kHz.
-pub const FLOAT_ALT: u8 = 3;
-/// The stock format byte (USB state + 0x48) for 4-byte samples, as its handler sets for
+/// The stock format byte (USB state + 0x48) for 32-bit float, as its handler sets for
 /// alternate setting 3.
-pub const FOUR_BYTE_FORMAT: u8 = 4;
+pub const FLOAT_FORMAT: u8 = 4;
+/// The alternate settings the patch adds, and their channels of 32-bit float.
+pub const NEW_ALTS: [(u8, u8); 2] = [(4, 2), (5, 4)];
 
 /// The alternate setting to pass to the stock handler when the host asks for `alt` at
 /// `host_rate`. 0 makes the stock handler do nothing, so no 8-channel stream starts above 96 kHz.
-/// Alternate setting 3 above 96 kHz goes to the stock code as 2, whose first packets fit, and
-/// `after_alt` then makes the samples 4 bytes. The stock handler uses the number only to choose
-/// bytes, channels and its format byte (0x152C8 to 0x15342).
+/// The stock handler sets bytes, channels and format for settings 1 to 3 only; for 4 and 5 it
+/// keeps what `before_alt` wrote and queues its first packets at that size.
 pub fn alt_to_use(alt: u8, host_rate: u32) -> u8 {
-    match alt {
-        1 if host_rate > HIGHEST_STOCK_RATE => 0,
-        FLOAT_ALT if host_rate > HIGHEST_STOCK_RATE => 2,
-        alt => alt,
-    }
+    if eight_channels(alt) && host_rate > HIGHEST_STOCK_RATE { 0 } else { alt }
 }
 
-/// After the stock handler: the channels and bytes per sample to write into the USB state, when
-/// the patch changes them.
-pub fn after_alt(alt: u8, host_rate: u32) -> Option<(u8, u8)> {
-    (alt == FLOAT_ALT && host_rate > HIGHEST_STOCK_RATE).then_some((2, 4))
+/// For a setting the patch adds: the channels, bytes per sample and format byte to write into the
+/// USB state before the stock handler runs, at any rate.
+pub fn before_alt(alt: u8) -> Option<(u8, u8, u8)> {
+    NEW_ALTS.iter().find(|&&(a, _)| a == alt).map(|&(_, channels)| (channels, 4, FLOAT_FORMAT))
 }
 
 /// The rate to give the stock code when the host sets `rate` while interface 2 is at `alt`.
 /// 96 kHz is what the stock code itself sets for a rate it does not list.
 pub fn rate_to_use(rate: u32, alt: u8) -> u32 {
-    if alt == 1 && rate > HIGHEST_STOCK_RATE { HIGHEST_STOCK_RATE } else { rate }
+    if eight_channels(alt) && rate > HIGHEST_STOCK_RATE { HIGHEST_STOCK_RATE } else { rate }
 }
 
-/// When the host changes the rate with interface 2 at alternate setting 3: the channel count
-/// that suits the new rate, and whether to write it before the stock code takes the rate (going
-/// above 96 kHz, so no 8-channel packet is built at 192 kHz) or after it (coming down, so no
-/// 2-channel packet goes out in the 8-channel format's place before then).
-pub fn float_channels(alt: u8, rate: u32) -> Option<(u8, bool)> {
-    (alt == FLOAT_ALT).then(|| if rate > HIGHEST_STOCK_RATE { (2, true) } else { (8, false) })
+/// The channels of float the audio interrupt sends at 192 kHz: 2 on setting 4 and 4 on setting
+/// 5, while the USB state still says so.
+pub fn float_channels(alt: u8, channels: u8, bytes: u8) -> Option<u8> {
+    before_alt(alt).and_then(|(want, b, _)| (channels == want && bytes == b).then_some(want))
 }
 
-/// Whether the audio interrupt sends float: alternate setting 3, with the 2 channels of 4 bytes
-/// the patch set.
-pub fn sends_float(alt: u8, channels: u8, bytes: u8) -> bool {
-    alt == FLOAT_ALT && channels == 2 && bytes == 4
+/// A new setting's packet size, as `FUN_80df4a24` gives the stock settings at each bus reset: at
+/// high speed one frame more than a microframe holds at 192 kHz; at full speed the 0x184 it gives
+/// every setting.
+pub fn new_alt_packet(channels: u8, high_speed: bool) -> u16 {
+    if high_speed { largest_packet(channels, 4, RATE, true) as u16 } else { 0x184 }
+}
+
+/// Length of the stock configuration descriptor (configuration 0: mass storage and UAC2 audio).
+pub const STOCK_CONFIG_LEN: usize = 386;
+/// Where interface 2's alternate setting 3 starts in it, and interface 3 after it.
+const ALT3_AT: usize = 225;
+const IFACE3_AT: usize = 271;
+/// Bytes of one alternate setting: interface, AS_GENERAL, FORMAT_TYPE, endpoint and its
+/// class-specific endpoint descriptors.
+pub const ALT_LEN: usize = 46;
+/// Length of the configuration with the new settings.
+pub const EXTENDED_CONFIG_LEN: usize = STOCK_CONFIG_LEN + NEW_ALTS.len() * ALT_LEN;
+/// Offsets in an alternate setting: bAlternateSetting, bNrChannels and bmChannelConfig, and the
+/// endpoint's wMaxPacketSize.
+const ALT_NUMBER: usize = 3;
+const NR_CHANNELS: usize = 19;
+const CHANNEL_CONFIG: usize = 20;
+pub const MAX_PACKET: usize = 35;
+
+/// Add settings 4 and 5 to interface 2 in the configuration descriptor in `config`, which holds
+/// `len` bytes and has room for `EXTENDED_CONFIG_LEN`. Each is a copy of setting 3 (8 channels of
+/// float) with its number, channel count and channel config changed; interface 3 moves up after
+/// them, and the total length grows. Returns the new length, or None (and changes nothing) when
+/// the descriptor is not the stock one.
+pub fn extend_config(config: &mut [u8], len: usize) -> Option<usize> {
+    if len != STOCK_CONFIG_LEN || config.len() < EXTENDED_CONFIG_LEN {
+        return None;
+    }
+    let alt3 = &config[ALT3_AT..IFACE3_AT];
+    // Setting 3's interface descriptor, AS_GENERAL with 8 channels of float, then interface 3.
+    let stock = alt3[..4] == [9, 4, 2, 3]
+        && alt3[9..12] == [16, 0x24, 1]
+        && alt3[NR_CHANNELS] == 8
+        && alt3[25..31] == [6, 0x24, 2, 1, 4, 32]
+        && alt3[31..34] == [7, 5, 0x84]
+        && config[IFACE3_AT..IFACE3_AT + 4] == [9, 4, 3, 0]
+        && u16::from_le_bytes([config[2], config[3]]) as usize == STOCK_CONFIG_LEN;
+    if !stock {
+        return None;
+    }
+    let mut template = [0u8; ALT_LEN];
+    template.copy_from_slice(alt3);
+    config.copy_within(IFACE3_AT..STOCK_CONFIG_LEN, IFACE3_AT + NEW_ALTS.len() * ALT_LEN);
+    for (k, &(alt, channels)) in NEW_ALTS.iter().enumerate() {
+        let at = IFACE3_AT + k * ALT_LEN;
+        let block = &mut config[at..at + ALT_LEN];
+        block.copy_from_slice(&template);
+        block[ALT_NUMBER] = alt;
+        block[NR_CHANNELS] = channels;
+        // 2 channels are front left and right, as setting 2; 4 have no positions, as setting 3's 8.
+        let config_bits: u32 = if channels == 2 { 0x3 } else { 0 };
+        block[CHANNEL_CONFIG..CHANNEL_CONFIG + 4].copy_from_slice(&config_bits.to_le_bytes());
+    }
+    config[2..4].copy_from_slice(&(EXTENDED_CONFIG_LEN as u16).to_le_bytes());
+    Some(EXTENDED_CONFIG_LEN)
+}
+
+/// Where each new setting's wMaxPacketSize is in the extended descriptor.
+pub fn new_alt_packet_offsets() -> [usize; 2] {
+    core::array::from_fn(|k| IFACE3_AT + k * ALT_LEN + MAX_PACKET)
 }
 
 /// The stock dual-gain merge's state for one channel at the end of a block (state block at
@@ -178,30 +230,111 @@ mod tests {
         assert_eq!(STOCK_TOP_RANGE, [0x00, 0x77, 0x01, 0x00, 0x00, 0x77, 0x01, 0x00, 0, 0, 0, 0]);
     }
 
-    /// Every order of alternate setting and rate: what the stock handler is asked for, and the
-    /// format the host then gets.
+    /// Configuration 0 as `FUN_80df471c` builds it: the 9-byte configuration descriptor and the
+    /// 23-byte mass storage interface (their bytes as built do not matter here, only their
+    /// length and wTotalLength), then the 354 bytes of audio descriptors at 0x813B69FC in V2.03.
+    fn stock_config() -> std::vec::Vec<u8> {
+        let mut config = std::vec![0u8; 32];
+        config[..4].copy_from_slice(&[9, 2, 0x82, 0x01]);
+        config.extend_from_slice(&STOCK_AUDIO);
+        assert_eq!(config.len(), STOCK_CONFIG_LEN);
+        config
+    }
+
+    const STOCK_AUDIO: [u8; 354] = [
+        0x08, 0x0b, 0x01, 0x03, 0x01, 0x00, 0x20, 0x00, 0x09, 0x04, 0x01, 0x00, 0x00, 0x01, 0x01, 0x20,
+        0x00, 0x09, 0x24, 0x01, 0x00, 0x02, 0x08, 0x4b, 0x00, 0x00, 0x08, 0x24, 0x0a, 0x07, 0x03, 0x03,
+        0x00, 0x00, 0x0c, 0x24, 0x03, 0x02, 0x01, 0x01, 0x00, 0x04, 0x07, 0x00, 0x00, 0x00, 0x11, 0x24,
+        0x02, 0x03, 0x01, 0x01, 0x00, 0x07, 0x02, 0x03, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x11,
+        0x24, 0x02, 0x04, 0x01, 0x02, 0x00, 0x07, 0x08, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+        0x0c, 0x24, 0x03, 0x05, 0x01, 0x03, 0x00, 0x03, 0x07, 0x00, 0x00, 0x00, 0x09, 0x04, 0x02, 0x00,
+        0x00, 0x01, 0x02, 0x20, 0x00, 0x09, 0x04, 0x02, 0x01, 0x01, 0x01, 0x02, 0x20, 0x00, 0x10, 0x24,
+        0x01, 0x02, 0x00, 0x01, 0x01, 0x00, 0x00, 0x00, 0x08, 0x00, 0x00, 0x00, 0x00, 0x00, 0x06, 0x24,
+        0x02, 0x01, 0x03, 0x18, 0x07, 0x05, 0x84, 0x05, 0x38, 0x01, 0x01, 0x08, 0x25, 0x01, 0x00, 0x00,
+        0x00, 0x00, 0x00, 0x09, 0x04, 0x02, 0x02, 0x01, 0x01, 0x02, 0x20, 0x00, 0x10, 0x24, 0x01, 0x02,
+        0x00, 0x01, 0x01, 0x00, 0x00, 0x00, 0x02, 0x03, 0x00, 0x00, 0x00, 0x00, 0x06, 0x24, 0x02, 0x01,
+        0x03, 0x18, 0x07, 0x05, 0x84, 0x05, 0x4e, 0x00, 0x01, 0x08, 0x25, 0x01, 0x00, 0x00, 0x00, 0x00,
+        0x00, 0x09, 0x04, 0x02, 0x03, 0x01, 0x01, 0x02, 0x20, 0x00, 0x10, 0x24, 0x01, 0x02, 0x00, 0x01,
+        0x04, 0x00, 0x00, 0x00, 0x08, 0x00, 0x00, 0x00, 0x00, 0x00, 0x06, 0x24, 0x02, 0x01, 0x04, 0x20,
+        0x07, 0x05, 0x84, 0x05, 0xa0, 0x01, 0x01, 0x08, 0x25, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x09,
+        0x04, 0x03, 0x00, 0x00, 0x01, 0x02, 0x20, 0x00, 0x09, 0x04, 0x03, 0x01, 0x02, 0x01, 0x02, 0x20,
+        0x00, 0x10, 0x24, 0x01, 0x03, 0x00, 0x01, 0x01, 0x00, 0x00, 0x00, 0x02, 0x03, 0x00, 0x00, 0x00,
+        0x00, 0x06, 0x24, 0x02, 0x01, 0x03, 0x18, 0x07, 0x05, 0x03, 0x05, 0x4e, 0x00, 0x01, 0x08, 0x25,
+        0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x07, 0x05, 0x83, 0x11, 0x04, 0x00, 0x04, 0x09, 0x04, 0x03,
+        0x02, 0x02, 0x01, 0x02, 0x20, 0x00, 0x10, 0x24, 0x01, 0x03, 0x00, 0x01, 0x04, 0x00, 0x00, 0x00,
+        0x02, 0x03, 0x00, 0x00, 0x00, 0x00, 0x06, 0x24, 0x02, 0x01, 0x04, 0x20, 0x07, 0x05, 0x03, 0x05,
+        0x68, 0x00, 0x01, 0x08, 0x25, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x07, 0x05, 0x83, 0x11, 0x04,
+        0x00, 0x04,
+    ];
+
+    /// Walk descriptors: (offset, type, bytes).
+    fn walk(bytes: &[u8]) -> std::vec::Vec<(usize, u8, &[u8])> {
+        let mut out = std::vec::Vec::new();
+        let mut at = 0;
+        while at < bytes.len() {
+            let len = bytes[at] as usize;
+            assert!(len >= 2 && at + len <= bytes.len(), "descriptor at {at}");
+            out.push((at, bytes[at + 1], &bytes[at..at + len]));
+            at += len;
+        }
+        out
+    }
+
     #[test]
-    fn alternate_setting_3_above_96_khz_sends_2_channels_of_float() {
-        // Setting first, at 96 kHz, then 192 kHz (as Oversample does).
-        assert_eq!(alt_to_use(3, 96_000), 3);
-        assert_eq!(after_alt(3, 96_000), None);
-        assert_eq!(rate_to_use(192_000, 3), 192_000);
-        assert_eq!(float_channels(3, 192_000), Some((2, true)));
-        assert!(packet_fits(2, 4, 192_000, true));
-        // Rate first, then the setting.
-        assert_eq!(alt_to_use(3, 192_000), 2);
-        assert_eq!(after_alt(3, 192_000), Some((2, 4)));
-        // Back to 96 kHz: 8 channels of 4 bytes again, as stock, after the stock code has the rate.
-        assert_eq!(float_channels(3, 96_000), Some((8, false)));
-        assert!(packet_fits(8, 4, 96_000, true));
-        // The other settings are as before.
-        assert_eq!(alt_to_use(1, 192_000), 0);
-        assert_eq!(rate_to_use(192_000, 1), 96_000);
-        assert_eq!(alt_to_use(2, 192_000), 2);
-        assert_eq!(after_alt(2, 192_000), None);
-        assert_eq!(float_channels(2, 192_000), None);
-        assert!(sends_float(3, 2, 4));
-        assert!(!sends_float(3, 8, 4) && !sends_float(2, 2, 4));
+    fn two_float_settings_are_added_to_interface_2() {
+        let stock = stock_config();
+        let mut config = stock.clone();
+        config.resize(1024, 0);
+        assert_eq!(extend_config(&mut config, STOCK_CONFIG_LEN), Some(EXTENDED_CONFIG_LEN));
+        let config = &config[..EXTENDED_CONFIG_LEN];
+        assert_eq!(EXTENDED_CONFIG_LEN, 478);
+        assert_eq!(u16::from_le_bytes([config[2], config[3]]), 478);
+        // Everything before the new settings, and interface 3 after them, is as stock.
+        assert_eq!(config[4..IFACE3_AT], stock[4..IFACE3_AT]);
+        assert_eq!(config[IFACE3_AT + 2 * ALT_LEN..], stock[IFACE3_AT..]);
+        let descriptors = walk(&config[32..]);
+        let alts: std::vec::Vec<(u8, u8)> =
+            descriptors.iter().filter(|d| d.1 == 4).map(|d| (d.2[2], d.2[3])).collect();
+        assert_eq!(alts, [(1, 0), (2, 0), (2, 1), (2, 2), (2, 3), (2, 4), (2, 5), (3, 0), (3, 1), (3, 2)]);
+        // Settings 4 and 5: float, 4-byte samples, 2 and 4 channels, endpoint 0x84.
+        for (k, &(alt, channels)) in NEW_ALTS.iter().enumerate() {
+            let at = IFACE3_AT + k * ALT_LEN;
+            let block = &config[at..at + ALT_LEN];
+            assert_eq!(block[ALT_NUMBER], alt);
+            assert_eq!(block[NR_CHANNELS], channels);
+            assert_eq!(u32::from_le_bytes(block[15..19].try_into().unwrap()), 4, "bmFormats IEEE_FLOAT");
+            assert_eq!(block[25..31], [6, 0x24, 2, 1, 4, 32]);
+            assert_eq!(block[33], 0x84);
+            assert_eq!(new_alt_packet_offsets()[k], at + MAX_PACKET);
+        }
+        // Anything but the stock descriptor is left alone.
+        let mut other = stock.clone();
+        other[IFACE3_AT + 3] = 1;
+        other.resize(1024, 0);
+        let before = other.clone();
+        assert_eq!(extend_config(&mut other, STOCK_CONFIG_LEN), None);
+        assert_eq!(other, before);
+        let mut short = stock.clone();
+        assert_eq!(extend_config(&mut short, STOCK_CONFIG_LEN), None, "no room");
+    }
+
+    #[test]
+    fn the_new_settings_fit_at_every_rate() {
+        assert_eq!(before_alt(4), Some((2, 4, FLOAT_FORMAT)));
+        assert_eq!(before_alt(5), Some((4, 4, FLOAT_FORMAT)));
+        assert_eq!(before_alt(3), None);
+        assert_eq!(alt_to_use(4, 192_000), 4);
+        assert_eq!(alt_to_use(5, 44_100), 5);
+        assert_eq!(new_alt_packet(2, true), 200);
+        assert_eq!(new_alt_packet(4, true), 400);
+        assert!(new_alt_packet(4, true) as u32 <= MAX_IN_PACKET);
+        for rate in [44_100, 48_000, 96_000, 192_000] {
+            assert!(largest_packet(4, 4, rate, true) <= new_alt_packet(4, true) as u32);
+        }
+        assert_eq!(float_channels(5, 4, 4), Some(4));
+        assert_eq!(float_channels(4, 2, 4), Some(2));
+        assert_eq!(float_channels(4, 2, 3), None);
+        assert_eq!(float_channels(3, 8, 4), None);
     }
 
     #[test]
@@ -229,7 +362,7 @@ mod tests {
         }
         assert!(!listed(&stock, 192_000));
         assert!(listed(&wide, 192_000));
-        for rate in [88_200, 144_000, 176_400, 192_001, 288_000, 384_000] {
+        for rate in [88_200, 144_000, 176_400, 288_000, 384_000] {
             assert!(!listed(&wide, rate), "{rate}");
         }
     }
@@ -263,35 +396,27 @@ mod tests {
     #[test]
     fn eight_channels_stay_at_96_khz_or_below() {
         assert_eq!(alt_to_use(1, 192_000), 0);
+        assert_eq!(alt_to_use(3, 192_000), 0);
         assert_eq!(alt_to_use(2, 192_000), 2);
         assert_eq!(alt_to_use(1, 96_000), 1);
         assert_eq!(alt_to_use(0, 192_000), 0);
         assert_eq!(rate_to_use(192_000, 1), 96_000);
+        assert_eq!(rate_to_use(192_000, 3), 96_000);
         assert_eq!(rate_to_use(192_000, 2), 192_000);
-        assert_eq!(rate_to_use(192_000, 0), 192_000);
         assert_eq!(rate_to_use(48_000, 1), 48_000);
-        // Every combination, in either order, fits the buffers at high speed: the format the stock
-        // handler sets for the setting it is given, then any change the patch makes.
-        let stock_format = |alt: u8| match alt {
-            1 => (8, 3),
-            3 => (8, 4),
+        // Every combination the guard allows fits the buffers at high speed, in either order.
+        let format = |alt: u8| match (alt, before_alt(alt)) {
+            (_, Some((channels, bytes, _))) => (channels, bytes),
+            (1, _) => (8, 3),
+            (3, _) => (8, 4),
             _ => (2, 3),
         };
-        for alt in 0..4u8 {
+        for alt in 0..6u8 {
             for rate in [44_100, 48_000, 96_000, 192_000] {
-                // The setting chosen at this rate.
-                let (mut channels, mut bytes) = stock_format(alt_to_use(alt, rate));
-                if let Some(format) = after_alt(alt, rate) {
-                    (channels, bytes) = format;
+                let (channels, bytes) = format(alt_to_use(alt, rate).max(if alt >= 4 { alt } else { 0 }));
+                if alt_to_use(alt, rate) == alt && rate_to_use(rate, alt) == rate {
+                    assert!(packet_fits(channels, bytes, rate, true), "alt {alt} at {rate}");
                 }
-                assert!(packet_fits(channels, bytes, rate, true), "alt {alt} chosen at {rate}");
-                // The rate set after the setting, chosen at 96 kHz.
-                let (mut channels, bytes) = stock_format(alt_to_use(alt, 96_000));
-                let rate = rate_to_use(rate, alt);
-                if let Some((c, _)) = float_channels(alt, rate) {
-                    channels = c;
-                }
-                assert!(packet_fits(channels, bytes, rate, true), "alt {alt}, then {rate}");
             }
         }
     }
