@@ -3953,6 +3953,65 @@ are probably constants that happen to equal the addresses (not checked). At 192 
 block at 192 kHz, but DSP mode 3 is only selected when the system mode byte (`FUN_80d9ff36`) is 8, the factory test mode
 (`FUN_80dc77b0`). So the stock firmware has no route that sends 192 kHz audio to USB in normal use.
 
+### What the X8 presents over USB, and what it carries
+
+Decoded from the 354 bytes of audio descriptors at 0x813B69FC in V2.03 (2026-11-16). One UAC2 audio function:
+clock source 7 (internal, programmable), interface 1 (audio control), interface 2 (audio to the host, endpoint 0x84)
+and interface 3 (audio from the host, endpoint 0x03, feedback 0x83). In UAC2 the rate belongs to the clock, not to an
+alternate setting: whatever the host sets on the clock applies to every setting.
+
+**Interface 2, audio to the host.**
+
+| Alt | Descriptor says | Max packet (high speed) | Stock, 44.1 to 96 kHz | B263 to B275 at 192 kHz | B276 at 192 kHz |
+|---|---|---|---|---|---|
+| 0 | No audio | | Nothing | Nothing | Nothing |
+| 1 | 8 ch, 24-bit PCM | 312 | 8 channels (which sources not traced; probably tracks 1 to 6 and the mix) | Refused: the patch passes alt 0 to the stock code, nothing is sent | As B275 |
+| 2 | 2 ch, 24-bit PCM (FL, FR) | 78 stock, 150 patched | 2 channels, probably the mix | INPUT 3 and 4, high gain path only, top 24 bits of each word | As B275 |
+| 3 | 8 ch, 32-bit **float** (bmFormats 0x4) | 416 | 8 channels of float | Refused, as alt 1 | INPUT 3 and 4 after the dual-gain merge, **2** channels of float, although the descriptor says 8 |
+
+**Interface 3, audio from the host:** alt 1 is 2 ch 24-bit PCM, alt 2 is 2 ch 32-bit float, at 44.1 to 96 kHz. At 192
+kHz nothing reads it (Step 39, "Still to check").
+
+**Clock rates (GET RANGE).** Stock: 44.1, 48 and 96 kHz. B263 to B275: also 192 kHz (third range 96,000 to 192,000 in
+steps of 96,000). B276: the same rates, with the range ending at 192,001 so that Oversample knows alt 3 carries 2
+channels of float. A host that reads the descriptors as written misreads alt 3 at 192 kHz, which is why this is a
+stop-gap.
+
+### Proposed: a USB page with a 192 kHz mode (not built)
+
+Instead of B276's mark, a switch on a new USB page in the bat app's SETTINGS chooses what the X8 presents the next time
+a host connects (a host reads the descriptors only then), and a choice of 1 to 4 channels:
+
+| | Stock (switch off) | 192 kHz mode, N = 1 to 4 channels |
+|---|---|---|
+| Clock rates | 44.1, 48, 96 kHz | 192 kHz only |
+| Interface 2, alt 1 | 8 ch, 24-bit PCM | N ch, 24-bit PCM: the high gain paths (largest packet 4 x 3 x 25 = 300 bytes, under its 312) |
+| Interface 2, alt 2 | 2 ch, 24-bit PCM | Unchanged: INPUT 3 and 4, high gain path (as B263) |
+| Interface 2, alt 3 | 8 ch, 32-bit float | N ch, 32-bit float: after the dual-gain merge (4 x 4 x 25 = 400 bytes, under its 416) |
+| Interface 3 | As stock | Unchanged; nothing plays at 192 kHz |
+
+- **What changes in the descriptors.** Only bNrChannels and bmChannelConfig in alt 1's and alt 3's AS_GENERAL
+  descriptors, in the copy at 0x2000F000 after `FUN_80df471c` builds it. Formats and packet sizes stay as stock, and
+  so do the total length, the interface count and the stock handlers. (Packet sizes could not change by mode anyway:
+  `FUN_80df4a24` writes them at bus reset from constants in its code.) The GET RANGE answer becomes 192 kHz in all
+  three ranges, with the count at 1.
+- **Any UAC2 host** then reads every setting correctly: Linux, macOS, Windows 10 and later, and Oversample with no X8
+  rule (its chooser already takes the deepest 2-channel setting, so with N = 2 it picks alt 3). B276's 192,001 mark
+  and Oversample's X8 rule (`c302cd4`) would go.
+- **The patch** sets the stock state to N channels and the setting's own sample size whenever alt 1 or 3 is chosen in
+  this mode, whatever the clock says at that moment, since a host can choose the setting before the rate.
+- **The audio control side** says the input terminal has 8 channels (+63 in the block). Stock alt 2 already
+  disagrees with it (2 channels), and hosts accept that, so it stays.
+- **Not traced yet:** when `FUN_80df471c` rebuilds the copy, and whether the patch can make the X8 reconnect by itself
+  (otherwise the page has to say to plug the cable in again); which inputs the N channels are (INPUT 3 to 6 is the
+  obvious order); what the stock 8 channels carry; the CPU cost of 4 merged channels in the audio interrupt (estimated
+  small: a few multiplies a sample).
+- **Default.** The app starts when the bat screen first opens, and its settings reset at power-off, so the X8 shows
+  the stock descriptors until then. Whether the mode is on by default is the owner's call.
+- **Room.** About 9.7 KB is free in B276. The page and the descriptor edits are estimated at 2 to 3 KB. If more is
+  needed, the CPU test could become a build option: its named functions take about 9 KB, plus its screen (inlined
+  into the screen code, not measured separately) and 4 KB of results.
+
 ### Patch plan
 
 | Part | Change | How |
