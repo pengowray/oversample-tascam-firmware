@@ -2366,7 +2366,7 @@ B241 or an earlier build. All the checks in `tools/x8patch.py` pass on this file
 
 ## Step 49 test file: phantom power, mic trim and MS decode in the GUANO metadata (built 2026-11-17, not yet installed)
 
-`work/patch55/#PortaX8_0280.203` (B280, SHA-256 `120058f2…6fa0ef6328`). B279 (Step 48) with three more GUANO fields
+`work/patch55/#PortaX8_0280.203` (B280, SHA-256 `18048b98…ea9c3cc32f`). B279 (Step 48) with three more GUANO fields
 and a shorter file information view; Step 47's checks still apply, and this file replaces B278 and B279. All the
 checks in `tools/x8patch.py` pass, and two builds give the same file. Nothing in this step has run on a unit.
 
@@ -2386,7 +2386,7 @@ only these three depend on addresses that no test on a computer can check. How e
 Source`, `X8Bat|Input Gain`, `X8Bat|Input Level` and `X8Bat|Auto Level`, when the value is the same. A value that
 differs is still shown.
 
-**Memory.** Patch region free: 6,376 bytes (1,096 fewer than B278, 248 fewer than B279). The three fields took 1,760 bytes
+**Memory.** Patch region free: 6,232 bytes (1,240 fewer than B278, 392 fewer than B279). The three fields took 1,904 bytes
 and the shorter view 1,248; `ChunkWriter::field` now keeps one copy of its code for every type of value, which gave
 2,760 back. No new stock hook site (header version 23).
 
@@ -2399,7 +2399,10 @@ and the shorter view 1,248; `ChunkWriter::field` now keeps one copy of its code 
    have `X8Bat|Mic Trim: L:-2 dB,R:1 dB`? Is the field absent at 0 dB and 0 dB, and with a mic in the EXT MIC jack?
 3. **MS decode.** With a MIX file being written and MS DECODE set to 3-4, does the `_MIX.wav` file have `X8Bat|MS
    Decode: 3-4`, and do the track files have no such field?
-4. **File information.** Open a B280 take in BAT PLAYBACK's file information. Are source, gain, level and auto level
+4. **Phantom power not yet switched on.** With phantom power on for input 3, power the X8 off and on. While its
+   phantom power question is still on screen, or after answering NO, record from BAT DETECTOR if the X8 allows it. Is
+   `X8Bat|Phantom` absent?
+5. **File information.** Open a B280 take in BAT PLAYBACK's file information. Are source, gain, level and auto level
    listed once, under XRI, with the other GUANO fields under GUANO?
 
 ## Step 48 test file: each input's settings in the GUANO metadata (built 2026-11-17, never installed: superseded by B280)
@@ -2426,9 +2429,9 @@ The values are copied from the XRI text that the stock firmware writes in the sa
 
 **What to check.**
 
-1. **The fields.** Record a take from BAT DETECTOR and open its `_3-4.wav` (or other track file) in BAT PLAYBACK's
-   file information, or on a computer. Are the four fields there, and do they match the XRI section's SOURCE, INPUT
-   GAIN, LEVEL and AUTO_LEVEL?
+1. **The fields.** Record a take from BAT DETECTOR and open its `_3-4.wav` (or other track file) on a computer. Are
+   the four fields in its GUANO metadata, and do they match SOURCE, INPUT GAIN, LEVEL and AUTO_LEVEL in the XRI text?
+   From B280, BAT PLAYBACK's file information does not list the four under GUANO when they match (Step 49).
 2. **A changed setting.** Change INPUT 3's gain between LOW and HIGH in MANUAL, record again from BAT DETECTOR. Does
    `X8Bat|Input Gain` follow?
 3. **The MIX file**, if one is written: it has the other GUANO fields and none of these four?
@@ -3777,7 +3780,12 @@ The host tests cover `write_chunk`; the addresses are checked only by Step 49's 
 | Inputs 1 and 2 are the built-in mics | system state + 0x947 (0x81969DDF) | 1 built-in, 0 or 2 with a plug in the EXT MIC jack | `FUN_80da6e28`, `FUN_80da5924` |
 | MS DECODE | DSP state + 0x61C (0x0002A2C8) | 0 off, 1 to 3 the pair | `FUN_00016c70` |
 
-**Phantom power.** A track records the first input of its pair if its number is odd, the second if even, so track 4
+**Phantom power as switched.** At start-up the X8 leaves phantom power off and asks about each input whose setting is
+on. Until the answer, the setting byte is 1 and the input's pending flag (0x81E86864 + input, `work/notes/phantom.md`)
+is set. `guano_hook` counts an input as on only when its setting is on and its pending flag is clear. The FPGA
+driver's own copy of the phantom bits (0x81921308) was not used: what writes it was not read.
+
+**Phantom power by track.** A track records the first input of its pair if its number is odd, the second if even, so track 4
 with pair 3 records input 6. `X8Bat|Phantom` lists the tracks in the XRI text's `SOURCE` value, and for each one the
 phantom power of the input worked out this way. The number before each `:` is the track, as in Step 48's fields.
 
@@ -3786,12 +3794,14 @@ it adds an entry of the table at 0x80DA5B38 to the input's LEVEL: -6, -4, -2, 0,
 manual gives MIC TRIM as -3 dB to 3 dB in 7 steps, so the setting less 3 is taken as the trim in dB, and one step of
 LEVEL as half a decibel. That + 0x263
 is MIC L and + 0x264 is MIC R follows from their order (message 0xF12 before 0xF13, and the track whose block has 1 at
-+ 0xB before the one with 2); it was not checked against the screen.
++ 0xB before the one with 2); it was not checked against the screen. `L` and `R` are the two mics, not the file's channels: with
+the inputs swapped (DSP state + 0x622), track 1 records MIC R.
 
 **MS decode changes the mix, not a track's file.** `FUN_00016df2` sets a track's two gains into the stereo mix (DSP
 state + 0x2C0 and + 0x2C4 + track × 0x1C). With MS DECODE on for a pair, the pair's first track goes to both sides and
 its second track to the left and, inverted, to the right. Nothing in it touches the samples a track's own file gets.
-So the field goes in the MIX file, which is the file whose XRI text has no `SOURCE`. `FUN_00016c70` allows it only in
+So the field goes in the MIX file, which is the file whose XRI text has no `SOURCE`. A file with no XRI
+text at all (settings + 0x1DF or + 0x215 at 0) gets none of the seven fields. `FUN_00016c70` allows it only in
 apps 2 and 9; the bat tiles run as MANUAL, app 2.
 
 **Kept small.** The first version of these fields took 4.9 KB of the patch region, mostly from splitting and searching

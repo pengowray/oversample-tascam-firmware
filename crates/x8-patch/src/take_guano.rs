@@ -38,7 +38,7 @@ pub struct Inputs {
     /// For tracks 1 to 6, the pair of inputs the track records: 1 INPUT 1-2, 2 INPUT 3-4,
     /// 3 INPUT 5-6. An odd track records the first input of the pair.
     pub track_sources: [u8; 6],
-    /// Phantom power for inputs 3 to 6: 0 off.
+    /// Phantom power for inputs 3 to 6, as switched and not only as set: 0 off.
     pub phantom: [u8; 4],
     /// PHANTOM VOLTAGE is 24 V, not 48 V.
     pub phantom_24v: bool,
@@ -231,7 +231,9 @@ pub fn write_chunk(header: &Header, recorder: &Recorder, out: &mut [u8]) -> Opti
                 chunk.field("X8Bat|Mic Trim", format_args!("L:{} dB,R:{} dB", Trim(left), Trim(right)));
             }
         }
-        (Some(Inputs { ms_decode: pair @ 1..=3, .. }), None) => {
+        // A file with XRI text that has no SOURCE is the MIX file. A file with no XRI text at all
+        // could be any, so it gets nothing.
+        (Some(Inputs { ms_decode: pair @ 1..=3, .. }), None) if recorder.xri.is_some_and(|x| x.starts_with(b"T=")) => {
             chunk.field("X8Bat|MS Decode", ["1-2", "3-4", "5-6"][usize::from(pair) - 1]);
         }
         _ => {}
@@ -396,6 +398,8 @@ INPUT GAIN=3:HIGH,4:HIGH;LEVEL=3:55,4:55;AUTO_LEVEL=3:OFF,4:OFF;,";
         assert_eq!(extra(XRI_MIX, decoding), "X8Bat|MS Decode: 3-4");
         assert_eq!(extra(XRI_MIX, INPUTS), "");
         assert_eq!(extra(XRI, decoding), "");
+        // XRI text turned off: the file could be a track's, so it gets no MS Decode.
+        assert_eq!(extra(&[0; 514], decoding), "");
     }
 
     /// A whole header as the X8 lays it out, read the way the patch reads it: the text is found

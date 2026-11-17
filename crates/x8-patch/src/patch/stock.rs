@@ -164,7 +164,9 @@ pub const RESTART_INPUT_TIMERS: usize = 0x80d7_058f;
 /// bytes and to the open app's stored copy (Thumb address). Opening an app calls it after
 /// marking the app's stored inputs with phantom power as pending, and then asks about them.
 pub const PHANTOM_ALL_OFF: usize = 0x80dc_565d;
-/// Settings + 0x254: phantom power for inputs 3 to 6, one byte each, 0 off.
+/// Settings + 0x254: phantom power for inputs 3 to 6, one byte each, 0 off. After start-up a byte
+/// can be 1 with the input still off, until the phantom power question is answered: its
+/// [`PHANTOM_PENDING`] flag is set until then.
 pub const PHANTOM: *const [u8; 4] = 0x81e8_cad0 as *const [u8; 4];
 /// Settings + 0x1DD, PHANTOM VOLTAGE: 0 is 48 V, 1 is 24 V.
 pub const PHANTOM_VOLTAGE: *const u8 = 0x81e8_ca59 as *const u8;

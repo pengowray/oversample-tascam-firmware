@@ -87,7 +87,13 @@ unsafe fn add_guano(file: usize) -> Option<()> {
             track_sources: core::array::from_fn(|track| {
                 read_byte(unsafe { stock::TRACK_SOURCES.add(track * stock::TRACK_SOURCE_STEP) })
             }),
-            phantom: unsafe { ptr::read_volatile(stock::PHANTOM) },
+            // An input still waiting for the phantom power question's answer is off, though its
+            // setting says on.
+            phantom: unsafe {
+                let pending = ptr::read_volatile(stock::PHANTOM_PENDING).to_le_bytes();
+                let set = ptr::read_volatile(stock::PHANTOM);
+                core::array::from_fn(|i| u8::from(set[i] != 0 && pending[i] == 0))
+            },
             phantom_24v: read_byte(stock::PHANTOM_VOLTAGE) == 1,
             mic_trim: unsafe { ptr::read_volatile(stock::MIC_TRIM) },
             built_in_mics: read_byte(stock::INPUTS_1_2_KIND) == 1,
