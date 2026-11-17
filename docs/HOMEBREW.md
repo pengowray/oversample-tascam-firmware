@@ -3743,7 +3743,8 @@ at offset 622 when a 1,116-byte `bext` chunk is at offset 12, and `write_chunk` 
 `input_settings_come_from_the_xri_text` and `the_xri_text_is_read_from_its_place_in_the_header` use the text of `260430_0071_3-4.wav`, and `append_to_a_file` was run on that
 file. The longest chunk is under 600 bytes of the 1 KB buffer (`the_longest_chunk_fits`).
 
-**The `.bin` file has the mixer, not the inputs.** Each take's `<name>.bin` is 268 bytes, little-endian.
+**The `.bin` file has the mixer, not the inputs.** Each take's `<name>.bin` is 268 bytes, little-endian. qubero2 reads it as its `x8project` format
+(`crates/core/src/formats/x8project.rs` there), which labels every byte.
 `FUN_80db2102` fills it at the end of a take, mostly by copying settings + 0x214 to + 0x23F, and `FUN_80db037c` reads
 it when the take is opened. Ranges are from the mixer's range table at 0x81927F90 (`FUN_80dfa278`).
 
@@ -3764,7 +3765,7 @@ it when the take is opened. Ranges are from the mixer's range table at 0x81927F9
 | + 1 | 1 | Pan (message 0xC02) | 0 left, 20 centre, 40 right | `FUN_00016bac` |
 | + 2 | 1 | Range 0 to 100 in the range table. By its place, a send level; not traced | 0 in all files | |
 | + 3 | 1 | Out of the mix (message 0xC04) | 0 or 1. Used only in app 6 | `FUN_00016c34` |
-| 0x28, 0x2C | 4 each | Two more entries shaped like a mixer channel | 97, 20, 0, 0 in all files. Not traced | |
+| 0x28, 0x2C | 4 each | Two more entries shaped like a mixer channel | 97, 0, 0, 0 and 97, 40, 0, 0 in all files: as a level and a pan, the default level panned fully left and fully right. Not traced | |
 | 0x30 | 1 | Master level (settings + 0x23C, message 0xC08) | 0 to 127: 97, 100 or 113 in the files | `FUN_00016a6a` |
 | 0x31 | 1 | Settings + 0x23D | 70 in all files. Not traced | |
 | 0x32 | 1 | Settings + 0x23E, message 0xFFE | 0 or 1. Not traced | |
