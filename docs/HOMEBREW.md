@@ -3772,12 +3772,12 @@ it when the take is opened. Ranges are from the mixer's range table at 0x81927F9
 | 0x33 | 1 | Settings + 0x23F | 0 | |
 | 0x34 | 3 | Not written | 0 | |
 | 0x37 | 1 | One byte and two 32-bit words (0x38, 0x3C) copied from the recorder's state, or kept from the project that was open | 0 in all files. Not traced | `FUN_80db2102` |
-| 0x40 + 0x20 × n, n = 0 to 5 | 0x20 | The 4-band EQ of track n + 1: bands at + 0, + 4, + 8 and + 0xC, then 16 bytes of 0 | The defaults in all files. Saved from settings + 0xAF4 only in apps 9 to 11; a track's EQ is also at settings + 0x40 + 0x20 × track | `FUN_80da7764` (defaults), message handler at 0x80DC3B2E, `FUN_00029998` |
+| 0x40 + 0x20 × n, n = 0 to 5 | 0x20 | The 4-band EQ of track n + 1: bands at + 0, + 4, + 8 and + 0xC, then 16 bytes of 0 | The defaults in all files. Saved from settings + 0xAF4 only in apps 9 to 11; a track's EQ is also at settings + 0x40 + 0x20 × track | `FUN_80da7764` (defaults), `FUN_80dbe324`, `FUN_00029998` |
 | band + 0 | 1 | Frequency, an index into the table of 64 at 0x30AB8 (32 Hz to 18 kHz). Band 4 counts from the table's 33rd entry | Default 16 in bands 1 and 4, 32 in bands 2 and 3: 400 Hz, 1.7 kHz, 1.7 kHz and 5.5 kHz | `FUN_00029998`, value kind 0 |
 | band + 1 | 1 | Gain, an index into the table at 0x31084: 0 to 24 for -12 to 12 dB | Default 12, 0 dB | value kind 1 |
 | band + 2 | 1 | Q, an index into the table at 0x319D0: 0.25, 0.5, 1, 2, 4, 8, 16 | Default 3, a Q of 2 | value kind 2 |
 | band + 3 | 1 | Not used | 0 | |
-| 0x100 | 12 | The metronome's settings (messages 0x501 and 0x502, and `FUN_80dc6c80`, which applies all of them) | The defaults in all files. Saved from settings + 0xAE8 only in apps 9 and 11; other apps keep theirs at settings + 0x1A4 | `FUN_80dc6c80` |
+| 0x100 | 12 | The metronome's settings (messages 0x501 and 0x502, and `FUN_80dc6c80`, which applies all of them) | The defaults in all files. Saved from settings + 0xAE8 only in apps 9 to 11. Apps other than 9 and 11 keep the metronome at settings + 0x1A4, which is not saved here | `FUN_80dc6c80` |
 | 0x100 | 4 | Tempo, 20 to 250 (the low 16 bits are used) | Default 120 | `FUN_80dc67e6`, range entry 0x1E at 0x81969224 |
 | 0x104 | 2 | Beats, 1 to 9 | Default 4 | message 0x501, range entry 0x1F |
 | 0x106 | 2 | Level, 0 to 100 | Default 50 | `FUN_80dc68a8`, range entry 0x21 |
