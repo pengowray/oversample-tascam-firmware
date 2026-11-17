@@ -3743,19 +3743,36 @@ at offset 622 when a 1,116-byte `bext` chunk is at offset 12, and `write_chunk` 
 `input_settings_come_from_the_xri_text` and `the_xri_text_is_read_from_its_place_in_the_header` use the text of `260430_0071_3-4.wav`, and `append_to_a_file` was run on that
 file. The longest chunk is under 600 bytes of the 1 KB buffer (`the_longest_chunk_fits`).
 
-**The `.bin` file has the mixer, not the inputs.** Each take's `<name>.bin` is 268 bytes. `FUN_80db2102` fills it at
-the end of a take and `FUN_80db037c` reads it:
+**The `.bin` file has the mixer, not the inputs.** Each take's `<name>.bin` is 268 bytes, little-endian.
+`FUN_80db2102` fills it at the end of a take, mostly by copying settings + 0x214 to + 0x23F, and `FUN_80db037c` reads
+it when the take is opened. Ranges are from the mixer's range table at 0x81927F90 (`FUN_80dfa278`).
 
-| Offset | Bytes | What | Source |
-|---|---|---|---|
-| 0 | 4 | Version, 1. The reader fills offset 0x40 onwards with defaults when it reads version 0 | |
-| 4 | 4 | The take's length in whole seconds (frames / sample rate). Matches the files: `260430_0070` has 157 here and 157.7 s of audio | recorder state |
-| 8 | 4 | The app (settings + 0x214; 2 is MANUAL), then settings + 0x215 to + 0x217 | settings |
-| 0xC | 4 | Settings + 0x218 to + 0x21B. `00 32 64 00` in all 117 files; meaning not traced | settings |
-| 0x10 | 36 | 9 entries of 4 bytes, copied from settings + 0x21C. Bytes 0 and 1 vary between files: byte 0 is 0x61 by default and byte 1 is 0, 20 or 40 (40 on the right track of a stereo pair). These fit the mixer's level and pan for tracks 1 to 6, then three more entries, but the code that uses them was not read | settings |
-| 0x37 | 1, then 4 and 4 at 0x38 | Not traced | |
-| 0x40 | 6 × 0x20 | One block for each track, default from `FUN_80da7764`. The same in all 117 files; by its place and size, the track's EQ. Not traced | settings + 0xAF4 in some apps |
-| 0x100 | 12 | Defaults 0x78, 4, 0x32, 0, 2, 0x1B. The same in all 117 files; possibly reverb. Not traced | settings + 0xAE8 in some apps |
+| Offset | Bytes | What | Values | Read from |
+|---|---|---|---|---|
+| 0x00 | 4 | Version | 1. A file with 0 here and at least 0x34 bytes is an older layout: the reader fills 0x40 onwards with the defaults below and sets this to 1 | `FUN_80db037c` |
+| 0x04 | 4 | The take's length in whole seconds (frames / sample rate) | `260430_0070` has 157, and 157.7 s of audio | `FUN_80db2102` |
+| 0x08 | 1 | The app that recorded it (settings + 0x214) | 2 MANUAL in 116 files, 5 in one; 9 for apps 9 to 11 | |
+| 0x09 | 1 | File mode (settings + 0x215) | 3 in all files | |
+| 0x0A | 1 | Settings + 0x216, message 0xFFD | 0 in all files. Not traced | |
+| 0x0B | 1 | Settings + 0x217 | 0. Not traced | |
+| 0x0C | 1 | MS DECODE (settings + 0x218) | 0 off, 1 INPUT 1-2, 2 INPUT 3-4, 3 INPUT 5-6 | `FUN_00016c70` |
+| 0x0D | 1 | MS decode width (settings + 0x219, message 0xC05) | 0 to 100, default 50. Indexes the mid gain table, and 100 less it the side gain table | `FUN_00016df2` |
+| 0x0E | 1 | Settings + 0x21A, message 0xC06 | 0 to 100, default 100. Not traced | |
+| 0x0F | 1 | Settings + 0x21B | 0. Not traced | |
+| 0x10 + 4 × n, n = 0 to 5 | 4 | Mixer channel for track n + 1 | | `FUN_00016a6a` |
+| + 0 | 1 | Level (message 0xC03) | 0 to 127, default 97. Indexes the gain table at DSP data + 0x238 | `FUN_00016b64` |
+| + 1 | 1 | Pan (message 0xC02) | 0 left, 20 centre, 40 right | `FUN_00016bac` |
+| + 2 | 1 | Range 0 to 100 in the range table. By its place, a send level; not traced | 0 in all files | |
+| + 3 | 1 | Out of the mix (message 0xC04) | 0 or 1. Used only in app 6 | `FUN_00016c34` |
+| 0x28, 0x2C | 4 each | Two more entries shaped like a mixer channel | 97, 20, 0, 0 in all files. Not traced | |
+| 0x30 | 1 | Master level (settings + 0x23C, message 0xC08) | 0 to 127: 97, 100 or 113 in the files | `FUN_00016a6a` |
+| 0x31 | 1 | Settings + 0x23D | 70 in all files. Not traced | |
+| 0x32 | 1 | Settings + 0x23E, message 0xFFE | 0 or 1. Not traced | |
+| 0x33 | 1 | Settings + 0x23F | 0 | |
+| 0x34 | 3 | Not written | 0 | |
+| 0x37 | 1 | One byte and two 32-bit words (0x38, 0x3C) copied from the recorder's state, or kept from the project that was open | 0 in all files. Not traced | `FUN_80db2102` |
+| 0x40 + 0x20 × n, n = 0 to 5 | 0x20 | A block for track n + 1, by its shape a 4-band EQ: bands at + 0, + 4, + 8 and + 0xC of 3 bytes each, default (16, 12, 3), (32, 12, 3), (32, 12, 3), (16, 12, 3); the rest 0 | The defaults in all files. Saved from settings + 0xAF4 only in apps 9 to 11. Not traced further | `FUN_80da7764` |
+| 0x100 | 12 | Defaults: 120 (32-bit), 4 and 50 (16-bit), 0, a flag byte with value 2, 27, 0. Possibly reverb | The defaults in all files. Saved from settings + 0xAE8 only in apps 9 to 11. Not traced | |
 
 Nothing in the file is an input's source, gain or phantom power, and the mixer settings change only the MIX file and
 what is heard, not a track's own file. So GUANO takes nothing from it. The patch could not read the file in any case:
