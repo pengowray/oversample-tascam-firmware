@@ -2386,9 +2386,9 @@ only these three depend on addresses that no test on a computer can check. How e
 Source`, `X8Bat|Input Gain`, `X8Bat|Input Level` and `X8Bat|Auto Level`, when the value is the same. A value that
 differs is still shown.
 
-**Memory.** Patch region free: 6,376 bytes (1,096 fewer than B278, 248 fewer than B279). The three fields and the
-shorter view took 3,072 bytes; `ChunkWriter::field` now keeps one copy of its code for every type of value, which gave
-2,824 back. No new stock hook site (header version 23).
+**Memory.** Patch region free: 6,376 bytes (1,096 fewer than B278, 248 fewer than B279). The three fields took 1,760 bytes
+and the shorter view 1,248; `ChunkWriter::field` now keeps one copy of its code for every type of value, which gave
+2,760 back. No new stock hook site (header version 23).
 
 **What to check.** After Step 48's checks:
 
@@ -3782,8 +3782,9 @@ with pair 3 records input 6. `X8Bat|Phantom` lists the tracks in the XRI text's 
 phantom power of the input worked out this way. The number before each `:` is the track, as in Step 48's fields.
 
 **Mic trim.** `FUN_80da5924` sets each input's level. For a track on INPUT 1-2, while the inputs are the built-in mics,
-it adds an entry of the table at 0x80DA5B38 to the input's LEVEL: -6, -4, -2, 0, 2, 4, 6 for settings 0 to 6. LEVEL
-counts half decibels, so the setting less 3 is the trim in dB, which matches the manual's -3 dB to 3 dB. That + 0x263
+it adds an entry of the table at 0x80DA5B38 to the input's LEVEL: -6, -4, -2, 0, 2, 4, 6 for settings 0 to 6. The
+manual gives MIC TRIM as -3 dB to 3 dB in 7 steps, so the setting less 3 is taken as the trim in dB, and one step of
+LEVEL as half a decibel. That + 0x263
 is MIC L and + 0x264 is MIC R follows from their order (message 0xF12 before 0xF13, and the track whose block has 1 at
 + 0xB before the one with 2); it was not checked against the screen.
 
