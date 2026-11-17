@@ -433,6 +433,33 @@ fn a_long_press_on_a_row_shows_its_information_and_does_not_choose_it() {
     assert!(lines.len() > note + 1, "a long note takes more than one row: {lines:?}");
 }
 
+/// The bat firmware copies four XRI values into GUANO. The information view shows each once,
+/// under XRI, and keeps a GUANO field whose value differs or that XRI does not have.
+#[test]
+fn guano_fields_that_repeat_an_xri_value_are_shown_once() {
+    let mut storage = vec![0.0f32; 1024];
+    let mut files = vec![FileEntry::new(0, 0, b"", 0, 0, 0); 8];
+    let mut details = vec![0u8; crate::player::DETAILS_BYTES];
+    let mut app = listed(&mut storage, &mut files);
+    app.player_mut().set_details_storage(&mut details);
+    app.open_files();
+    press_row(&mut app, 1);
+    app.hold();
+    let guano = b"GUANO|Version: 1.0\nMake: TASCAM\nX8Bat|Input Source: 3:EXT MIC,4:EXT MIC\n\
+X8Bat|Input Gain: 3:HIGH,4:HIGH\nX8Bat|Input Level: 3:20,4:20\nX8Bat|Auto Level: 3:OFF,4:OFF\n\
+X8Bat|Phantom: 3:48V,4:OFF\n";
+    app.player_mut().details_read(1, Some((None, XRI, guano)));
+    let lines = screen::details_lines(&app);
+    let after_guano = &lines[lines.iter().position(|l| l == "GUANO").unwrap()..];
+    assert!(after_guano.iter().any(|l| l == "Make: TASCAM"), "{after_guano:?}");
+    assert!(after_guano.iter().any(|l| l.contains("3:48V,4:OFF")), "{after_guano:?}");
+    assert!(after_guano.iter().any(|l| l.contains("3:HIGH,4:HIGH")), "XRI says LOW: {after_guano:?}");
+    for hidden in ["EXT MIC", "3:20,4:20", "3:OFF,4:OFF"] {
+        assert!(!after_guano.iter().any(|l| l.contains(hidden)), "{hidden:?} in {after_guano:?}");
+    }
+    assert!(lines.iter().any(|l| l == "Source: 3: EXT MIC"));
+}
+
 #[test]
 fn a_finger_that_moved_or_lifted_before_the_long_press_opens_nothing() {
     let mut storage = vec![0.0f32; 1024];

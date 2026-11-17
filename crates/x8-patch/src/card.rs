@@ -329,6 +329,7 @@ mod tests {
                 location_e6: Some((-36_123_456, 146_000_007)),
                 pauses: None,
                 xri: crate::take_guano::xri_in_header(&f[..5548]),
+                inputs: None,
             };
             let mut chunk = [0u8; 1024];
             let n = crate::take_guano::write_chunk(&header, &recorder, &mut chunk).unwrap();

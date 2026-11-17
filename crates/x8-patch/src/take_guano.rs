@@ -28,16 +28,79 @@ pub struct Recorder<'a> {
     /// The XRI text the X8 has just written in the file's header (the `bext` chunk's
     /// CodingHistory), which holds each input's settings. Read up to its first NUL.
     pub xri: Option<&'a [u8]>,
+    /// Settings the XRI text leaves out, read from the X8's memory as the file closes.
+    pub inputs: Option<Inputs>,
+}
+
+/// Input settings that the X8 does not write in the XRI text.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Inputs {
+    /// For tracks 1 to 6, the pair of inputs the track records: 1 INPUT 1-2, 2 INPUT 3-4,
+    /// 3 INPUT 5-6. An odd track records the first input of the pair.
+    pub track_sources: [u8; 6],
+    /// Phantom power for inputs 3 to 6: 0 off.
+    pub phantom: [u8; 4],
+    /// PHANTOM VOLTAGE is 24 V, not 48 V.
+    pub phantom_24v: bool,
+    /// MIC TRIM for MIC L and MIC R: 0 to 6 for -3 to 3 dB.
+    pub mic_trim: [u8; 2],
+    /// Inputs 1 and 2 are the built-in mics, which MIC TRIM applies to.
+    pub built_in_mics: bool,
+    /// MS DECODE: 0 off, or the pair it decodes in the stereo mix: 1 INPUT 1-2, 2 3-4, 3 5-6.
+    pub ms_decode: u8,
+}
+
+/// For each track of a file, the phantom power of the input the track records: `3:48V,4:OFF`.
+/// The tracks are those in the `SOURCE` value of the file's XRI text (`3:EXT MIC,4:EXT MIC`).
+struct Phantom<'a>(&'a [u8], &'a Inputs);
+
+impl Phantom<'_> {
+    /// Calls `each` with every track in the `SOURCE` value (0 to 5) and whether the input it
+    /// records has phantom power on. Inputs 1 and 2, EXT IN and USB have none. Written as one
+    /// plain loop over the bytes: the patch has little room, and iterators over text took 4 KB.
+    #[inline(never)]
+    fn tracks(&self, each: &mut dyn FnMut(u8, bool)) {
+        let mut start = true;
+        for &b in self.0 {
+            if start && (b'1'..=b'6').contains(&b) {
+                let track = b - b'1';
+                let pair = self.1.track_sources[usize::from(track)];
+                let on = matches!(pair, 2 | 3) && self.1.phantom[usize::from((pair - 2) * 2 + track % 2)] != 0;
+                each(track, on);
+            }
+            start = b == b',';
+        }
+    }
+}
+
+impl fmt::Display for Phantom<'_> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let volts = if self.1.phantom_24v { "24V" } else { "48V" };
+        let mut result = Ok(());
+        let mut comma = "";
+        self.tracks(&mut |track, on| {
+            let item = [comma.as_bytes().first().copied().unwrap_or(b' '), b'1' + track, b':'];
+            let item = core::str::from_utf8(&item[usize::from(comma.is_empty())..]).unwrap_or_default();
+            result = result.and_then(|()| f.write_str(item)).and_then(|()| f.write_str(if on { volts } else { "OFF" }));
+            comma = ",";
+        });
+        result
+    }
+}
+
+/// A MIC TRIM setting, 0 to 6, as its dB: `-3` to `3`.
+struct Trim(u8);
+
+impl fmt::Display for Trim {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let db = [b'-', b'0' + self.0.abs_diff(3).min(9)];
+        f.write_str(core::str::from_utf8(&db[usize::from(self.0 >= 3)..]).unwrap_or_default())
+    }
 }
 
 /// The X8's XRI keys that describe the inputs, and the GUANO field each one goes in. The value is
 /// copied as the X8 wrote it, one item for each channel of the file: `3:EXT MIC,4:EXT MIC`.
-const INPUT_FIELDS: [(&str, &str); 4] = [
-    ("SOURCE", "X8Bat|Input Source"),
-    ("INPUT GAIN", "X8Bat|Input Gain"),
-    ("LEVEL", "X8Bat|Input Level"),
-    ("AUTO_LEVEL", "X8Bat|Auto Level"),
-];
+const INPUT_FIELDS: [(&str, &str); 4] = bat_app::player::XRI_GUANO_FIELDS;
 
 /// Millionths of a degree as decimal degrees, with integer arithmetic: `-36.123456`.
 pub struct Degrees(pub i32);
@@ -141,10 +204,37 @@ pub fn write_chunk(header: &Header, recorder: &Recorder, out: &mut [u8]) -> Opti
         chunk.field("X8Bat|Pauses", count).field("X8Bat|Paused", format_args!("{}.{:03}", ms / 1000, ms % 1000));
     }
     // The inputs' settings, as they were when the file closed. A MIX file's XRI text has none.
+    let mut source = None;
     for part in recorder.xri.unwrap_or_default().split(|&b| b == b';' || b == 0) {
         if let Some((field, value)) = input_field(part) {
             chunk.field(field, value);
+            if field == INPUT_FIELDS[0].1 {
+                source = Some(value);
+            }
         }
+    }
+    // What the XRI text leaves out, each only when it is on. Phantom power and mic trim go in a
+    // track's file. MS DECODE changes only the stereo mix, so it goes in the MIX file.
+    match (recorder.inputs, source) {
+        (Some(inputs), Some(source)) => {
+            let phantom = Phantom(source.as_bytes(), &inputs);
+            let (mut any_on, mut mics) = (false, false);
+            phantom.tracks(&mut |track, on| {
+                any_on |= on;
+                mics |= inputs.track_sources[usize::from(track)] == 1;
+            });
+            if any_on {
+                chunk.field("X8Bat|Phantom", phantom);
+            }
+            let [left, right] = inputs.mic_trim;
+            if mics && inputs.built_in_mics && (left, right) != (3, 3) {
+                chunk.field("X8Bat|Mic Trim", format_args!("L:{} dB,R:{} dB", Trim(left), Trim(right)));
+            }
+        }
+        (Some(Inputs { ms_decode: pair @ 1..=3, .. }), None) => {
+            chunk.field("X8Bat|MS Decode", ["1-2", "3-4", "5-6"][usize::from(pair) - 1]);
+        }
+        _ => {}
     }
     chunk.finish()
 }
@@ -164,6 +254,7 @@ mod tests {
         location_e6: None,
         pauses: None,
         xri: None,
+        inputs: None,
     };
 
     /// A header as the X8 writes one, 5548 bytes before the audio.
@@ -255,6 +346,58 @@ INPUT GAIN=3:HIGH,4:HIGH;LEVEL=3:55,4:55;AUTO_LEVEL=3:OFF,4:OFF;,";
         assert!(!text(&header(192_000 * 8, 8, b"2026-11-06", b"19:08:08"), &mix).contains("X8Bat|"));
     }
 
+    /// MANUAL's default sources, with everything else off.
+    const INPUTS: Inputs = Inputs {
+        track_sources: [1, 1, 2, 2, 3, 3],
+        phantom: [0; 4],
+        phantom_24v: false,
+        mic_trim: [3, 3],
+        built_in_mics: true,
+        ms_decode: 0,
+    };
+
+    fn extra(xri: &[u8], inputs: Inputs) -> String {
+        let recorder = Recorder { xri: Some(xri), inputs: Some(inputs), ..RECORDER };
+        let t = text(&header(192_000 * 8, 8, b"2026-11-06", b"19:08:08"), &recorder);
+        t.lines().filter(|l| ["X8Bat|Ph", "X8Bat|Mi", "X8Bat|MS"].iter().any(|k| l.starts_with(k))).collect()
+    }
+
+    #[test]
+    fn phantom_power_is_listed_by_track_when_any_is_on() {
+        assert_eq!(extra(XRI, INPUTS), "");
+        assert_eq!(extra(XRI, Inputs { phantom: [1, 0, 0, 1], ..INPUTS }), "X8Bat|Phantom: 3:48V,4:OFF");
+        let both = Inputs { phantom: [1, 1, 0, 0], phantom_24v: true, ..INPUTS };
+        assert_eq!(extra(XRI, both), "X8Bat|Phantom: 3:24V,4:24V");
+        // Tracks 3 and 4 recording inputs 5 and 6, and a mono file of track 6.
+        let swapped = Inputs { track_sources: [1, 1, 3, 3, 2, 2], phantom: [0, 0, 0, 1], ..INPUTS };
+        assert_eq!(extra(XRI, swapped), "X8Bat|Phantom: 3:OFF,4:48V");
+        let mono = b"T=XRI 0050;XRI VER=0002;SOURCE=6:EXT MIC;INPUT GAIN=6:HIGH;LEVEL=6:41;AUTO_LEVEL=6:OFF;,";
+        assert_eq!(extra(mono, Inputs { phantom: [0, 0, 0, 1], ..INPUTS }), "X8Bat|Phantom: 6:48V");
+        // The built-in mics have no phantom power, whatever inputs 3 and 4 are set to.
+        let mics = b"T=XRI 0050;SOURCE=1:INT MIC,2:INT MIC;INPUT GAIN=1:LOW,2:LOW;LEVEL=1:36,2:36;,";
+        assert_eq!(extra(mics, Inputs { phantom: [1; 4], ..INPUTS }), "");
+    }
+
+    #[test]
+    fn mic_trim_is_listed_for_the_built_in_mics_when_it_is_not_0() {
+        let mics = b"T=XRI 0050;SOURCE=1:INT MIC,2:INT MIC;INPUT GAIN=1:LOW,2:LOW;LEVEL=1:36,2:36;,";
+        let trimmed = Inputs { mic_trim: [1, 6], ..INPUTS };
+        assert_eq!(extra(mics, trimmed), "X8Bat|Mic Trim: L:-2 dB,R:3 dB");
+        assert_eq!(extra(mics, INPUTS), "");
+        // Not for other inputs' files, nor with mics plugged into the EXT MIC jack.
+        assert_eq!(extra(XRI, trimmed), "");
+        let plugged = b"T=XRI 0050;SOURCE=1:PLUG IN,2:PLUG IN;,";
+        assert_eq!(extra(plugged, Inputs { built_in_mics: false, ..trimmed }), "");
+    }
+
+    #[test]
+    fn ms_decode_is_listed_in_the_mix_file() {
+        let decoding = Inputs { ms_decode: 2, ..INPUTS };
+        assert_eq!(extra(XRI_MIX, decoding), "X8Bat|MS Decode: 3-4");
+        assert_eq!(extra(XRI_MIX, INPUTS), "");
+        assert_eq!(extra(XRI, decoding), "");
+    }
+
     /// A whole header as the X8 lays it out, read the way the patch reads it: the text is found
     /// at its fixed place, and the zero bytes after it add nothing.
     #[test]
@@ -285,6 +428,7 @@ INPUT GAIN=5:HIGH,6:HIGH;LEVEL=5:70,6:70;AUTO_LEVEL=5:OFF,6:OFF;,";
             location_e6: Some((-36_123_456, -146_000_007)),
             pauses: Some((u32::MAX, u32::MAX)),
             xri: Some(xri),
+            inputs: Some(Inputs { phantom: [1; 4], mic_trim: [0, 0], ..INPUTS }),
             ..RECORDER
         };
         let mut out = [0u8; 0x400];
@@ -327,6 +471,7 @@ INPUT GAIN=5:HIGH,6:HIGH;LEVEL=5:70,6:70;AUTO_LEVEL=5:OFF,6:OFF;,";
             location_e6: None,
             pauses: None,
             xri: None,
+            inputs: None,
         };
         let t = text(&header(192_000 * 8, 8, b"2026-11-06", b"19:08:08"), &recorder);
         assert!(t.contains("Firmware Version: V2.03 with bat patch\n"));
@@ -364,6 +509,7 @@ INPUT GAIN=5:HIGH,6:HIGH;LEVEL=5:70,6:70;AUTO_LEVEL=5:OFF,6:OFF;,";
             location_e6: None,
             pauses: None,
             xri: xri_in_header(&head[..n]),
+            inputs: None,
         };
         let mut out = [0u8; 0x400];
         let added = write_chunk(&header, &recorder, &mut out).unwrap();

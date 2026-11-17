@@ -2364,7 +2364,45 @@ B241 or an earlier build. All the checks in `tools/x8patch.py` pass on this file
 1. **Start and stop.** With Phone remote on and the phone page reloaded, do `Start recording` and `Stop recording` work as before?
 2. **Old phone page.** If a phone still has the old page cached, its commands should do nothing at all. Reload the page.
 
-## Step 48 test file: each input's settings in the GUANO metadata (built 2026-11-17, not yet installed)
+## Step 49 test file: phantom power, mic trim and MS decode in the GUANO metadata (built 2026-11-17, not yet installed)
+
+`work/patch55/#PortaX8_0280.203` (B280, SHA-256 `120058f2…6fa0ef6328`). B279 (Step 48) with three more GUANO fields
+and a shorter file information view; Step 47's checks still apply, and this file replaces B278 and B279. All the
+checks in `tools/x8patch.py` pass, and two builds give the same file. Nothing in this step has run on a unit.
+
+**What changes.** A take from BAT DETECTOR gets these fields after Step 48's four, each only when the setting is on:
+
+| Field | Example | Written in | When |
+|---|---|---|---|
+| `X8Bat|Phantom` | `3:48V,4:OFF` | A track's file | Phantom power is on for an input the file records. One item for each track of the file; `24V` when PHANTOM VOLTAGE is 24 V |
+| `X8Bat|Mic Trim` | `L:-2 dB,R:0 dB` | A track's file | The file records the built-in mics, and MIC TRIM is not 0 dB for both |
+| `X8Bat|MS Decode` | `3-4` | The MIX file | MS DECODE is set to that pair of inputs |
+
+These three are read from the X8's memory as the file closes. Step 48's four are copied from the file's own header, so
+only these three depend on addresses that no test on a computer can check. How each was found is in
+[Phantom power, mic trim and MS decode](#phantom-power-mic-trim-and-ms-decode-2026-11-17).
+
+**BAT PLAYBACK's file information** leaves out a GUANO field that repeats a value shown under XRI: `X8Bat|Input
+Source`, `X8Bat|Input Gain`, `X8Bat|Input Level` and `X8Bat|Auto Level`, when the value is the same. A value that
+differs is still shown.
+
+**Memory.** Patch region free: 6,376 bytes (1,096 fewer than B278, 248 fewer than B279). The three fields and the
+shorter view took 3,072 bytes; `ChunkWriter::field` now keeps one copy of its code for every type of value, which gave
+2,824 back. No new stock hook site (header version 23).
+
+**What to check.** After Step 48's checks:
+
+1. **Phantom power.** In MANUAL turn phantom power on for input 3 only, then record from BAT DETECTOR. Does the
+   `_3-4.wav` file have `X8Bat|Phantom: 3:48V,4:OFF`? With phantom power off on both, is the field absent? With PHANTOM
+   VOLTAGE at 24 V, does it say `24V`?
+2. **Mic trim.** Set MIC TRIM to MIC L -2 dB and MIC R 1 dB, and record the built-in mics. Does the `_1-2.wav` file
+   have `X8Bat|Mic Trim: L:-2 dB,R:1 dB`? Is the field absent at 0 dB and 0 dB, and with a mic in the EXT MIC jack?
+3. **MS decode.** With a MIX file being written and MS DECODE set to 3-4, does the `_MIX.wav` file have `X8Bat|MS
+   Decode: 3-4`, and do the track files have no such field?
+4. **File information.** Open a B280 take in BAT PLAYBACK's file information. Are source, gain, level and auto level
+   listed once, under XRI, with the other GUANO fields under GUANO?
+
+## Step 48 test file: each input's settings in the GUANO metadata (built 2026-11-17, never installed: superseded by B280)
 
 `work/patch54/#PortaX8_0279.203` (B279, SHA-256 `788059fd…a06588b9d7`). B278 (Step 47) with four more GUANO fields;
 Step 47's checks still apply, and this file replaces it. All the checks in `tools/x8patch.py` pass, and two builds
@@ -3720,9 +3758,44 @@ Nothing in the file is an input's source, gain or phantom power, and the mixer s
 what is heard, not a track's own file. So GUANO takes nothing from it. The patch could not read the file in any case:
 it is written after `guano_hook` runs.
 
-**Not in the XRI text.** Phantom power (settings + 0x254 to + 0x257, and the voltage at settings + 0x1DD), low cut, the
-limiter and the other items of an input's settings screen. Adding phantom power means reading the settings in RAM and
-working out which input a track hears from its source byte. The other items' places in the settings were not found.
+**Not in the XRI text.** Phantom power, mic trim and MS decode, which B280 reads from memory (the next section). Low
+cut, EQ and reverb are not written anywhere: the X8 does not offer them at 192 kHz.
+
+### Phantom power, mic trim and MS decode (2026-11-17)
+
+Read in V2.03 with the `work/ghidra-rec` and `work/ghidra-audio` projects. Built as
+[Step 49](#step-49-test-file-phantom-power-mic-trim-and-ms-decode-in-the-guano-metadata-built-2026-11-17-not-yet-installed).
+`guano_hook` reads the bytes below into `take_guano::Inputs` as a file closes, and `write_chunk` decides what to write.
+The host tests cover `write_chunk`; the addresses are checked only by Step 49's list.
+
+| Setting | Address | Values | Read from |
+|---|---|---|---|
+| A track's pair of inputs | settings + 0x30 + track × 0x20 (0x81E8C8AC) | 1 INPUT 1-2, 2 INPUT 3-4, 3 INPUT 5-6, 4 EXT IN, 5 USB | `FUN_80df6ba0`, and already used by the listener |
+| Phantom power, inputs 3 to 6 | settings + 0x254 to + 0x257 (0x81E8CAD0) | 0 off | `FUN_80dc57fc` (`work/notes/phantom.md`) |
+| PHANTOM VOLTAGE | settings + 0x1DD (0x81E8CA59) | 0 is 48 V, 1 is 24 V | message 0xF10 |
+| MIC TRIM, MIC L then MIC R | settings + 0x263 and + 0x264 (0x81E8CADF) | 0 to 6, default 3 | messages 0xF12 and 0xF13, range table entries 5 and 6 at 0x81969224 |
+| Inputs 1 and 2 are the built-in mics | system state + 0x947 (0x81969DDF) | 1 built-in, 0 or 2 with a plug in the EXT MIC jack | `FUN_80da6e28`, `FUN_80da5924` |
+| MS DECODE | DSP state + 0x61C (0x0002A2C8) | 0 off, 1 to 3 the pair | `FUN_00016c70` |
+
+**Phantom power.** A track records the first input of its pair if its number is odd, the second if even, so track 4
+with pair 3 records input 6. `X8Bat|Phantom` lists the tracks in the XRI text's `SOURCE` value, and for each one the
+phantom power of the input worked out this way. The number before each `:` is the track, as in Step 48's fields.
+
+**Mic trim.** `FUN_80da5924` sets each input's level. For a track on INPUT 1-2, while the inputs are the built-in mics,
+it adds an entry of the table at 0x80DA5B38 to the input's LEVEL: -6, -4, -2, 0, 2, 4, 6 for settings 0 to 6. LEVEL
+counts half decibels, so the setting less 3 is the trim in dB, which matches the manual's -3 dB to 3 dB. That + 0x263
+is MIC L and + 0x264 is MIC R follows from their order (message 0xF12 before 0xF13, and the track whose block has 1 at
++ 0xB before the one with 2); it was not checked against the screen.
+
+**MS decode changes the mix, not a track's file.** `FUN_00016df2` sets a track's two gains into the stereo mix (DSP
+state + 0x2C0 and + 0x2C4 + track × 0x1C). With MS DECODE on for a pair, the pair's first track goes to both sides and
+its second track to the left and, inverted, to the right. Nothing in it touches the samples a track's own file gets.
+So the field goes in the MIX file, which is the file whose XRI text has no `SOURCE`. `FUN_00016c70` allows it only in
+apps 2 and 9; the bat tiles run as MANUAL, app 2.
+
+**Kept small.** The first version of these fields took 4.9 KB of the patch region, mostly from splitting and searching
+text with iterators. `Phantom::tracks` is one loop over bytes, and `ChunkWriter::field` passes every value to one
+out-of-line `line` function instead of being compiled again for each type of value.
 
 ## Setting the clock, locations and pauses (2026-11-08)
 

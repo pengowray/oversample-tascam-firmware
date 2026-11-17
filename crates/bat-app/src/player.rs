@@ -782,6 +782,15 @@ pub fn xri_fields(text: &[u8]) -> impl Iterator<Item = (&str, &str)> {
     })
 }
 
+/// The XRI keys that describe a file's inputs, and the GUANO field the X8's bat firmware copies
+/// each one's value to, unchanged.
+pub const XRI_GUANO_FIELDS: [(&str, &str); 4] = [
+    ("SOURCE", "X8Bat|Input Source"),
+    ("INPUT GAIN", "X8Bat|Input Gain"),
+    ("LEVEL", "X8Bat|Input Level"),
+    ("AUTO_LEVEL", "X8Bat|Auto Level"),
+];
+
 fn default_root() -> [u8; TOP_NAME_BYTES] {
     let mut root = [0; TOP_NAME_BYTES];
     root[..DEFAULT_FOLDER.len()].copy_from_slice(DEFAULT_FOLDER.as_bytes());

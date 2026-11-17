@@ -2,7 +2,7 @@ use core::ptr;
 use core::slice;
 use core::sync::atomic::Ordering::Relaxed;
 
-use x8_patch::take_guano::{self, Recorder};
+use x8_patch::take_guano::{self, Inputs, Recorder};
 
 use super::state::TAKE_GUANO;
 use super::{Handler, patch_build, read_byte, stock, system_mode};
@@ -82,6 +82,17 @@ unsafe fn add_guano(file: usize) -> Option<()> {
         location_e6: super::location::for_take(),
         pauses: super::pauses::for_take(),
         xri: take_guano::xri_in_header(header_bytes),
+        // SAFETY: bytes of the settings record and of the system and DSP state (see `stock`).
+        inputs: Some(Inputs {
+            track_sources: core::array::from_fn(|track| {
+                read_byte(unsafe { stock::TRACK_SOURCES.add(track * stock::TRACK_SOURCE_STEP) })
+            }),
+            phantom: unsafe { ptr::read_volatile(stock::PHANTOM) },
+            phantom_24v: read_byte(stock::PHANTOM_VOLTAGE) == 1,
+            mic_trim: unsafe { ptr::read_volatile(stock::MIC_TRIM) },
+            built_in_mics: read_byte(stock::INPUTS_1_2_KIND) == 1,
+            ms_decode: read_byte(stock::MS_DECODE),
+        }),
     };
     // SAFETY: as above; CHUNK_AT + CHUNK_BYTES is within the buffer and after the header.
     let out = unsafe { slice::from_raw_parts_mut(stock::HEADER_BUFFER.add(CHUNK_AT), CHUNK_BYTES) };

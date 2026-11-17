@@ -39,7 +39,7 @@ update can leave the unit needing repair.
   marked as they are detected.
 - **Auto volume** for the headphones, with a Bats only choice that is silent between calls.
 - **GUANO metadata** in each WAV file: start time, length, recorder, each input's source, gain
-  and level, and the phone's location when known.
+  and level, phantom power and mic trim when they are on, and the phone's location when known.
 - **Phone remote** (experimental): chimes played by a phone set the X8's clock, start and stop
   recording, and change the listening mode. With `Phone code` on, the X8 shows a 6-digit code to type into
   the phone page, and acts only on commands made with it. The phone page is

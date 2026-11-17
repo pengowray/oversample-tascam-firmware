@@ -164,6 +164,18 @@ pub const RESTART_INPUT_TIMERS: usize = 0x80d7_058f;
 /// bytes and to the open app's stored copy (Thumb address). Opening an app calls it after
 /// marking the app's stored inputs with phantom power as pending, and then asks about them.
 pub const PHANTOM_ALL_OFF: usize = 0x80dc_565d;
+/// Settings + 0x254: phantom power for inputs 3 to 6, one byte each, 0 off.
+pub const PHANTOM: *const [u8; 4] = 0x81e8_cad0 as *const [u8; 4];
+/// Settings + 0x1DD, PHANTOM VOLTAGE: 0 is 48 V, 1 is 24 V.
+pub const PHANTOM_VOLTAGE: *const u8 = 0x81e8_ca59 as *const u8;
+/// Settings + 0x263, MIC TRIM for MIC L then MIC R: 0 to 6 for -3 to 3 dB. `FUN_80da5924` adds
+/// it to the level of inputs 1 and 2 while they are the built-in mics.
+pub const MIC_TRIM: *const [u8; 2] = 0x81e8_cadf as *const [u8; 2];
+/// System state + 0x947: 1 while inputs 1 and 2 are the built-in mics, 0 or 2 with a plug in the
+/// EXT MIC jack.
+pub const INPUTS_1_2_KIND: *const u8 = 0x8196_9ddf as *const u8;
+/// DSP state + 0x61C, MS DECODE: 0 off, or the pair of inputs decoded in the stereo mix (1 to 3).
+pub const MS_DECODE: *const u8 = 0x0002_a2c8 as *const u8;
 /// MANUAL's stored phantom power bytes for inputs 3 to 6 (settings + 0x33C + 0xCE).
 pub const MANUAL_PHANTOM: *mut u8 = 0x81e8_cc86 as *mut u8;
 /// The phantom power pending flags for inputs 3 to 6, one byte each. Any set after

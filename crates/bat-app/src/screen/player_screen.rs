@@ -13,7 +13,8 @@ use crate::BatApp;
 use crate::layout::*;
 use crate::palette::*;
 use crate::player::{
-    DEFAULT_FOLDER, DetailsState, Encoding, FileEntry, FileInfo, NotPlayable, Player, Scan, Transport, xri_fields,
+    DEFAULT_FOLDER, DetailsState, Encoding, FileEntry, FileInfo, NotPlayable, Player, Scan, Transport,
+    XRI_GUANO_FIELDS, xri_fields,
 };
 
 pub(crate) const TITLE: &str = "BAT PLAYBACK";
@@ -458,6 +459,15 @@ fn xri_label(key: &str) -> &str {
     }
 }
 
+/// Whether the GUANO field `key` is one the bat firmware copies from the XRI text, and `xri` has
+/// the same value for it. Compared as bytes, in a function of its own: both keep the X8 patch small.
+#[inline(never)]
+fn repeats_xri(xri: &[u8], key: &[u8], value: &[u8]) -> bool {
+    let Some((xri_key, _)) = XRI_GUANO_FIELDS.iter().find(|(_, field)| field.as_bytes() == key) else { return false };
+    xri.split(|&b| b == b';')
+        .any(|part| part.strip_prefix(xri_key.as_bytes()).and_then(|rest| rest.strip_prefix(b"=")) == Some(value))
+}
+
 /// The rows of the file information view, in order.
 fn details_rows(app: &BatApp, out: &mut dyn FnMut(Row<'_>)) {
     let player = app.player();
@@ -532,6 +542,10 @@ fn details_rows(app: &BatApp, out: &mut dyn FnMut(Row<'_>)) {
     for (key, value) in player.guano().into_iter().flat_map(guano::fields) {
         // The format's version says nothing about the recording.
         if key == "GUANO|Version" {
+            continue;
+        }
+        // A copy of a value the XRI section above already shows.
+        if repeats_xri(player.xri().unwrap_or_default(), key.as_bytes(), value.as_bytes()) {
             continue;
         }
         any = true;

@@ -42,8 +42,16 @@ impl<'a> ChunkWriter<'a> {
     /// Adds a `key: value` line. A field whose key has a colon or a line break, or whose value has
     /// a line break, is left out, because GUANO has no way to escape them.
     pub fn field(&mut self, key: &str, value: impl fmt::Display) -> &mut Self {
+        self.line(key, &value);
+        self
+    }
+
+    /// [`field`](Self::field)'s work, in one copy for every type of value: a firmware patch that
+    /// writes a dozen fields has little room for a copy each.
+    #[inline(never)]
+    fn line(&mut self, key: &str, value: &dyn fmt::Display) {
         if self.full {
-            return self;
+            return;
         }
         let line_start = self.len;
         let written = writeln!(Tail { out: self.out, len: &mut self.len }, "{key}: {value}").is_ok();
@@ -55,7 +63,6 @@ impl<'a> ChunkWriter<'a> {
         } else if key.contains(':') || breaks(key.as_bytes()) || breaks(&self.out[value_start..self.len - 1]) {
             self.len = line_start;
         }
-        self
     }
 
     /// Finishes the chunk. Returns how many bytes of the buffer to write at the offset given to
