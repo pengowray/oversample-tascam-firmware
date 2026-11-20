@@ -288,6 +288,8 @@ pub enum Setting {
     /// Whether the headphones are silent while a take is being recorded: see
     /// [`BatApp::mute_while_recording`].
     MuteWhileRecording,
+    /// Whether the bat screens may play through the host's speaker: see [`BatApp::speaker_switch`].
+    Speaker,
     /// Whether the host runs from its cells when a USB supply is weak, instead of asking about
     /// the supply: see [`BatApp::set_power_option_available`].
     CellsOnWeakUsb,
@@ -297,7 +299,7 @@ pub enum Setting {
 }
 
 impl Setting {
-    pub const ALL: [Setting; 15] = [
+    pub const ALL: [Setting; 16] = [
         Setting::LowestBatCall,
         Setting::ListenTo,
         Setting::AutoLevel,
@@ -306,6 +308,7 @@ impl Setting {
         Setting::MixFile,
         Setting::PauseWithRec,
         Setting::MuteWhileRecording,
+        Setting::Speaker,
         Setting::CellsOnWeakUsb,
         Setting::PhoneCode,
         Setting::ClockFromRemote,
@@ -319,9 +322,11 @@ impl Setting {
 
     pub fn page(self) -> SettingsPage {
         match self {
-            Setting::MixFile | Setting::PauseWithRec | Setting::MuteWhileRecording | Setting::CellsOnWeakUsb => {
-                SettingsPage::Record
-            }
+            Setting::MixFile
+            | Setting::PauseWithRec
+            | Setting::MuteWhileRecording
+            | Setting::Speaker
+            | Setting::CellsOnWeakUsb => SettingsPage::Record,
             Setting::ClockFromRemote | Setting::PhoneCode => SettingsPage::Phone,
             Setting::DebugInfo | Setting::DrawOnInput => SettingsPage::Tests,
             _ => SettingsPage::Listen,
@@ -691,6 +696,10 @@ pub struct BatApp<'a> {
     draw_on_input: bool,
     /// See [`set_speaker`](Self::set_speaker).
     speaker: bool,
+    /// See [`set_host_speaker`](Self::set_host_speaker).
+    host_speaker: Option<bool>,
+    /// See [`speaker_switch`](Self::speaker_switch).
+    speaker_switch: bool,
     /// The output's gain for Mute while recording and for 1:1 on a speaker: 1 heard, 0 silent,
     /// between while fading.
     listen_gain: f32,
@@ -872,6 +881,8 @@ impl<'a> BatApp<'a> {
             field!((*this).draw_option_available).write(false);
             field!((*this).draw_on_input).write(false);
             field!((*this).speaker).write(false);
+            field!((*this).host_speaker).write(None);
+            field!((*this).speaker_switch).write(true);
             field!((*this).listen_gain).write(1.0);
             field!((*this).modes_skipped).write(false);
             field!((*this).pause_refused_until).write(0);
@@ -1316,6 +1327,8 @@ impl<'a> BatApp<'a> {
             Setting::MuteWhileRecording => {}
             Setting::CellsOnWeakUsb if steps != 0 => self.cells_on_weak_usb = steps > 0,
             Setting::CellsOnWeakUsb => {}
+            Setting::Speaker if steps != 0 => self.speaker_switch = steps > 0,
+            Setting::Speaker => {}
             Setting::DrawOnInput if steps != 0 => self.draw_on_input = steps > 0,
             Setting::DrawOnInput => {}
             // Turning the wheel up switches on, down switches off.
@@ -1608,8 +1621,8 @@ impl<'a> BatApp<'a> {
         self.pause_with_rec
     }
 
-    /// Whether the headphones are silent while a take is being recorded (not in record standby
-    /// or while paused), so the sound from headphones or a speaker is not recorded. The
+    /// Whether the headphones and the speaker are silent while a take is being recorded (not in
+    /// record standby or while paused), so their sound is not recorded. The
     /// listening mode is skipped then, which saves its CPU. Off by default. The CPU test plays
     /// every mode whatever this says.
     pub fn mute_while_recording(&self) -> bool {
@@ -1620,14 +1633,44 @@ impl<'a> BatApp<'a> {
         self.mute_while_recording = on;
     }
 
-    /// The host is about to play the output through a speaker near the microphones (the X8's
-    /// built-in speaker), or has stopped. The host turns the speaker on only after saying so here.
+    /// The host would play the output through a speaker near the microphones now (the X8's
+    /// built-in speaker, with its SPEAKER setting on and no headphones in), or would not. The host
+    /// turns the speaker on only after saying so here, and only while [`speaker_playing`]
+    /// (Self::speaker_playing) is true.
     pub fn set_speaker(&mut self, on: bool) {
         self.speaker = on;
     }
 
+    /// Whether the output would go to the speaker: the host would play it and the switch is on.
     pub fn speaker(&self) -> bool {
-        self.speaker
+        self.speaker && self.speaker_switch
+    }
+
+    /// The host has a speaker with a setting of its own, on or off (the X8's GENERAL SETTINGS >
+    /// SPEAKER): offer the Speaker switch, whose line says when the host's setting is off. `None`
+    /// on a host without one.
+    pub fn set_host_speaker(&mut self, setting: Option<bool>) {
+        self.host_speaker = setting;
+    }
+
+    pub fn host_speaker(&self) -> Option<bool> {
+        self.host_speaker
+    }
+
+    /// Whether the bat screens may use the host's speaker. On by default, so the host's own
+    /// setting decides; off keeps the speaker silent on the bat screens only.
+    pub fn speaker_switch(&self) -> bool {
+        self.speaker_switch
+    }
+
+    pub fn set_speaker_switch(&mut self, on: bool) {
+        self.speaker_switch = on;
+    }
+
+    /// Whether sound is going to the speaker now: the host switches its speaker on while this is
+    /// true, and the recording bar says SPEAKER.
+    pub fn speaker_playing(&self) -> bool {
+        self.speaker() && !self.speaker_muted() && !self.muted_for_take()
     }
 
     /// Whether the output is silent because the mode would play the speaker's own sound, picked
@@ -1636,7 +1679,7 @@ impl<'a> BatApp<'a> {
     /// tone is heard at f again, with both inside the 15 kHz the low-pass filter lets through.
     /// FD, TE and PITCH only lower a sound. Files in BAT PLAYBACK play on the speaker in every mode.
     pub fn speaker_muted(&self) -> bool {
-        self.speaker
+        self.speaker()
             && self.input_kind == InputKind::Live
             && match self.mode {
                 Mode::Thru => true,
@@ -1789,6 +1832,7 @@ impl<'a> BatApp<'a> {
             Setting::PauseWithRec => self.pause_option_available,
             Setting::MuteWhileRecording => self.input_kind == InputKind::Live,
             Setting::CellsOnWeakUsb => self.power_option_available,
+            Setting::Speaker => self.host_speaker.is_some(),
             Setting::DrawOnInput => self.draw_option_available(),
             _ => true,
         }
@@ -2088,6 +2132,7 @@ impl<'a> BatApp<'a> {
                     Setting::PauseWithRec => self.pause_with_rec = !self.pause_with_rec,
                     Setting::MuteWhileRecording => self.mute_while_recording = !self.mute_while_recording,
                     Setting::CellsOnWeakUsb => self.cells_on_weak_usb = !self.cells_on_weak_usb,
+                    Setting::Speaker => self.speaker_switch = !self.speaker_switch,
                     Setting::DrawOnInput => self.draw_on_input = !self.draw_on_input,
                     _ => {}
                 }

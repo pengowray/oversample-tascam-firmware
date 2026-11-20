@@ -38,7 +38,8 @@
 //! page (`tools` with `PAGE=phone`). The code shown is 493 817.
 //! `MUTE=on` turns Mute while recording on, for the Record page and the main screen with
 //! `X8=recording`.
-//! `SPEAKER=on` says the host plays through its speaker, for the main screen's notice in 1:1.
+//! `SPEAKER=on` says the host plays through its speaker, for the main screen's notice in 1:1 and
+//! the Record page's switch; `SPEAKER=hostoff` and `SPEAKER=switchoff` show that switch's other lines.
 //! `REC_READY=off` shows MANUAL's MASTER with REC READY off, for the settings screen's MIX file row.
 //! `TAKE_MIX=on` or `TAKE_MIX=off` says whether the take being recorded has a MIX file, for the CPU
 //! test.
@@ -209,7 +210,13 @@ fn main() {
     app.set_guano(std::env::var("GUANO").as_deref() != Ok("off"));
     app.set_pause_option_available(debug && std::env::var("PLAYBACK").is_err());
     app.set_mute_while_recording(std::env::var("MUTE").as_deref() == Ok("on"));
-    app.set_speaker(std::env::var("SPEAKER").as_deref() == Ok("on"));
+    // SPEAKER=on: the host plays through its speaker. SPEAKER=hostoff: its own setting is off.
+    // SPEAKER=switchoff: the app's Speaker switch is off.
+    if let Ok(speaker) = std::env::var("SPEAKER") {
+        app.set_host_speaker(Some(speaker != "hostoff"));
+        app.set_speaker(speaker != "hostoff");
+        app.set_speaker_switch(speaker != "switchoff");
+    }
     app.set_manual_mix_file(std::env::var("REC_READY").as_deref() != Ok("off"));
     app.set_take_mix_file(match std::env::var("TAKE_MIX").as_deref() {
         Ok("on") => Some(true),

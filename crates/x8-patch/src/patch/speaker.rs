@@ -37,11 +37,10 @@ fn playing() -> bool {
 /// From the context running the app, each pass. The CPU test plays 1:1 from the inputs whatever
 /// the app's settings say, so the speaker is off for all of it.
 pub(super) fn update(app: &mut BatApp<'static>) {
-    let free = read_byte(stock::SPEAKER_SETTING) != 0
-        && read_byte(stock::HEADPHONES_PLUGGED) == 0
-        && !app.cpu_test_running();
-    app.set_speaker(free);
-    WANTED.store(free && !app.speaker_muted() && !app.muted_for_take(), Release);
+    let setting = read_byte(stock::SPEAKER_SETTING) != 0;
+    app.set_host_speaker(Some(setting));
+    app.set_speaker(setting && read_byte(stock::HEADPHONES_PLUGGED) == 0 && !app.cpu_test_running());
+    WANTED.store(app.speaker_playing(), Release);
 }
 
 /// Task 1, as the bat screen opens.

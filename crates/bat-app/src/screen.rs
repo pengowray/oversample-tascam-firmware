@@ -344,6 +344,8 @@ fn status_bar(app: &BatApp, fb: Fb) {
     }
     if app.muted_for_take() {
         text(fb, &BODY, pages::MUTED_LABEL, x + 8, baseline - 1, LEFT, TEXT);
+    } else if app.speaker_playing() {
+        text(fb, &BODY, pages::SPEAKER_LABEL, x + 8, baseline - 1, LEFT, TEXT);
     }
     let c = app.clock_s;
     text(

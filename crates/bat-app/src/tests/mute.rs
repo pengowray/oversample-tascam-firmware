@@ -149,3 +149,29 @@ fn het_and_comb_tuned_below_30_khz_are_silent_on_a_speaker() {
         assert!(!app.speaker_muted());
     }
 }
+
+#[test]
+fn the_speaker_switch_keeps_the_bat_screens_off_the_speaker() {
+    let mut storage = vec![0.0f32; 1024];
+    let mut app = BatApp::new(FS, &mut storage, buffers());
+    app.set_mode(Mode::Het);
+    app.set_het_lo(40_000.0);
+    app.set_host_speaker(Some(true));
+    app.set_speaker(true);
+    assert!(app.speaker_playing());
+    app.set_speaker_switch(false);
+    assert!(!app.speaker_playing());
+    // With the switch off the sound goes nowhere near the microphones, so 1:1 is not muted.
+    app.set_mode(Mode::Thru);
+    assert!(!app.speaker_muted());
+}
+
+#[test]
+fn the_speaker_is_not_playing_while_a_take_is_muted() {
+    let mut storage = vec![0.0f32; 1024];
+    let mut app = app_with_tone(&mut storage);
+    app.set_speaker(true);
+    assert!(app.speaker_playing());
+    app.set_recorder(Recorder::Recording, 0);
+    assert!(!app.speaker_playing());
+}

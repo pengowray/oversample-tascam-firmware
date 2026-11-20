@@ -2364,7 +2364,36 @@ B241 or an earlier build. All the checks in `tools/x8patch.py` pass on this file
 1. **Start and stop.** With Phone remote on and the phone page reloaded, do `Start recording` and `Stop recording` work as before?
 2. **Old phone page.** If a phone still has the old page cached, its commands should do nothing at all. Reload the page.
 
-## Step 50 test file: the built-in speaker on the bat screens (built 2026-11-20, not yet installed)
+## Step 51 test file: a Speaker switch, SPEAKER in the recording bar (built 2026-11-20, not yet installed)
+
+`work/patch57/#PortaX8_0282.203` (B282, SHA-256 `bb7ea1bb…0a985ec2`). B281 (Step 50) with three changes to the bat
+app; Step 50's checks still apply, and this file replaces B281. All the checks in `tools/x8patch.py` pass, and two
+builds give the same file. Nothing in this step has run on a unit.
+
+**What changes.**
+
+- **SETTINGS > Record > Speaker**, under `Mute while recording`. On by default, so GENERAL SETTINGS > SPEAKER still
+  decides. Off keeps the speaker silent on the bat screens while the X8's own setting stays on for the stock apps.
+  Its line says `Plays when no headphones are plugged in`, or `Silent: SPEAKER is off in GENERAL SETTINGS` while the
+  X8's setting is off, or `Sound plays through headphones only` when the switch is off. Like the other switches it
+  resets at power-off. It is on the Record page because the Listen page has no room. `Run from batteries on weak USB`
+  moved down one place.
+- **`SPEAKER` in the recording bar** of BAT DETECTOR, after the time, while sound is going to the speaker: in
+  standby and during a take, which records that sound. It is where `MUTED` appears.
+- **`Mute while recording`'s lines** now read `Sound keeps playing during a take` and `No sound plays during a take.
+  Uses less CPU`, because the switch silences the speaker as well as the headphones.
+
+**Memory.** Patch region free: 2,200 bytes (1,424 fewer than B281). No new stock hook site (header version 24).
+
+**What to check.** After Step 50's checks:
+
+1. **The switch.** With SPEAKER on in GENERAL SETTINGS and no headphones, turn Record > Speaker off. Does the speaker
+   stop on both bat screens, and does stock playback from BROWSE still use it? Does 1:1 show no notice then?
+2. **The line.** With SPEAKER off in GENERAL SETTINGS, does the switch's line say that it is off there?
+3. **The label.** Is `SPEAKER` in the recording bar exactly while the speaker plays: gone with headphones in, in 1:1,
+   below 30 kHz in HET, and with the switch off?
+
+## Step 50 test file: the built-in speaker on the bat screens (built 2026-11-20, never installed: superseded by B282)
 
 `work/patch56/#PortaX8_0281.203` (B281, SHA-256 `9d4bb4e0…b5d76375`). B280 (Step 49) with the X8's speaker playing the
 bat app's sound; Step 49's checks still apply, and this file replaces B280. All the checks in `tools/x8patch.py` pass,
