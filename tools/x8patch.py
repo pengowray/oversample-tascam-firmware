@@ -134,6 +134,13 @@ BUILDS = {
             # The device callback's bus reset case calls FUN_80df4a24(handle, speed), which sets
             # the UAC2 endpoints' packet sizes; its only caller.
             ("USB bus reset packet sizes", 0x80DC6F50, 0x80DF4A24, "usb_reset_hook"),
+            # The output switch FUN_80da0024 asks whether the monitor plays a file (the thunk to
+            # ITCM 0x161b4) before it lets the speaker play. Its tuner and metronome branch does
+            # not ask. The thunk's other callers are left alone.
+            ("speaker allowed", 0x80DA00C6, 0x80D9FEC8, "speaker_hook"),
+            # The output stage switch FUN_80d9ff82 reads the transport byte: with SPEAKER on and
+            # nothing plugged in, it turns the output stage off from record standby to a take's end.
+            ("output stage during a take", 0x80D9FF9A, 0x80D6C6B2, "output_power_hook"),
         ],
         "facts": [
             # The veneer FUN_80e06310 goes to ITCM 0x1e484, which returns 0x1e498,
@@ -188,12 +195,13 @@ HEADER_FIELDS = ["magic", "version", "key_hook", "rec_key_hook", "touch_hook", "
                  "badge2_hook", "badge3_hook", "icon2_hook", "icon3_hook", "icon_image2_hook", "icon_image3_hook",
                  "icon_height2_hook", "icon_height3_hook", "icon_width2_hook", "icon_width3_hook",
                  "power_off_save_hook", "open_take_hook", "file_mask_hook", "guano_hook", "usb_init_hook",
-                 "usb_alt_hook", "phantom_off_hook", "usb_reset_hook", "logo_lower",
+                 "usb_alt_hook", "phantom_off_hook", "usb_reset_hook", "speaker_hook", "output_power_hook",
+                 "logo_lower",
                  "logo_upper_y", "logo_lower_y", "build"]
-HEADER_FORMAT = "<4s40I"
+HEADER_FORMAT = "<4s42I"
 # The packer writes the update file's build number here, for the CPU test to show.
 BUILD_OFFSET = struct.calcsize(HEADER_FORMAT) - 4
-HEADER_VERSION = 23
+HEADER_VERSION = 24
 
 B_W, BL = 0x9000, 0xD000   # bits 15, 14 and 12 of the second halfword
 

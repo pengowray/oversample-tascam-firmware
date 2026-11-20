@@ -282,6 +282,7 @@ extern "C" fn dsp_task(_: isize) {
         run_clock(app);
         run_remote(app);
         super::cpu_log::take(app);
+        super::speaker::update(app);
         let start = BLOCKS.load(Relaxed);
         feed(app, u32::MAX, PASS_BLOCKS);
         let processed = BLOCKS.load(Relaxed);
@@ -338,6 +339,7 @@ pub(super) extern "C" fn tick_work() {
     run_clock(app);
     run_remote(app);
     super::cpu_log::take(app);
+    super::speaker::update(app);
     if PLAYBACK.load(Relaxed) {
         play(app, PASS_BLOCKS);
     } else {

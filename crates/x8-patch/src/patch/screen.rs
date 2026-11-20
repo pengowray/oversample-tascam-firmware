@@ -63,7 +63,7 @@ pub(super) fn follow_app() {
     let owner = SCREEN_APP.load(Relaxed);
     if owner != NO_APP && app != owner {
         if BAT_ACTIVE.load(Relaxed) {
-            leave_bat_screen();
+            close_bat_screen();
         }
         SCREEN_APP.store(NO_APP, Relaxed);
         POPUP_HIDDEN.store(false, Relaxed);
@@ -112,6 +112,7 @@ pub(super) extern "C" fn enter_work() {
         super::reader::start_reader();
     }
     SESSION.store(SESSION.load(Relaxed).wrapping_add(1), Release);
+    super::speaker::opening();
     SCREEN_APP.store(app_byte() as u32, Relaxed);
     MUTE_SEEN.store(false, Relaxed);
     // The audio hook leaves the output alone while the bat screen is closed. Empty the
@@ -146,6 +147,13 @@ pub(super) extern "C" fn enter_work() {
     BAT_ACTIVE.store(true, Release);
     // SAFETY: the display controller's next buffer register.
     unsafe { ptr::write_volatile(stock::LCDIF_NEXT_BUF, spare::DISPLAY) };
+}
+
+/// Task 1's way to close the bat screen: the speaker goes off first, because MANUAL's own
+/// monitoring is the output again as soon as the screen has closed.
+pub(super) fn close_bat_screen() {
+    super::speaker::close();
+    leave_bat_screen();
 }
 
 /// Give the display back to Qt and stop feeding the app. In BAT PLAYBACK, wait (briefly) for

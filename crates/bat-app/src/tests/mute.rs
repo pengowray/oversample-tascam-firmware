@@ -79,3 +79,52 @@ fn the_cpu_test_plays_every_mode_during_its_takes() {
     app.start_cpu_test();
     assert!(!app.muted_for_take());
 }
+
+/// An audible 2 kHz tone on both inputs, which 1:1 passes on as it is.
+fn play_audible(app: &mut BatApp, seconds: f32) -> Vec<f32> {
+    let n = (FS * seconds) as usize;
+    let input: Vec<f32> = (0..n).map(|i| 0.1 * (core::f32::consts::TAU * 2_000.0 * i as f32 / FS).sin()).collect();
+    let mut left = vec![0.0; n];
+    let mut right = vec![0.0; n];
+    for ((x, l), r) in input.chunks(1024).zip(left.chunks_mut(1024)).zip(right.chunks_mut(1024)) {
+        app.process(x, x, l, r);
+    }
+    left
+}
+
+#[test]
+fn one_to_one_is_silent_on_a_speaker_with_live_input() {
+    let mut storage = vec![0.0f32; 1024];
+    let mut app = BatApp::new(FS, &mut storage, buffers());
+    app.set_auto_volume(AutoVolume::Off);
+    app.set_mode(Mode::Thru);
+    let headphones = play_audible(&mut app, 0.2);
+    assert!(peak(&headphones[headphones.len() / 2..]) > 0.01, "1:1 is heard in headphones");
+
+    app.set_speaker(true);
+    assert!(app.speaker_muted());
+    let speaker = play_audible(&mut app, 0.2);
+    let fade = (FS * 0.02) as usize + 1024;
+    assert!(speaker[fade..].iter().all(|&v| v == 0.0), "1:1 is silent on the speaker");
+
+    // Another mode plays on the speaker, and 1:1 returns with headphones.
+    app.set_mode(Mode::Het);
+    assert!(!app.speaker_muted());
+    app.set_mode(Mode::Thru);
+    app.set_speaker(false);
+    let again = play_audible(&mut app, 0.2);
+    assert!(peak(&again[again.len() / 2..]) > 0.01);
+}
+
+#[test]
+fn a_file_plays_in_one_to_one_on_a_speaker() {
+    let mut storage = vec![0.0f32; 1024];
+    let mut app = BatApp::new(FS, &mut storage, buffers());
+    app.set_auto_volume(AutoVolume::Off);
+    app.set_input_kind(InputKind::Playback);
+    app.set_mode(Mode::Thru);
+    app.set_speaker(true);
+    assert!(!app.speaker_muted());
+    let out = play_audible(&mut app, 0.2);
+    assert!(peak(&out[out.len() / 2..]) > 0.01);
+}

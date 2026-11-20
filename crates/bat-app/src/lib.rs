@@ -686,7 +686,10 @@ pub struct BatApp<'a> {
     draw_option_available: bool,
     /// See [`draw_on_input`](Self::draw_on_input).
     draw_on_input: bool,
-    /// The headphones' gain for Mute while recording: 1 heard, 0 silent, between while fading.
+    /// See [`set_speaker`](Self::set_speaker).
+    speaker: bool,
+    /// The output's gain for Mute while recording and for 1:1 on a speaker: 1 heard, 0 silent,
+    /// between while fading.
     listen_gain: f32,
     /// The listening modes were skipped while muted, so they start clean when the sound returns.
     modes_skipped: bool,
@@ -865,6 +868,7 @@ impl<'a> BatApp<'a> {
             field!((*this).cells_on_weak_usb).write(true);
             field!((*this).draw_option_available).write(false);
             field!((*this).draw_on_input).write(false);
+            field!((*this).speaker).write(false);
             field!((*this).listen_gain).write(1.0);
             field!((*this).modes_skipped).write(false);
             field!((*this).pause_refused_until).write(0);
@@ -1611,6 +1615,23 @@ impl<'a> BatApp<'a> {
 
     pub fn set_mute_while_recording(&mut self, on: bool) {
         self.mute_while_recording = on;
+    }
+
+    /// The host is about to play the output through a speaker near the microphones (the X8's
+    /// built-in speaker), or has stopped. The host turns the speaker on only after saying so here.
+    pub fn set_speaker(&mut self, on: bool) {
+        self.speaker = on;
+    }
+
+    pub fn speaker(&self) -> bool {
+        self.speaker
+    }
+
+    /// Whether the output is silent because 1:1 would play the microphones' own sound back to them
+    /// through the speaker, which howls. Files in BAT PLAYBACK play in 1:1 on the speaker as in
+    /// any other mode.
+    pub fn speaker_muted(&self) -> bool {
+        self.speaker && self.mode == Mode::Thru && self.input_kind == InputKind::Live
     }
 
     /// The host can run from its cells when a USB supply is weak (the X8 patch, in place of the
@@ -2513,7 +2534,7 @@ impl<'a> BatApp<'a> {
     /// The headphone output for a chunk of the inputs, whose mono mix is in `mono`.
     fn make_output(&mut self, first: &[f32], second: &[f32], out_l: &mut [f32], out_r: &mut [f32]) {
         let len = first.len();
-        let muted = self.muted_for_take();
+        let muted = self.muted_for_take() || self.speaker_muted();
         if muted && self.listen_gain == 0.0 {
             // Silent for the take: no listening mode, time expansion or Auto volume runs. A phone
             // remote beep is used up silently, so it does not play late when the take ends.

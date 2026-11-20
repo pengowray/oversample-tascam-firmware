@@ -4,7 +4,7 @@ use core::sync::atomic::{Ordering::Acquire, Ordering::Relaxed, Ordering::Release
 use bat_app::{BatApp, Button};
 
 use super::audio::install_audio_hook;
-use super::screen::{draw_status_strip, enter_work, follow_app, leave_bat_screen, request_enter};
+use super::screen::{draw_status_strip, enter_work, close_bat_screen, follow_app, request_enter};
 use super::state::{
     ACTION_HOME, ACTION_MARK, ACTION_PLAY, ACTION_WHEEL, ACTIONS, ACTIONS_READ, ACTIONS_WRITE, AUDIO_INSTALLED,
     AUDIO_NOT_TRIED, AUDIO_STATE, BAT_ACTIVE, BLOCKS, CALLS, CALLS_AT_SECOND, CALLS_PER_S, DRAGGING, LAST_EVENT,
@@ -113,6 +113,7 @@ unsafe fn on_message(msg: usize, via: Via) {
     count_call();
     if AUDIO_STATE.load(Relaxed) == AUDIO_INSTALLED {
         follow_app();
+        super::speaker::follow();
     }
     // SAFETY: the message copy on task 1's stack, 0x14 bytes.
     unsafe { handle_message(msg, via) };
@@ -191,7 +192,7 @@ unsafe fn handle_message(msg: usize, via: Via) {
             } else {
                 // BAT DETECTOR: PLAY swaps between the bat screen and the
                 // app's own screen; the app's own playback is not used there.
-                if active { leave_bat_screen() } else { request_enter() }
+                if active { close_bat_screen() } else { request_enter() }
             }
         }
         (stock::KIND_BUTTON, stock::HOME) if active && PLAYBACK.load(Relaxed) && app_byte() != 0 => {
@@ -205,7 +206,7 @@ unsafe fn handle_message(msg: usize, via: Via) {
             // short press goes on (it stops a take or playback, as in the
             // stock apps) and holding HOME returns to the LAUNCHER.
             swallow_button();
-            leave_bat_screen();
+            close_bat_screen();
         }
         (stock::KIND_WHEEL, count) if active => {
             // SAFETY: the kind field of the message copy.

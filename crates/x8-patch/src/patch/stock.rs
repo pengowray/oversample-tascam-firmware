@@ -195,6 +195,21 @@ pub const STATE_POPUP: u8 = 6;
 /// 5 closing the file, 6 paused by an event, 7 leaving standby, 8
 /// self-timer.
 pub const TRANSPORT: *const u8 = 0x8196_a3e5 as *const u8;
+/// Settings + 0x1BB, GENERAL SETTINGS > SPEAKER: 0 off (the default), otherwise on.
+pub const SPEAKER_SETTING: *const u8 = 0x81e8_ca37 as *const u8;
+/// Non-zero while headphones are plugged in (`FUN_80daca38`).
+pub const HEADPHONES_PLUGGED: *const u8 = 0x81d6_59c0 as *const u8;
+/// `FUN_80da0024()`: switches the output between the headphones and the speaker (FPGA register 8
+/// masks 0x08, 0x20 and 0x80, register 10 mask 0x10, and the speaker's limiter). The speaker plays
+/// when SPEAKER is on, no headphones are in, and the getter below returns non-zero; in the tuner
+/// and metronome, without the getter (Thumb).
+pub const ROUTE_OUTPUT: usize = 0x80da_0025;
+/// The thunk to ITCM 0x161b4, which returns the DSP state's playback byte (+ 0x62d): 1 while the
+/// monitor plays a file (Thumb).
+pub const PLAYBACK_MONITORED: usize = 0x80d9_fec9;
+/// `FUN_80d9ff82()`: FPGA register 10 mask 0x01, the output stage, on when headphones or a line out
+/// plug are in, or SPEAKER is on and the transport byte is 0. Sleeps 200 ms (Thumb).
+pub const SET_OUTPUT_POWER: usize = 0x80d9_ff83;
 /// Frames in the current take, as `FUN_80dae75c` works it out: the frozen
 /// copy when the flag is set, otherwise offset + count - start.
 pub const TAKE_FROZEN_FLAG: *const u8 = 0x8191_3f70 as *const u8;

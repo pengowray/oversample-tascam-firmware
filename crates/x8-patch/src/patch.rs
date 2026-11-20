@@ -38,6 +38,8 @@ mod play_glyph;
 mod playback;
 /// Runs from the cells when a USB supply is weak, instead of POWER SAVE MODE.
 mod power;
+/// The built-in speaker on the bat screens: two hooks, and the stock functions that switch it.
+mod speaker;
 /// Qt for MCUs image descriptors.
 mod qt;
 /// BAT PLAYBACK's card reader task: lists the WAV files, reads their headers and the file playing.
@@ -69,6 +71,7 @@ use launcher::{
     icon_width_hook, phantom_off_hook, power_off_save_hook, slot_hook, text_hook, tile_hook, title_y_hook,
 };
 use mix_file::{file_mask_hook, open_take_hook};
+use speaker::{output_power_hook, speaker_hook};
 use usb::{usb_alt_hook, usb_init_hook, usb_reset_hook};
 
 type Handler = unsafe extern "C" fn(usize, usize, usize, usize) -> usize;
@@ -126,6 +129,10 @@ pub struct Header {
     phantom_off_hook: Handler,
     /// Replaces the device callback's call that sets the UAC2 packet sizes at bus reset.
     usb_reset_hook: Handler,
+    /// Replaces the output switch's read of the playback byte that lets the speaker play.
+    speaker_hook: Handler,
+    /// Replaces the output stage switch's read of the transport byte.
+    output_power_hook: Handler,
     /// The handle that the logo screen's lower image item gets, and the y positions of its upper and
     /// lower items. tools/x8patch.py reads the lower item's height from the image.
     logo_lower: &'static &'static qt::QtImage,
@@ -140,7 +147,7 @@ pub struct Header {
 #[unsafe(link_section = ".header")]
 pub static X8_PATCH_HEADER: Header = Header {
     magic: *b"BATX",
-    version: 23,
+    version: 24,
     key_hook,
     rec_key_hook,
     touch_hook,
@@ -166,6 +173,8 @@ pub static X8_PATCH_HEADER: Header = Header {
     usb_alt_hook,
     phantom_off_hook,
     usb_reset_hook,
+    speaker_hook,
+    output_power_hook,
     logo_lower: &logo::LOWER_HANDLE,
     logo_upper_y: logo_pixels::UPPER_Y,
     logo_lower_y: logo_pixels::LOWER_Y,

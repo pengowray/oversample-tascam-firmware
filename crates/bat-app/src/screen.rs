@@ -216,6 +216,8 @@ pub fn draw(app: &BatApp, fb: Fb) {
         pages::result_notice(app, fb, result);
     } else if let Some(silence) = app.mix_silence() {
         mix_silence_notice(fb, silence);
+    } else if app.speaker_muted() {
+        corner_notice_lines(fb, &pages::SPEAKER_MUTED_LINES);
     }
     snapshot(app, fb);
     if app.bufs.cpu_test.running {

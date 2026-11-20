@@ -2364,6 +2364,50 @@ B241 or an earlier build. All the checks in `tools/x8patch.py` pass on this file
 1. **Start and stop.** With Phone remote on and the phone page reloaded, do `Start recording` and `Stop recording` work as before?
 2. **Old phone page.** If a phone still has the old page cached, its commands should do nothing at all. Reload the page.
 
+## Step 50 test file: the built-in speaker on the bat screens (built 2026-11-20, not yet installed)
+
+`work/patch56/#PortaX8_0281.203` (B281, SHA-256 `d872b7bb…b24adebe`). B280 (Step 49) with the X8's speaker playing the
+bat app's sound; Step 49's checks still apply, and this file replaces B280. All the checks in `tools/x8patch.py` pass,
+and two builds give the same file. Nothing in this step has run on a unit.
+
+**What changes.** With GENERAL SETTINGS > SPEAKER on and no headphones plugged in, BAT DETECTOR and BAT PLAYBACK play
+through the built-in speaker. The stock setting is the only switch (OFF is the stock default), and plugging in
+headphones turns the speaker off, as in the stock apps. The headphone volume control sets the speaker's volume.
+
+- **1:1 with live input is silent on the speaker.** 1:1 would play the microphones' sound back to them. The app fades
+  its output out over 20 ms and the main screen says `Speaker is silent in 1:1.` / `Plug in headphones to listen.` in
+  the waterfall's corner. The other modes play: their output is at other frequencies than their input. BAT PLAYBACK
+  plays files in every mode, 1:1 included.
+- **Takes.** The speaker keeps playing in record standby and during a take, so its sound is recorded in the audible
+  range. `Mute while recording` turns it off for the take, with the headphones.
+- **CPU test.** The speaker is off for the whole test, because the test plays 1:1 from the inputs.
+- **MANUAL's own screen** (PLAY from BAT DETECTOR), and a pop-up over a bat screen: the speaker goes off, as in stock
+  MANUAL.
+
+How the stock firmware switches the speaker, and the two hooks, are in
+[The built-in speaker](#the-built-in-speaker-2026-11-20).
+
+**Memory.** Patch region free: 5,256 bytes (976 fewer than B280). Two new stock hook sites (header version 24).
+
+**What to check.** After Step 49's checks, with no headphones and no line out plugged in:
+
+1. **Speaker on.** With SPEAKER on, open BAT DETECTOR in HET with a bat call source (or jingling keys). Does the
+   speaker play? Is there any howl or whistle in HET, COMB, FD, TE and PITCH with the volume at its highest?
+2. **1:1.** Choose 1:1. Does the speaker go silent, with the notice in the waterfall's corner? Does it play again in
+   HET?
+3. **Headphones.** Plug headphones in. Does the speaker stop and do the headphones play, 1:1 included? Unplug them:
+   does the speaker return within about half a second?
+4. **SPEAKER off.** With SPEAKER off, is the speaker silent on both bat screens?
+5. **A take.** Press REC twice. Does the speaker keep playing in standby and during the take? With `Mute while
+   recording` on, is it silent during the take and back after it?
+6. **Leaving.** Press PLAY for MANUAL's own screen, and hold HOME for the LAUNCHER. Does the speaker go silent each
+   time, with no burst of the microphones' sound? Open a pop-up over the bat screen (MARK with no file): is there a
+   burst then?
+7. **BAT PLAYBACK.** Does a file play through the speaker in every mode, 1:1 included?
+8. **Stock playback.** In MANUAL, play a take from BROWSE. Does the speaker play it as before?
+9. **Loud low sound.** The stock speaker limiter does not see the bat app's sound (below). Is the speaker's sound
+   clean at the highest volume with Auto volume on?
+
 ## Step 49 test file: phantom power, mic trim and MS decode in the GUANO metadata (built 2026-11-17, not yet installed)
 
 `work/patch55/#PortaX8_0280.203` (B280, SHA-256 `18048b98…ea9c3cc32f`). B279 (Step 48) with three more GUANO fields
@@ -4336,6 +4380,50 @@ Changed in Oversample commit `b2bf6a1` (2026-11-11, not pushed). Before it, the 
   of 3- and 4-byte samples, since Oversample writes USB recordings at 16 bits.
 - Since then (a1cf9df and 4b71a26, 2026-11-11 and 12) it records USB audio at the device's own depth, up to 32-bit
   float. From `c302cd4` (2026-11-16) it takes 32-bit float stereo from B276 and later: see Step 45.
+
+## The built-in speaker (2026-11-20)
+
+Read from V2.03 in Ghidra; nothing here has been measured on a unit. Confidence: high for the logic, medium for what
+each FPGA bit does in the hardware.
+
+- **The setting.** GENERAL SETTINGS > SPEAKER is settings + 0x1BB (0x81E8CA37); the defaults function `FUN_80da4230`
+  writes 0 (off). Headphones plugged in is the byte at 0x81D659C0 (`FUN_80daca38`), line out at 0x81D659C7
+  (`FUN_80daca40`).
+- **The switch, `FUN_80da0024`.** Called when an app screen opens, on jack events and on transport changes. In apps
+  other than the tuner and metronome the speaker plays only when SPEAKER is on, no headphones are in, the DSP state's
+  playback byte (ITCM state + 0x62D, read through the thunk at 0x80D9FEC8) is 1 and the byte at + 0x631 is 0. So the
+  stock speaker plays files and never the inputs. The tuner and metronome (apps 7, 8, 10 and 11) skip the playback
+  test, so they play their live output through the speaker: the speaker is fed from the same DAC output as the
+  headphones.
+- **Speaker on:** FPGA register 8 mask 0x80 = 1, register 8 mask 0x08 = 0, the limiter entry at 0x819216E0 on
+  (`FUN_80dcfd14(1)`), then, if the flag at system block 0x81969498 + 0x942 says the amplifier is off: register 8
+  mask 0x20 = 1, 100 ms, register 10 mask 0x10 = 1. **Speaker off:** the limiter entry off, register 10 mask 0x10 = 0,
+  register 8 mask 0x20 = 0, register 8 mask 0x08 = 1. All through the FPGA write `(reg, mask, value)` at table
+  0x819212B4 + 0x20.
+- **The limiter.** 0x819215A0 holds nine 0x28-byte entries. `FUN_80dcfdf0` sets entries 0 to 7 per input (and linked
+  pairs), and the rate change `FUN_80dcf860` loads per-rate time constants into all nine. The ninth, at 0x819216E0,
+  is the speaker's, with a threshold word of 0x70000000. It runs in the stock DSP, before the patch's audio hook
+  replaces the output block, so it does not limit the bat app's sound. The app's own output ceiling applies.
+- **The output stage, `FUN_80d9ff82`.** Register 10 mask 0x01 is 1 when headphones or a line out plug are in, or when
+  SPEAKER is on and the transport byte (0x8196A3E5) is 0. With nothing plugged in, the stock firmware turns the output
+  stage off from record standby to the end of a take. The function then sleeps 200 ms.
+- **Power-off** (`FUN_80dca8b8`) clears register 8 masks 0x80 and 0x20 and register 10 masks 0x10 and 0x01.
+- Register 8 mask 0x04 (settings + 0x252, message 0xF30) is not part of this and is still unidentified.
+
+**The patch (B281, `patch/speaker.rs`).** Two `bl` sites are retargeted, so the stock functions do the switching:
+
+| Site | Stock call | The hook returns |
+|---|---|---|
+| 0x80DA00C6 in `FUN_80da0024` | The playback byte's getter | 1 while the bat app's sound is the output and the app has sound for the speaker; otherwise the stock byte |
+| 0x80D9FF9A in `FUN_80d9ff82` | The transport byte's getter | 0 in the same case, so the output stage stays on during a take; otherwise the stock byte |
+
+"The bat app's sound is the output" means a bat screen is open at 176.4 or 192 kHz, the only case in which the audio
+hook writes the output block. The DSP task tells the app about the speaker on each pass (`BatApp::set_speaker`: SPEAKER
+on, no headphones, no CPU test) and only then sets the flag the hooks read, so the app is already silent in 1:1 before
+the amplifier comes on. Task 1 runs `FUN_80da0024` (and `FUN_80d9ff82` during a take) from the key hooks whenever the
+hooks' answer has changed, about 15 times a second when idle, and before it closes the bat screen. When the DSP task
+closes the screen for a pop-up, the speaker goes off at task 1's next message, so MANUAL's monitoring can reach the
+speaker for a moment (Step 50 check 6).
 
 ## USB power and POWER SAVE MODE (2026-11-11)
 

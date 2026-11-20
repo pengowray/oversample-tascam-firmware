@@ -270,6 +270,12 @@ Drawing uses `embedded-graphics` and `u8g2-fonts`.
   `crates/x8-patch/src/patch/keys.rs`.
 - `touch_hook` replaces the touch poll's only call that passes a touch to Qt (`bl` at 0x80DF501A,
   task 9). While the bat screen is up, touches go to the bat app.
+- `speaker_hook` and `output_power_hook` (from B281) replace two reads in the stock functions that
+  switch the built-in speaker and the output stage (`bl` at 0x80DA00C6 and 0x80D9FF9A). While the bat
+  app's sound is the output, GENERAL SETTINGS > SPEAKER is on and no headphones are in, the stock
+  code turns the speaker on. Task 1 runs those stock functions from the key hooks when the answer
+  changes. The app is silent in 1:1 with live input while the speaker is in use. See "The built-in
+  speaker" in [HOMEBREW.md](HOMEBREW.md) and `crates/x8-patch/src/patch/speaker.rs`.
 - The phone remote presses buttons by posting the same message that a real button press posts, into
   task 1's mailbox (a message block from 0x80D70027, sent with `snd_mbx`).
 
