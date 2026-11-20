@@ -239,8 +239,10 @@ impl Gesture {
 /// The pages of the settings screen, in the order of their tabs.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum SettingsPage {
-    /// What changes the sound in the headphones, and the sounds to mark.
+    /// What the app listens to and counts as a bat call, and the sounds to mark.
     Listen,
+    /// What plays in the headphones and the speaker: Auto volume, Mute while recording, Speaker.
+    Output,
     /// What a take's files get.
     Record,
     /// The phone remote, the phone page's QR code and the chime test: everything the phone page
@@ -251,12 +253,13 @@ pub enum SettingsPage {
 }
 
 impl SettingsPage {
-    pub const ALL: [SettingsPage; 4] =
-        [SettingsPage::Listen, SettingsPage::Record, SettingsPage::Phone, SettingsPage::Tests];
+    pub const ALL: [SettingsPage; 5] =
+        [SettingsPage::Listen, SettingsPage::Output, SettingsPage::Record, SettingsPage::Phone, SettingsPage::Tests];
 
     pub fn label(self) -> &'static str {
         match self {
             SettingsPage::Listen => "Listen",
+            SettingsPage::Output => "Output",
             SettingsPage::Record => "Record",
             SettingsPage::Phone => "Phone",
             SettingsPage::Tests => "Tests",
@@ -326,11 +329,8 @@ impl Setting {
 
     pub fn page(self) -> SettingsPage {
         match self {
-            Setting::MixFile
-            | Setting::PauseWithRec
-            | Setting::MuteWhileRecording
-            | Setting::Speaker
-            | Setting::CellsOnWeakUsb => SettingsPage::Record,
+            Setting::MixFile | Setting::PauseWithRec | Setting::CellsOnWeakUsb => SettingsPage::Record,
+            Setting::AutoLevel | Setting::MuteWhileRecording | Setting::Speaker => SettingsPage::Output,
             Setting::ClockFromRemote | Setting::PhoneCode => SettingsPage::Phone,
             Setting::DebugInfo | Setting::DrawOnInput => SettingsPage::Tests,
             _ => SettingsPage::Listen,
@@ -1024,7 +1024,7 @@ impl<'a> BatApp<'a> {
                     || self.power_option_available
             }
             SettingsPage::Tests => self.debug_available,
-            SettingsPage::Listen | SettingsPage::Phone => true,
+            SettingsPage::Listen | SettingsPage::Output | SettingsPage::Phone => true,
         })
     }
 
@@ -1755,7 +1755,10 @@ impl<'a> BatApp<'a> {
 
     /// Whether Mute while recording is silencing the headphones now (or fading them out).
     pub fn muted_for_take(&self) -> bool {
-        self.mute_while_recording && self.input_kind == InputKind::Live && self.is_recording() && !self.bufs.cpu_test.running
+        self.mute_while_recording
+            && self.input_kind == InputKind::Live
+            && self.is_recording()
+            && !self.bufs.cpu_test.running
     }
 
     /// The host kept REC from pausing a take: the main screen says so for a few seconds.
@@ -2962,7 +2965,8 @@ impl<'a> BatApp<'a> {
             Screen::CpuTest => {
                 return layout::CPU_TEST_BACK.contains(p)
                     || layout::CPU_TEST_START.contains(p)
-                    || (self.bufs.cpu_test.both_passes() && layout::CPU_TEST_PASS_TABS.iter().any(|tab| tab.contains(p)))
+                    || (self.bufs.cpu_test.both_passes()
+                        && layout::CPU_TEST_PASS_TABS.iter().any(|tab| tab.contains(p)))
                     || layout::CPU_TEST_CALLS.contains(p)
                     || (self.stages.running() && layout::CPU_TEST_VIEW.contains(p));
             }
@@ -2974,7 +2978,7 @@ impl<'a> BatApp<'a> {
                 return true;
             }
             let page_button = match self.settings_page() {
-                SettingsPage::Listen => false,
+                SettingsPage::Listen | SettingsPage::Output => false,
                 SettingsPage::Record => {
                     self.guano_available && layout::panel_switch_row(layout::RECORD_GUANO).contains(p)
                 }

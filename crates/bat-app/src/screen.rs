@@ -13,8 +13,8 @@ use crate::fb::Rgb565Buffer;
 use crate::layout::*;
 use crate::palette::*;
 use crate::{
-    AutoVolume, BatApp, Battery, CallKind, DEFAULT_CUTOFF_HZ, Feed, InputKind, Meter, MixSilence, Mode, MonitorSource, Recorder,
-    Screen, Setting, SettingsPage, TeStatus, VIEW_HI_HZ, VIEW_LO_HZ, WF_COLUMN_MS,
+    AutoVolume, BatApp, Battery, CallKind, DEFAULT_CUTOFF_HZ, Feed, InputKind, Meter, MixSilence, Mode, MonitorSource,
+    Recorder, Screen, Setting, SettingsPage, TeStatus, VIEW_HI_HZ, VIEW_LO_HZ, WF_COLUMN_MS,
 };
 use bat_dsp::heterodyne::DEFAULT_COMB_SPACING_HZ;
 use bat_dsp::time_expansion::{DEFAULT_POST_MS, DEFAULT_PRE_MS};
@@ -217,7 +217,8 @@ pub fn draw(app: &BatApp, fb: Fb) {
     } else if let Some(silence) = app.mix_silence() {
         mix_silence_notice(fb, silence);
     } else if app.speaker_muted() {
-        let lines = if app.mode() == Mode::Thru { &pages::SPEAKER_MUTED_LINES } else { &pages::SPEAKER_MUTED_LOW_LINES };
+        let lines =
+            if app.mode() == Mode::Thru { &pages::SPEAKER_MUTED_LINES } else { &pages::SPEAKER_MUTED_LOW_LINES };
         corner_notice_lines(fb, lines);
     }
     snapshot(app, fb);
@@ -301,7 +302,9 @@ fn battery(app: &BatApp, fb: Fb) {
         return;
     }
     // The walls, then the terminal.
-    for (x, y, w, h) in [(X + 2, Y, 28, 2), (X + 2, Y + 10, 28, 2), (X + 2, Y, 2, 12), (X + 28, Y, 2, 12), (X, Y + 3, 2, 6)] {
+    for (x, y, w, h) in
+        [(X + 2, Y, 28, 2), (X + 2, Y + 10, 28, 2), (X + 2, Y, 2, 12), (X + 28, Y, 2, 12), (X, Y + 3, 2, 6)]
+    {
         fill(fb, Rectangle::new(Point::new(x, y), Size::new(w, h)), TEXT);
     }
     let width = i32::from(eighths) * 23 / 8;
@@ -876,7 +879,8 @@ fn auto_volume_row(app: &BatApp, fb: Fb) {
     let (x, y) = (r.top_left.x, r.top_left.y);
     let after = text(fb, &BODY, "Auto volume", x + 10, y + 14, LEFT, TEXT);
     // Auto volume changes what is heard, in headphones or on the speaker, and not what is recorded.
-    text(fb, &SMALL, "listening only", after + 5, y + 14, LEFT, TEXT_MUTED);
+    // A cold reader took "listening only" to mean that it works only while not recording.
+    text(fb, &SMALL, "not recorded", after + 5, y + 14, LEFT, TEXT_MUTED);
     for (i, &volume) in AutoVolume::ALL.iter().enumerate() {
         let c = auto_volume_choice(i);
         let selected = volume == app.auto_volume();
@@ -909,6 +913,7 @@ fn settings(app: &BatApp, fb: Fb) {
     }
     match app.settings_page() {
         SettingsPage::Listen => listen_page(app, fb),
+        SettingsPage::Output => pages::output(app, fb),
         SettingsPage::Record => pages::record(app, fb),
         SettingsPage::Phone => pages::phone(app, fb),
         SettingsPage::Tests => pages::tests(app, fb),
@@ -920,7 +925,7 @@ fn settings(app: &BatApp, fb: Fb) {
     text(fb, &BODY_BOLD, "Done", DONE.center().x, DONE.top_left.y + 28, CENTER, TEXT);
 }
 
-/// The two stepped settings, Auto volume, and the sounds to mark.
+/// The two stepped settings and the sounds to mark.
 fn listen_page(app: &BatApp, fb: Fb) {
     for (i, setting) in Setting::ALL.iter().enumerate() {
         if setting.page() != SettingsPage::Listen {
@@ -976,10 +981,7 @@ fn listen_page(app: &BatApp, fb: Fb) {
                     };
                     app.is_marked(kind)
                 }
-                _ => {
-                    auto_volume_row(app, fb);
-                    continue;
-                }
+                _ => continue,
             };
             switch_control(fb, switch(*setting), on);
             continue;

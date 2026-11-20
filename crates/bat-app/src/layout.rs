@@ -146,11 +146,12 @@ pub fn mode_button_at(x: i32, y: i32, modes: &[Mode]) -> Option<Mode> {
 /// settings screen.
 pub const MENU: Rectangle = Rectangle::new(Point::new(0, 0), Size::new(40, TITLE_H as u32));
 
-/// Settings screen: three pages, picked with tabs under the title bar. Listen has what changes
-/// the sound and the marks; Record has what a take's files get and the phone remote; Tests has the
-/// debug figures and the two tests. Below the tabs, Listen has its two stepped settings, one panel
+/// Settings screen: up to five pages, picked with tabs under the title bar. Listen has what the
+/// app listens to and the marks; Output has Auto volume and the two switches about what plays;
+/// Record has what a take's files get; Phone has the phone remote; Tests has the debug figures and
+/// the two tests. Below the tabs, Listen has its two stepped settings, one panel
 /// each, with the name and value on the left, - and + buttons on the right, and a line saying what
-/// the setting does; then the Auto volume row, with its three choices; then, under a heading, the
+/// the setting does; then, under a heading, the
 /// sounds to mark, one compact row each, with a colour swatch, a name and a line of help on the left
 /// and the switch on the right. Record and Tests have panels with a name, a switch or a button, and
 /// up to three lines of help. Every page ends with the note that the settings reset at power-off (on a
@@ -165,13 +166,13 @@ pub const SETTING_H: i32 = 66;
 const SETTING_GAP: i32 = 4;
 const STEP_W: u32 = 48;
 const STEP_H: u32 = 40;
-/// The Auto volume row, under the two stepped settings. Its choices need more height than a name
+/// The Auto volume row, at the top of the Output page. Its choices need more height than a name
 /// and a help line.
-const AUTO_VOLUME_ROW: Rectangle = Rectangle::new(Point::new(6, 208), Size::new(308, 38));
+const AUTO_VOLUME_ROW: Rectangle = Rectangle::new(Point::new(6, PAGE_TOP), Size::new(308, 38));
 /// Baselines of the marks' heading and its help line.
-pub const SWITCHES_HEADING: i32 = 260;
-pub const SWITCHES_HELP: i32 = 272;
-const SWITCHES_TOP: i32 = 276;
+pub const SWITCHES_HEADING: i32 = 222;
+pub const SWITCHES_HELP: i32 = 234;
+const SWITCHES_TOP: i32 = 238;
 pub const SWITCH_ROW_H: i32 = 33;
 const SWITCH_ROW_GAP: i32 = 2;
 const SWITCH_W: u32 = 44;
@@ -208,19 +209,20 @@ pub const fn panel_switch(panel: Rectangle) -> Rectangle {
     Rectangle::new(Point::new(260, panel.top_left.y + 8), Size::new(SWITCH_W, SWITCH_H))
 }
 
-/// Record page: the MIX file, GUANO metadata, whether REC pauses takes, whether the sound
-/// is muted during a take, the Speaker switch, then whether the cells take over from a weak USB supply. A panel is
+/// Record page: the MIX file, GUANO metadata, whether REC pauses takes, then whether the cells
+/// take over from a weak USB supply. A panel is
 /// 48 px with
 /// one help line, 14 px more for each line after; the gaps are 6 px, as small as keeps the panels
 /// apart.
 pub const RECORD_MIX_FILE: Rectangle = panel(PAGE_TOP, 48);
 pub const RECORD_GUANO: Rectangle = panel(PAGE_TOP + 54, 62);
 pub const RECORD_PAUSE: Rectangle = panel(PAGE_TOP + 122, 48);
-pub const RECORD_MUTE: Rectangle = panel(PAGE_TOP + 176, 48);
+/// Output page: Auto volume's row, whether the sound is muted during a take, and the Speaker
+/// switch. All three are about what plays, in the headphones or on the speaker.
+pub const OUTPUT_MUTE: Rectangle = panel(PAGE_TOP + 44, 48);
+pub const OUTPUT_SPEAKER: Rectangle = panel(PAGE_TOP + 98, 48);
 /// Last on the page: it matters only with USB plugged in, and keeps 96 and 192 kHz available then.
-pub const RECORD_POWER: Rectangle = panel(PAGE_TOP + 284, 48);
-/// Under Mute while recording: both are about what plays, and the speaker's sound is recorded.
-pub const RECORD_SPEAKER: Rectangle = panel(PAGE_TOP + 230, 48);
+pub const RECORD_POWER: Rectangle = panel(PAGE_TOP + 176, 48);
 /// Phone page: the phone remote with its status lines, the phone code's switch with the code,
 /// the clock switch, then the phone page's QR code with the address and the Phone time button
 /// beside it. The remote's switch is what people change most, so it is at the top; the QR code
@@ -292,9 +294,9 @@ pub fn control_row(setting: Setting) -> Rectangle {
         Setting::ClockFromRemote => panel_switch_row(PHONE_CLOCK),
         Setting::PhoneCode => panel_switch_row(PHONE_CODE),
         Setting::PauseWithRec => panel_switch_row(RECORD_PAUSE),
-        Setting::MuteWhileRecording => panel_switch_row(RECORD_MUTE),
+        Setting::MuteWhileRecording => panel_switch_row(OUTPUT_MUTE),
         Setting::CellsOnWeakUsb => panel_switch_row(RECORD_POWER),
-        Setting::Speaker => panel_switch_row(RECORD_SPEAKER),
+        Setting::Speaker => panel_switch_row(OUTPUT_SPEAKER),
         Setting::DebugInfo => panel_switch_row(TESTS_DEBUG),
         Setting::DrawOnInput => panel_switch_row(TESTS_DRAW),
         Setting::Mark(kind) => {
@@ -344,9 +346,9 @@ pub fn switch(setting: Setting) -> Rectangle {
         Setting::ClockFromRemote => panel_switch(PHONE_CLOCK),
         Setting::PhoneCode => panel_switch(PHONE_CODE),
         Setting::PauseWithRec => panel_switch(RECORD_PAUSE),
-        Setting::MuteWhileRecording => panel_switch(RECORD_MUTE),
+        Setting::MuteWhileRecording => panel_switch(OUTPUT_MUTE),
         Setting::CellsOnWeakUsb => panel_switch(RECORD_POWER),
-        Setting::Speaker => panel_switch(RECORD_SPEAKER),
+        Setting::Speaker => panel_switch(OUTPUT_SPEAKER),
         Setting::DebugInfo => panel_switch(TESTS_DEBUG),
         Setting::DrawOnInput => panel_switch(TESTS_DRAW),
         _ => {
@@ -427,10 +429,8 @@ pub const CPU_TEST_FIRST_ROW: i32 = 72;
 pub const CPU_TEST_ROW_H: i32 = 11;
 /// After a run with a recording pass: the two passes' tables, one at a time, chosen with these
 /// tabs under the table (22 rows and 3 headings end at y = 336).
-pub const CPU_TEST_PASS_TABS: [Rectangle; 2] = [
-    Rectangle::new(Point::new(6, 348), Size::new(84, 28)),
-    Rectangle::new(Point::new(94, 348), Size::new(84, 28)),
-];
+pub const CPU_TEST_PASS_TABS: [Rectangle; 2] =
+    [Rectangle::new(Point::new(6, 348), Size::new(84, 28)), Rectangle::new(Point::new(94, 348), Size::new(84, 28))];
 /// The log's file name and whether it is on the card yet, right of the tabs.
 pub const CPU_TEST_LOG_X: i32 = 186;
 pub const CPU_TEST_LOG_Y: i32 = 359;

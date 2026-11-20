@@ -2364,7 +2364,36 @@ B241 or an earlier build. All the checks in `tools/x8patch.py` pass on this file
 1. **Start and stop.** With Phone remote on and the phone page reloaded, do `Start recording` and `Stop recording` work as before?
 2. **Old phone page.** If a phone still has the old page cached, its commands should do nothing at all. Reload the page.
 
-## Step 52 test file: the bat app's settings survive power-off, a speaker icon (built 2026-11-20, not yet installed)
+## Step 53 test file: an Output settings page, presets leave the bat settings alone (built 2026-11-20, not yet installed)
+
+`work/patch59/#PortaX8_0284.203` (B284, SHA-256 `6be1c4ab…7d4160a1`). B283 (Step 52) with the changes below; the checks of
+Steps 50 to 52 still apply, and this file replaces B283. All the checks in `tools/x8patch.py` pass, and two builds
+give the same file. Nothing in this step has run on a unit.
+
+**What changes.**
+
+- **SETTINGS has an Output page**, between Listen and Record: `Auto volume` (from Listen), then `Mute while
+  recording` and `Speaker` (from Record). All three are about what plays in the headphones and on the speaker.
+  Listen keeps `Lowest bat call`, `Listen to` and `Sounds to mark`; Record keeps the MIX file, GUANO metadata, `Pause
+  with REC` and `Run from batteries on weak USB`. The tabs are Listen, Output, Record, Phone, Tests.
+  Auto volume's tag now reads `not recorded` (B283's `listening only` was read as "only while not recording").
+- **A USER SETTINGS preset no longer changes the bat app's settings.** A preset is a copy of the whole stock settings
+  record ([below](#the-settings-records-spare-bytes-2026-11-20)), the bat app's 16 bytes included, so loading one
+  would have put back the bat settings from when the preset was saved. Task 1 now keeps the 16 bytes from start-up.
+  The app is built from that copy, and power-off writes the copy back when no bat screen was opened.
+- **Room.** The detector keeps 160 columns of history for call snapshots, not 192. A snapshot needs 106 (the longest
+  call is 100 ms), and a test checks that. This frees 8,480 bytes of the patch region.
+
+**Memory.** Patch region free: 8,512 bytes (8,424 more than B283). No new stock hook site (header version 24).
+
+**What to check.** After the checks of Steps 50 to 52:
+
+1. **The page.** Do the five tabs fit and open? Are Auto volume's three choices, `Mute while recording` and `Speaker`
+   on Output, and do taps and the wheel change them?
+2. **A preset.** Step 52 check 6 should now show the bat settings unchanged by loading USER SETTINGS 1.
+3. **Snapshots.** Does the last-call panel still show a whole long call (a 50 ms or longer CF call) with its margins?
+
+## Step 52 test file: the bat app's settings survive power-off, a speaker icon (built 2026-11-20, never installed: superseded by B284)
 
 `work/patch58/#PortaX8_0283.203` (B283, SHA-256 `69892f88…f73ebb92`). B282 (Step 51) with the changes below; Steps 50
 and 51's checks still apply, and this file replaces B282. All the checks in `tools/x8patch.py` pass, and two builds
@@ -4474,8 +4503,13 @@ Read from V2.03 in Ghidra; not checked on a unit (Step 52 check 2).
   write is + 0xB61. The defaults clear the whole record first. No literal in the firmware holds an address between
   + 0xB62 and + 0xFFB. Code that reaches the record with a computed offset would not show in that search, so
   "unused" is likely, not proven.
-- Not read: how USER SETTINGS presets are saved and loaded. If a preset holds a copy of the whole record, loading
-  one puts back the bat app's settings from when the preset was saved (Step 52 check 6).
+- **Presets (read later the same day).** The block at 0x81E8687C is a second flash record of 0x4000 bytes (flash id
+  0x1FA, four slots, byte sum at + 0x3FFC, signature `X8USET` at + 0x3000): three preset slots of 0x1000 bytes at
+  + 0, + 0x1000 and + 0x2000, with a "slot in use" byte each at + 0x300C. Saving a preset (`FUN_80da8ec4`) copies the
+  whole live settings record into a slot. Loading one (`FUN_80da8f62`) copies the slot over the whole live record and
+  then puts back only + 0x14 (4 bytes), + 0x1D8, + 0x1D9 and 8 bytes at + 0xADE. So a preset carries every byte of
+  the record's tail, and loading one replaced the bat app's 16 bytes until B284, which keeps its own copy from
+  start-up. This also shows that the stock code copies the tail around without reading it.
 - The patch uses + 0xFE0 to + 0xFEF, the far end from the stock fields.
 
 ## The built-in speaker (2026-11-20)

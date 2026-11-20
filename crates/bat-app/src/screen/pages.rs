@@ -10,9 +10,9 @@ use super::{
     switch_control, text,
 };
 use crate::layout::{
-    PHONE_CLOCK, PHONE_CODE, PHONE_CODE_BASELINE, PHONE_CODE_RIGHT, PHONE_REMOTE, QR_MARGIN, QR_MODULE, QR_TEXT_X,
-    RECORD_GUANO, RECORD_MIX_FILE, RECORD_MUTE, RECORD_PAUSE, RECORD_POWER, RECORD_SPEAKER, TESTS_CPU_TEST, TESTS_DEBUG, TESTS_DRAW,
-    panel_switch, phone_time, qr_card,
+    OUTPUT_MUTE, OUTPUT_SPEAKER, PHONE_CLOCK, PHONE_CODE, PHONE_CODE_BASELINE, PHONE_CODE_RIGHT, PHONE_REMOTE,
+    QR_MARGIN, QR_MODULE, QR_TEXT_X, RECORD_GUANO, RECORD_MIX_FILE, RECORD_PAUSE, RECORD_POWER, TESTS_CPU_TEST,
+    TESTS_DEBUG, TESTS_DRAW, panel_switch, phone_time, qr_card,
 };
 use crate::palette::*;
 use crate::{BatApp, Mode, RecorderCommand, RemoteCommand, RemoteResult, Setting, qr};
@@ -185,21 +185,32 @@ pub(super) fn record(app: &BatApp, fb: Fb) {
             selected,
         );
     }
+    if app.power_option_available() {
+        let selected = app.selected_setting() == Setting::CellsOnWeakUsb;
+        let on = app.cells_on_weak_usb();
+        switch_panel(fb, RECORD_POWER, POWER_NAME, &[state(&POWER_STATE, on)], on, selected);
+    }
+}
+
+/// What plays in the headphones and on the speaker: Auto volume, then the two switches, each
+/// shown only on a host that offers it.
+pub(super) fn output(app: &BatApp, fb: Fb) {
+    let row = crate::layout::control_row(Setting::AutoLevel);
+    rounded(fb, row, 6, PANEL);
+    if app.selected_setting() == Setting::AutoLevel {
+        super::outline_selected(fb, row);
+    }
+    super::auto_volume_row(app, fb);
     if app.input_kind() == crate::InputKind::Live {
         let selected = app.selected_setting() == Setting::MuteWhileRecording;
         let on = app.mute_while_recording();
-        switch_panel(fb, RECORD_MUTE, MUTE_NAME, &[state(&MUTE_STATE, on)], on, selected);
+        switch_panel(fb, OUTPUT_MUTE, MUTE_NAME, &[state(&MUTE_STATE, on)], on, selected);
     }
     if let Some(host_on) = app.host_speaker() {
         let selected = app.selected_setting() == Setting::Speaker;
         let on = app.speaker_switch();
         let line = if on && !host_on { SPEAKER_HOST_OFF } else { state(&SPEAKER_STATE, on) };
-        switch_panel(fb, RECORD_SPEAKER, SPEAKER_NAME, &[line], on, selected);
-    }
-    if app.power_option_available() {
-        let selected = app.selected_setting() == Setting::CellsOnWeakUsb;
-        let on = app.cells_on_weak_usb();
-        switch_panel(fb, RECORD_POWER, POWER_NAME, &[state(&POWER_STATE, on)], on, selected);
+        switch_panel(fb, OUTPUT_SPEAKER, SPEAKER_NAME, &[line], on, selected);
     }
 }
 

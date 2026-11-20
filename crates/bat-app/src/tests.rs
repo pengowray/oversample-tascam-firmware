@@ -827,7 +827,7 @@ fn the_auto_volume_row_shows_three_choices_a_tap_picks_one_and_the_wheel_steps()
     let mut storage = vec![0.0f32; 1024];
     let mut app = BatApp::new(FS, &mut storage, buffers());
     assert_eq!(app.auto_volume(), AutoVolume::Off);
-    app.open_settings();
+    app.open_settings_page(SettingsPage::Output);
     let row = layout::control_row(Setting::AutoLevel);
     let (top, bottom) = (row.top_left.y, row.center().y + 18);
     // Every choice can be reached in one tap from any other, at any height of the row.
@@ -1593,19 +1593,22 @@ fn mix_file_line_follows_switch_and_rec_ready() {
 }
 
 /// The settings screen's tabs: each opens its page, the wheel changes only a setting on the page
-/// shown, and a host with nothing for Record gets no Record tab.
+/// shown, and a host with nothing for Record gets no Record tab. Output always has Auto volume.
 #[test]
 fn settings_tabs() {
     let mut storage = vec![0.0f32; 1024];
     let mut app = BatApp::new(FS, &mut storage, buffers());
     app.open_settings();
     assert_eq!(app.settings_page(), SettingsPage::Listen);
-    assert_eq!(app.settings_pages().collect::<Vec<_>>(), [SettingsPage::Listen, SettingsPage::Phone]);
+    assert_eq!(
+        app.settings_pages().collect::<Vec<_>>(),
+        [SettingsPage::Listen, SettingsPage::Output, SettingsPage::Phone]
+    );
     app.set_mix_file_available(true);
     app.set_debug_available(true);
-    assert_eq!(app.settings_pages().count(), 4);
+    assert_eq!(app.settings_pages().count(), 5);
     for (i, page) in SettingsPage::ALL.into_iter().enumerate() {
-        let tab = layout::tab(i, 4).center();
+        let tab = layout::tab(i, 5).center();
         assert!(app.is_tappable(tab.x, tab.y));
         app.touch(tab.x, tab.y);
         assert_eq!(app.settings_page(), page);
