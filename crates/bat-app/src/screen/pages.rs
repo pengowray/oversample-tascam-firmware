@@ -45,9 +45,12 @@ pub(super) const POWER_STATE: [&str; 2] =
     ["A USB supply under 1.5 A can turn on POWER SAVE MODE", "The X8 runs on its batteries, unless they are low"];
 /// In the recording bar while Mute while recording silences the headphones.
 pub(super) const MUTED_LABEL: &str = "MUTED";
-/// On the main screen in 1:1 while the sound would go to the X8's speaker: the app is silent, so
-/// the speaker does not play the microphones' sound back to them.
+/// On the main screen while the sound would go to the X8's speaker and the app is silent, so the
+/// speaker does not play its own sound back through the microphones: in 1:1, and in HET and COMB
+/// tuned below `SPEAKER_MIN_TUNING_HZ`.
 pub(super) const SPEAKER_MUTED_LINES: [&str; 2] = ["Speaker is silent in 1:1.", "Plug in headphones to listen."];
+pub(super) const SPEAKER_MUTED_LOW_LINES: [&str; 2] =
+    ["Speaker is silent below 30 kHz.", "Tune higher, or plug in headphones."];
 /// On the main screen when REC was kept from pausing a take.
 pub(super) const PAUSE_OFF_LINES: [&str; 2] = ["Pausing is off.", "STOP ends the take."];
 pub(super) const CLOCK_FROM_REMOTE_STATE: [&str; 2] =

@@ -104,6 +104,9 @@ const MUTE_FADE_SAMPLES: f32 = 3_840.0;
 const SNAP_MARGIN_MS: f32 = 2.0;
 
 const HET_MIN_HZ: f32 = 15_000.0;
+/// HET's tuning and COMB's lowest tuning play on a speaker from here up: twice the low-pass
+/// cutoff of HET and of each COMB voice (see [`BatApp::speaker_muted`]).
+pub const SPEAKER_MIN_TUNING_HZ: f32 = 2.0 * DEFAULT_CUTOFF_HZ;
 const HET_MAX_HZ: f32 = 95_000.0;
 const HET_STEP_HZ: f32 = 500.0;
 const COMB_COUNT: usize = 3;
@@ -1627,11 +1630,20 @@ impl<'a> BatApp<'a> {
         self.speaker
     }
 
-    /// Whether the output is silent because 1:1 would play the microphones' own sound back to them
-    /// through the speaker, which howls. Files in BAT PLAYBACK play in 1:1 on the speaker as in
-    /// any other mode.
+    /// Whether the output is silent because the mode would play the speaker's own sound, picked
+    /// up by the microphones, back through the speaker, which howls. 1:1 always does. HET and COMB
+    /// do when tuned below [`SPEAKER_MIN_TUNING_HZ`]: a tone at f is heard at tuning - f, and that
+    /// tone is heard at f again, with both inside the 15 kHz the low-pass filter lets through.
+    /// FD, TE and PITCH only lower a sound. Files in BAT PLAYBACK play on the speaker in every mode.
     pub fn speaker_muted(&self) -> bool {
-        self.speaker && self.mode == Mode::Thru && self.input_kind == InputKind::Live
+        self.speaker
+            && self.input_kind == InputKind::Live
+            && match self.mode {
+                Mode::Thru => true,
+                Mode::Het => self.het_lo_hz() < SPEAKER_MIN_TUNING_HZ,
+                Mode::Comb => self.comb_first_hz < SPEAKER_MIN_TUNING_HZ,
+                Mode::Fd | Mode::Te | Mode::Pitch => false,
+            }
     }
 
     /// The host can run from its cells when a USB supply is weak (the X8 patch, in place of the

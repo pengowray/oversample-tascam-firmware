@@ -149,7 +149,7 @@ pub(super) extern "C" fn enter_work() {
     unsafe { ptr::write_volatile(stock::LCDIF_NEXT_BUF, spare::DISPLAY) };
 }
 
-/// Task 1's way to close the bat screen: the speaker goes off first, because MANUAL's own
+/// How the key hooks close the bat screen: the speaker goes off first, because MANUAL's own
 /// monitoring is the output again as soon as the screen has closed.
 pub(super) fn close_bat_screen() {
     super::speaker::close();
@@ -187,6 +187,8 @@ pub(super) fn leave_bat_screen() {
 /// takes it again once the pop-up closes (`follow_app`). BAT_ACTIVE is cleared
 /// first and POPUP_HIDDEN set last, so task 1 cannot reopen the screen halfway.
 pub(super) fn hide_for_popup() {
+    // Pop-ups install their own key handler, so task 1 would not turn the speaker off.
+    super::speaker::close();
     leave_bat_screen();
     POPUP_HIDDEN.store(true, Release);
 }

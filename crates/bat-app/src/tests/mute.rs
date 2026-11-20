@@ -128,3 +128,24 @@ fn a_file_plays_in_one_to_one_on_a_speaker() {
     let out = play_audible(&mut app, 0.2);
     assert!(peak(&out[out.len() / 2..]) > 0.01);
 }
+
+#[test]
+fn het_and_comb_tuned_below_30_khz_are_silent_on_a_speaker() {
+    let mut storage = vec![0.0f32; 1024];
+    let mut app = BatApp::new(FS, &mut storage, buffers());
+    app.set_speaker(true);
+    app.set_mode(Mode::Het);
+    app.set_het_lo(29_000.0);
+    assert!(app.speaker_muted());
+    app.set_het_lo(30_000.0);
+    assert!(!app.speaker_muted());
+    app.set_mode(Mode::Comb);
+    app.set_comb_first(25_000.0);
+    assert!(app.speaker_muted());
+    app.set_comb_first(30_000.0);
+    assert!(!app.speaker_muted());
+    for mode in [Mode::Fd, Mode::Te, Mode::Pitch] {
+        app.set_mode(mode);
+        assert!(!app.speaker_muted());
+    }
+}

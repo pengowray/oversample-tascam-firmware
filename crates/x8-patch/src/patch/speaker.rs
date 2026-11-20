@@ -8,9 +8,10 @@
 //! the speaker itself, with its own order and delays. The SPEAKER setting and the headphone jack
 //! work as before.
 //!
-//! 1:1 would play the microphones' sound back to them, so the app is told about the speaker
-//! first (`BatApp::set_speaker`) and is silent in 1:1 with live input. The speaker amplifier is
-//! also off then, and during a take with Mute while recording on.
+//! 1:1, and HET and COMB tuned low, would play the speaker's sound back through the microphones.
+//! So the app is told about the speaker first (`BatApp::set_speaker`) and is silent in those
+//! cases with live input (`BatApp::speaker_muted`). The speaker amplifier is also off then, and
+//! during a take with Mute while recording on.
 
 use core::sync::atomic::{AtomicBool, Ordering::Acquire, Ordering::Relaxed, Ordering::Release};
 
@@ -21,10 +22,10 @@ use super::{rate_class, read_byte, stock};
 
 /// The DSP task: the app has been told that its sound goes to the speaker, and has sound for it.
 static WANTED: AtomicBool = AtomicBool::new(false);
-/// Task 1: the bat screen is about to close, so the speaker goes off before the stock monitoring
+/// The bat screen is about to close, so the speaker goes off before the stock monitoring
 /// returns. Cleared when the screen opens.
 static CLOSING: AtomicBool = AtomicBool::new(false);
-/// Task 1: what the stock functions were last run for.
+/// What the stock functions were last run for.
 static APPLIED: AtomicBool = AtomicBool::new(false);
 
 /// Whether the speaker should play now. The audio hook writes the app's sound to the output only
@@ -48,13 +49,16 @@ pub(super) fn opening() {
     CLOSING.store(false, Relaxed);
 }
 
-/// Task 1, before it closes the bat screen: turn the speaker off first.
+/// Before the bat screen closes, from task 1 or, for a pop-up, from the DSP task: turn the
+/// speaker off first. The stock firmware also calls these functions from more than one task
+/// (`FUN_80dbe324` runs in the system task), and `FUN_80da0024` counts calls that arrive while
+/// it runs and repeats itself for them.
 pub(super) fn close() {
     CLOSING.store(true, Relaxed);
     follow();
 }
 
-/// Task 1, for each message: when the answer the hooks give has changed, run the stock functions
+/// Task 1, for each message, and `close`: when the answer the hooks give has changed, run the stock functions
 /// that read it. They sleep (100 ms as the speaker comes on, 200 ms for the output stage), as
 /// they do when the stock code calls them from this task.
 pub(super) fn follow() {
@@ -62,7 +66,7 @@ pub(super) fn follow() {
     if APPLIED.swap(want, Relaxed) == want {
         return;
     }
-    // SAFETY: stock functions with no arguments, called from task 1 as the stock code does.
+    // SAFETY: stock functions with no arguments, called from a task as the stock code does.
     let (output_power, route): (unsafe extern "C" fn(), unsafe extern "C" fn()) =
         unsafe { (core::mem::transmute(stock::SET_OUTPUT_POWER), core::mem::transmute(stock::ROUTE_OUTPUT)) };
     // The output stage's state differs from the stock one only from record standby to a take's end.

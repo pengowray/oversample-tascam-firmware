@@ -208,6 +208,7 @@ The patch also changes these at run time, from inside its hooks:
 |---|---|
 | Audio interrupt (48,000 times a second at 192 kHz) | `audio_hook`: calls the stock callback, copies the inputs the bat app listens to into the input ring, and writes the bat app's output from the output ring into the output block. It must stay short: a block at 192 kHz is about 12,500 cycles, and the stock callback uses 32% of the processor. |
 | Task 1 (stock) | The key hooks. They queue actions for the DSP task and return quickly. Opening the bat screen the first time builds the app on a separate 40 KB patch stack, because task 1's own stack is 6 KB. |
+| Task 1 (stock), from B281 | The key hooks also switch the built-in speaker when the bat app's need for it changes, by calling the stock functions that do it (`patch/speaker.rs`). Those calls sleep for 100 to 300 ms. |
 | Task 9 (stock) | The touch hook. |
 | System task (stock), from B272 | The phantom power hook on the app change (`launcher::phantom_off_hook`): when BAT PLAYBACK opens MANUAL, no phantom power question, and MANUAL's stored phantom power is put back. |
 | Qt's task (stock) | The launcher hooks: the tile, text, icon, slot and delete-mode hooks. |
@@ -274,7 +275,8 @@ Drawing uses `embedded-graphics` and `u8g2-fonts`.
   switch the built-in speaker and the output stage (`bl` at 0x80DA00C6 and 0x80D9FF9A). While the bat
   app's sound is the output, GENERAL SETTINGS > SPEAKER is on and no headphones are in, the stock
   code turns the speaker on. Task 1 runs those stock functions from the key hooks when the answer
-  changes. The app is silent in 1:1 with live input while the speaker is in use. See "The built-in
+  changes. The app is silent in 1:1, and in HET and COMB tuned below 30 kHz, with live input while
+  the speaker is in use. See "The built-in
   speaker" in [HOMEBREW.md](HOMEBREW.md) and `crates/x8-patch/src/patch/speaker.rs`.
 - The phone remote presses buttons by posting the same message that a real button press posts, into
   task 1's mailbox (a message block from 0x80D70027, sent with `snd_mbx`).
