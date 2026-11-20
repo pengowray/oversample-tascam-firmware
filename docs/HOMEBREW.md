@@ -2364,7 +2364,23 @@ B241 or an earlier build. All the checks in `tools/x8patch.py` pass on this file
 1. **Start and stop.** With Phone remote on and the phone page reloaded, do `Start recording` and `Stop recording` work as before?
 2. **Old phone page.** If a phone still has the old page cached, its commands should do nothing at all. Reload the page.
 
-## Step 54 test file: Sound and Detect settings pages (built 2026-11-20, not yet installed)
+## Step 55 test file: no full stop at the end of the settings pages' help lines (built 2026-11-20, not yet installed)
+
+`work/patch61/#PortaX8_0286.203` (B286, SHA-256 `6011d3bc…13f51032`). B285 (Step 54) with two changes; the checks of
+Steps 50 to 54 still apply, and this file replaces B285. All the checks in `tools/x8patch.py` pass, and two builds
+give the same file. Nothing in this step has run on a unit.
+
+- **Help lines.** The settings pages mixed lines with and without a full stop at the end. Now none has one: a full
+  stop only separates two sentences, as in `No sound plays during a take. Uses less CPU`. This covers Listen to's and
+  Lowest bat call's lines, the sounds to mark, the Phone page's help and status lines, GUANO's and the CPU test's
+  help, and the reset note on Tests. Notices on the main screen and the CPU test's screen keep their full stops.
+- **Code only.** The Sound and Detect pages are drawn by `pages::sound` and `pages::detect`, beside Record's, Phone's
+  and Tests', from `stepped_panel`, `marks` and `mark_row` in `screen.rs`. The pages were compared before and after,
+  pixel for pixel.
+
+**Memory.** Patch region free: 8,232 bytes (112 more than B285). No new stock hook site (header version 24).
+
+## Step 54 test file: Sound and Detect settings pages (built 2026-11-20, never installed: superseded by B286)
 
 `work/patch60/#PortaX8_0285.203` (B285, SHA-256 `09e63dbe…b884f238`). B284 (Step 53) with the settings pages
 rearranged; the checks of Steps 50 to 53 still apply, and this file replaces B284. All the checks in

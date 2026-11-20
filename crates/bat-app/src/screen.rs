@@ -837,10 +837,10 @@ impl core::fmt::Display for ListenHelp {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         match self {
             ListenHelp::Ears(left, right) => {
-                write!(f, "Left ear: input {left}. Right ear: input {right}. Mono in FD and TE.")
+                write!(f, "Left ear: input {left}. Right ear: input {right}. Mono in FD and TE")
             }
-            ListenHelp::Stereo => f.write_str("Stereo in HET, COMB and 1:1. Mono in FD and TE."),
-            ListenHelp::OneSignal => f.write_str("Heard in both ears and shown on the waterfall."),
+            ListenHelp::Stereo => f.write_str("Stereo in HET, COMB and 1:1. Mono in FD and TE"),
+            ListenHelp::OneSignal => f.write_str("Heard in both ears and shown on the waterfall"),
             ListenHelp::Nothing => f.write_str(NO_INPUT_HEADING),
         }
     }
@@ -916,160 +916,138 @@ fn settings(app: &BatApp, fb: Fb) {
         text(fb, &BODY, page.label(), r.center().x, r.top_left.y + 21, CENTER, TEXT);
     }
     match app.settings_page() {
-        SettingsPage::Sound => {
-            stepped_and_marks(app, fb, SettingsPage::Sound);
-            pages::sound(app, fb);
-        }
-        SettingsPage::Detect => stepped_and_marks(app, fb, SettingsPage::Detect),
+        SettingsPage::Sound => pages::sound(app, fb),
+        SettingsPage::Detect => pages::detect(app, fb),
         SettingsPage::Record => pages::record(app, fb),
         SettingsPage::Phone => pages::phone(app, fb),
         SettingsPage::Tests => pages::tests(app, fb),
     }
     if app.settings_reset_at_power_off() {
-        text(fb, &SMALL, "These settings reset when the recorder is turned off.", 16, SETTINGS_NOTE, LEFT, TEXT_MUTED);
+        text(fb, &SMALL, "These settings reset when the recorder is turned off", 16, SETTINGS_NOTE, LEFT, TEXT_MUTED);
     }
     rounded(fb, DONE, 4, ACCENT);
     text(fb, &BODY_BOLD, "Done", DONE.center().x, DONE.top_left.y + 28, CENTER, TEXT);
 }
 
-/// A page's stepped setting, at its top (Listen to on Sound, Lowest bat call on Detect), and on
-/// Detect the sounds to mark under it.
-fn stepped_and_marks(app: &BatApp, fb: Fb, page: SettingsPage) {
-    for setting in Setting::ALL.iter() {
-        if setting.page() != page || !matches!(setting, Setting::LowestBatCall | Setting::ListenTo | Setting::Mark(_)) {
-            continue;
-        }
-        let selected = app.selected_setting() == *setting;
-        if !matches!(setting, Setting::LowestBatCall | Setting::ListenTo) {
-            let r = control_row(*setting);
-            rounded(fb, r, 6, PANEL);
-            if selected {
-                outline_selected(fb, r);
+/// A page's stepped setting, at its top: Listen to on Sound, Lowest bat call on Detect. Its
+/// name and value on the left, - and + on the right, and a line saying what the setting does.
+fn stepped_panel(app: &BatApp, fb: Fb, setting: Setting) {
+    let selected = app.selected_setting() == setting;
+    let r = setting_row(0);
+    rounded(fb, r, 6, PANEL);
+    if selected {
+        // The row the wheel changes.
+        outline_selected(fb, r);
+    }
+    let (x, y) = (r.top_left.x + 10, r.top_left.y);
+    let label = match setting {
+        Setting::LowestBatCall => "Lowest bat call",
+        _ => "Listen to",
+    };
+    text(fb, &BODY, label, x, y + 18, LEFT, TEXT_MUTED);
+    if setting == Setting::LowestBatCall {
+        text(
+            fb,
+            &VALUE,
+            format_args!("{} kHz", Fixed::new(app.lowest_bat_call_hz() / 1000.0, 0)),
+            x,
+            y + 38,
+            LEFT,
+            TEXT,
+        );
+    } else {
+        let value = match (app.feed(), app.inputs(), app.source()) {
+            (Feed::Mix, _, MonitorSource::Both) => "MANUAL's mix",
+            (Feed::Mix, _, MonitorSource::First) => "Mix, left side",
+            (Feed::Mix, _, MonitorSource::Second) => "Mix, right side",
+            (Feed::Inputs, [None, _], _) => "No input",
+            (Feed::Inputs, [Some(first), None], _) | (Feed::Inputs, [Some(first), _], MonitorSource::First) => {
+                first.long
             }
-            let (x, y) = (r.top_left.x, r.top_left.y);
-            let on = match *setting {
-                Setting::Mark(kind) => {
-                    fill(fb, Rectangle::new(Point::new(x + 8, y + 5), Size::new(4, 23)), tick_colour(kind));
-                    text(fb, &BODY, mark_name(kind), x + 18, y + 14, LEFT, TEXT);
-                    let (hx, hy) = (x + 18, y + 28);
-                    match kind {
-                        CallKind::Bat => {
-                            text(fb, &SMALL, "Similar calls repeated several times a second.", hx, hy, LEFT, TEXT_MUTED)
-                        }
-                        CallKind::Tone => text(
-                            fb,
-                            &SMALL,
-                            "150 ms or longer, like a rat's 22 kHz alarm call.",
-                            hx,
-                            hy,
-                            LEFT,
-                            TEXT_MUTED,
-                        ),
-                        CallKind::Audible => text(
-                            fb,
-                            &SMALL,
-                            "Also loud at 2 to 12 kHz, like birds and voices.",
-                            hx,
-                            hy,
-                            LEFT,
-                            TEXT_MUTED,
-                        ),
-                        _ => text(
-                            fb,
-                            &SMALL,
-                            format_args!(
-                                "Reaching down to {} kHz, like handling noise.",
-                                Fixed::new(app.detector.band().0 / 1000.0, 0)
-                            ),
-                            hx,
-                            hy,
-                            LEFT,
-                            TEXT_MUTED,
-                        ),
-                    };
-                    app.is_marked(kind)
-                }
-                _ => continue,
-            };
-            switch_control(fb, switch(*setting), on);
-            continue;
-        }
-        let r = setting_row(0);
-        rounded(fb, r, 6, PANEL);
-        if selected {
-            // The row the wheel changes.
-            outline_selected(fb, r);
-        }
-        let (x, y) = (r.top_left.x + 10, r.top_left.y);
-        let label = match setting {
-            Setting::LowestBatCall => "Lowest bat call",
-            _ => "Listen to",
+            (Feed::Inputs, [_, Some(second)], MonitorSource::Second) => second.long,
+            (Feed::Inputs, [Some(first), Some(second)], MonitorSource::Both) => match app.input_kind() {
+                InputKind::Playback => "Left and right",
+                // EXT IN's short names are not numbers.
+                InputKind::Live if is_number(first.short) && is_number(second.short) => "",
+                InputKind::Live => "Both inputs",
+            },
         };
-        text(fb, &BODY, label, x, y + 18, LEFT, TEXT_MUTED);
-        if *setting == Setting::LowestBatCall {
-            text(
-                fb,
-                &VALUE,
-                format_args!("{} kHz", Fixed::new(app.lowest_bat_call_hz() / 1000.0, 0)),
-                x,
-                y + 38,
-                LEFT,
-                TEXT,
-            );
+        if value.is_empty() {
+            let [first, second] = app.inputs().map(|input| input.map_or("", |input| input.short));
+            text(fb, &VALUE, format_args!("Inputs {first} and {second}"), x, y + 38, LEFT, TEXT);
         } else {
-            let value = match (app.feed(), app.inputs(), app.source()) {
-                (Feed::Mix, _, MonitorSource::Both) => "MANUAL's mix",
-                (Feed::Mix, _, MonitorSource::First) => "Mix, left side",
-                (Feed::Mix, _, MonitorSource::Second) => "Mix, right side",
-                (Feed::Inputs, [None, _], _) => "No input",
-                (Feed::Inputs, [Some(first), None], _) | (Feed::Inputs, [Some(first), _], MonitorSource::First) => {
-                    first.long
-                }
-                (Feed::Inputs, [_, Some(second)], MonitorSource::Second) => second.long,
-                (Feed::Inputs, [Some(first), Some(second)], MonitorSource::Both) => match app.input_kind() {
-                    InputKind::Playback => "Left and right",
-                    // EXT IN's short names are not numbers.
-                    InputKind::Live if is_number(first.short) && is_number(second.short) => "",
-                    InputKind::Live => "Both inputs",
-                },
-            };
-            if value.is_empty() {
-                let [first, second] = app.inputs().map(|input| input.map_or("", |input| input.short));
-                text(fb, &VALUE, format_args!("Inputs {first} and {second}"), x, y + 38, LEFT, TEXT);
-            } else {
-                text(fb, &VALUE, value, x, y + 38, LEFT, TEXT);
-            }
-        }
-        if *setting == Setting::LowestBatCall {
-            text(fb, &SMALL, "Sounds peaking below this are not counted as bat calls.", x, y + 58, LEFT, TEXT_MUTED);
-        } else {
-            text(fb, &SMALL, format_args!("{}", listen_help(app)), x, y + 58, LEFT, TEXT_MUTED);
-        }
-        // With one choice, Listen to has nothing to change.
-        if *setting == Setting::ListenTo && !app.listen_has_choices() {
-            continue;
-        }
-        for (b, plus) in [(setting_minus(0), false), (setting_plus(0), true)] {
-            rounded(fb, b, 4, BUTTON);
-            let c = b.center();
-            fill(fb, Rectangle::with_center(c, Size::new(14, 2)), TEXT);
-            if plus {
-                fill(fb, Rectangle::with_center(c, Size::new(2, 14)), TEXT);
-            }
+            text(fb, &VALUE, value, x, y + 38, LEFT, TEXT);
         }
     }
-    if page != SettingsPage::Detect {
+    if setting == Setting::LowestBatCall {
+        text(fb, &SMALL, "Sounds peaking below this are not counted as bat calls", x, y + 58, LEFT, TEXT_MUTED);
+    } else {
+        text(fb, &SMALL, format_args!("{}", listen_help(app)), x, y + 58, LEFT, TEXT_MUTED);
+    }
+    // With one choice, Listen to has nothing to change.
+    if setting == Setting::ListenTo && !app.listen_has_choices() {
         return;
     }
+    for (b, plus) in [(setting_minus(0), false), (setting_plus(0), true)] {
+        rounded(fb, b, 4, BUTTON);
+        let c = b.center();
+        fill(fb, Rectangle::with_center(c, Size::new(14, 2)), TEXT);
+        if plus {
+            fill(fb, Rectangle::with_center(c, Size::new(2, 14)), TEXT);
+        }
+    }
+}
+
+/// The sounds to mark, under their heading: one compact row each.
+fn marks(app: &BatApp, fb: Fb) {
     // Lined up with the text in the panels above.
     text(fb, &BODY_BOLD, "Sounds to mark", 16, SWITCHES_HEADING, LEFT, TEXT);
     text(
         fb,
         &SMALL,
-        "Marked on waterfall, played in TE and Auto volume Bats only.",
+        "Marked on waterfall, played in TE and Auto volume Bats only",
         16,
         SWITCHES_HELP,
         LEFT,
         TEXT_MUTED,
     );
+    for kind in Setting::MARKS {
+        mark_row(app, fb, kind);
+    }
+}
+
+/// One of the sounds to mark: a colour swatch, its name, a line of help, and its switch.
+fn mark_row(app: &BatApp, fb: Fb, kind: CallKind) {
+    let setting = Setting::Mark(kind);
+    let r = control_row(setting);
+    rounded(fb, r, 6, PANEL);
+    if app.selected_setting() == setting {
+        outline_selected(fb, r);
+    }
+    let (x, y) = (r.top_left.x, r.top_left.y);
+    fill(fb, Rectangle::new(Point::new(x + 8, y + 5), Size::new(4, 23)), tick_colour(kind));
+    text(fb, &BODY, mark_name(kind), x + 18, y + 14, LEFT, TEXT);
+    let (hx, hy) = (x + 18, y + 28);
+    match kind {
+        CallKind::Bat => text(fb, &SMALL, "Similar calls repeated several times a second", hx, hy, LEFT, TEXT_MUTED),
+        CallKind::Tone => {
+            text(fb, &SMALL, "150 ms or longer, like a rat's 22 kHz alarm call", hx, hy, LEFT, TEXT_MUTED)
+        }
+        CallKind::Audible => {
+            text(fb, &SMALL, "Also loud at 2 to 12 kHz, like birds and voices", hx, hy, LEFT, TEXT_MUTED)
+        }
+        _ => text(
+            fb,
+            &SMALL,
+            format_args!(
+                "Reaching down to {} kHz, like handling noise",
+                Fixed::new(app.detector.band().0 / 1000.0, 0)
+            ),
+            hx,
+            hy,
+            LEFT,
+            TEXT_MUTED,
+        ),
+    };
+    switch_control(fb, switch(setting), app.is_marked(kind));
 }

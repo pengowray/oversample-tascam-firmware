@@ -759,18 +759,18 @@ fn small_width(line: &str) -> i32 {
 fn the_line_under_listen_to_says_what_each_ear_hears() {
     use std::string::ToString;
     let name = |short, long| Some(InputName { short, long });
-    let stereo = "Stereo in HET, COMB and 1:1. Mono in FD and TE.";
-    let one_signal = "Heard in both ears and shown on the waterfall.";
+    let stereo = "Stereo in HET, COMB and 1:1. Mono in FD and TE";
+    let one_signal = "Heard in both ears and shown on the waterfall";
     let mut storage = vec![0.0f32; 1024];
     let mut app = BatApp::new(FS, &mut storage, buffers());
     let help = |app: &BatApp| screen::listen_help(app).to_string();
 
     // A pair of inputs, with the real numbers.
-    assert_eq!(help(&app), "Left ear: input 3. Right ear: input 4. Mono in FD and TE.");
+    assert_eq!(help(&app), "Left ear: input 3. Right ear: input 4. Mono in FD and TE");
     app.set_inputs([name("5", "Input 5"), name("6", "Input 6")]);
-    assert_eq!(help(&app), "Left ear: input 5. Right ear: input 6. Mono in FD and TE.");
+    assert_eq!(help(&app), "Left ear: input 5. Right ear: input 6. Mono in FD and TE");
     app.set_inputs([name("1", "Input 1"), name("3", "Input 3")]);
-    assert_eq!(help(&app), "Left ear: input 1. Right ear: input 3. Mono in FD and TE.");
+    assert_eq!(help(&app), "Left ear: input 1. Right ear: input 3. Mono in FD and TE");
     // EXT IN: names that are not numbers, on their own or with an input.
     app.set_inputs([name("EL", "EXT IN left"), name("ER", "EXT IN right")]);
     assert_eq!(help(&app), stereo);
@@ -852,9 +852,9 @@ fn the_help_lines_fit_inside_their_panels() {
     // under Sounds to mark starts at x = 16 too. Digits are all the same width.
     let room = 314 - 16;
     for line in [
-        "Left ear: input 5. Right ear: input 6. Mono in FD and TE.",
-        "Stereo in HET, COMB and 1:1. Mono in FD and TE.",
-        "Heard in both ears and shown on the waterfall.",
+        "Left ear: input 5. Right ear: input 6. Mono in FD and TE",
+        "Stereo in HET, COMB and 1:1. Mono in FD and TE",
+        "Heard in both ears and shown on the waterfall",
         "Marked on waterfall, played in TE and Auto volume Bats only.",
     ] {
         let width = small_width(line);

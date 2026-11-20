@@ -10,9 +10,9 @@ use super::{
     switch_control, text,
 };
 use crate::layout::{
-    SOUND_MUTE, SOUND_SPEAKER, PHONE_CLOCK, PHONE_CODE, PHONE_CODE_BASELINE, PHONE_CODE_RIGHT, PHONE_REMOTE,
-    QR_MARGIN, QR_MODULE, QR_TEXT_X, RECORD_GUANO, RECORD_MIX_FILE, RECORD_PAUSE, RECORD_POWER, TESTS_CPU_TEST,
-    TESTS_DEBUG, TESTS_DRAW, panel_switch, phone_time, qr_card,
+    PHONE_CLOCK, PHONE_CODE, PHONE_CODE_BASELINE, PHONE_CODE_RIGHT, PHONE_REMOTE, QR_MARGIN, QR_MODULE, QR_TEXT_X,
+    RECORD_GUANO, RECORD_MIX_FILE, RECORD_PAUSE, RECORD_POWER, SOUND_MUTE, SOUND_SPEAKER, TESTS_CPU_TEST, TESTS_DEBUG,
+    TESTS_DRAW, panel_switch, phone_time, qr_card,
 };
 use crate::palette::*;
 use crate::{BatApp, Mode, RecorderCommand, RemoteCommand, RemoteResult, Setting, qr};
@@ -23,16 +23,17 @@ pub(super) const TITLE_LABEL: &str = "REMOTE";
 
 pub(super) const REMOTE_NAME: &str = "Phone remote (experimental)";
 pub(super) const REMOTE_HELP: [&str; 2] =
-    ["Phone chimes set the clock, start or stop recording,", "and change the listening mode. BAT DETECTOR only."];
+    ["Phone chimes set the clock, start or stop recording,", "and change the listening mode. BAT DETECTOR only"];
 /// The beeps' words match the phone page's help.
 pub(super) const REMOTE_BEEPS: [&str; 2] =
-    ["Two rising notes: started. Two falling: stopped.", "One high: clock or mode set. One low: failed."];
+    ["Two rising notes: started. Two falling: stopped.", "One high: clock or mode set. One low: failed"];
 pub(super) const CHIME_TEST_NAME: &str = "Phone time";
 pub(super) const CHIME_TEST_HELP: &str = "Time from a chime";
 /// Since B257 the phone's Set X8 clock always sets the clock; this switch is for the other commands.
 pub(super) const CLOCK_FROM_REMOTE_NAME: &str = "Set clock from all chimes";
 pub(super) const PAUSE_NAME: &str = "Pause with REC";
-/// Each switch's line says what its current setting does: [off, on].
+/// Each switch's line says what its current setting does: [off, on]. Help lines on the settings
+/// pages have no full stop at the end; a full stop only separates two sentences.
 pub(super) const PAUSE_STATE: [&str; 2] =
     ["REC is ignored during a take, so takes have no gaps", "REC pauses and resumes a take, with a MARK per pause"];
 pub(super) const MUTE_NAME: &str = "Mute while recording";
@@ -65,10 +66,10 @@ pub(super) const SPEAKER_MUTED_LOW_LINES: [&str; 2] =
 /// On the main screen when REC was kept from pausing a take.
 pub(super) const PAUSE_OFF_LINES: [&str; 2] = ["Pausing is off.", "STOP ends the take."];
 pub(super) const CLOCK_FROM_REMOTE_STATE: [&str; 2] =
-    ["Only the phone's \"Set X8 clock\" sets the clock.", "Start, Stop and mode chimes also set the clock."];
+    ["Only the phone's \"Set X8 clock\" sets the clock", "Start, Stop and mode chimes also set the clock"];
 pub(super) const CODE_NAME: &str = "Phone code";
 /// The on line is short, because the code is at its right.
-pub(super) const CODE_STATE: [&str; 2] = ["The X8 obeys commands from any phone.", "Phone commands need a code"];
+pub(super) const CODE_STATE: [&str; 2] = ["The X8 obeys commands from any phone", "Phone commands need a code"];
 /// On the main screen when a command was refused. The code is the line after these, grouped
 /// as on the Phone page.
 pub(super) const CODE_NEEDED_LINES: [&str; 2] = ["Phone page needs the X8's code.", "Type it, then send again:"];
@@ -76,7 +77,7 @@ pub(super) const CODE_WRONG_LINES: [&str; 2] = ["Phone page has a different code
 pub(super) const CODE_OLD_LINES: [&str; 2] = ["Phone command has an old time.", "Send again. Check phone's clock."];
 pub(super) const CPU_TEST_NAME: &str = "CPU test";
 pub(super) const CPU_TEST_HELP: [&str; 2] =
-    ["Runs every listening mode with Auto volume off and on,", "8 s each, up to 3 min. Lists CPU load and lost input."];
+    ["Runs every listening mode with Auto volume off and on,", "8 s each, up to 3 min. Lists CPU load and lost input"];
 pub(super) const MIX_FILE_NAME: &str = "MIX file";
 /// The MIX file switch on follows MANUAL's REC READY for MASTER; off, it overrides it.
 pub(super) const MIX_FILE_FOLLOWS: [&str; 2] =
@@ -92,11 +93,11 @@ pub(super) const DRAW_STATE: [&str; 2] =
 pub(super) const GUANO_NAME: &str = "GUANO metadata";
 pub(super) const GUANO_STATE: [&str; 2] =
     ["No GUANO metadata. WAV files are stock X8 files", "Each WAV file gets start time, recorder model, location"];
-pub(super) const GUANO_HELP: &str = "Bat analysis apps read GUANO. Most audio apps ignore it.";
+pub(super) const GUANO_HELP: &str = "Bat analysis apps read GUANO. Most audio apps ignore it";
 
 /// Beside the QR code on the Phone page.
 pub(super) const QR_HEADING: &str = "Phone page";
-pub(super) const QR_HELP: [&str; 2] = ["Plays the chimes.", "Scan with the phone."];
+pub(super) const QR_HELP: [&str; 2] = ["Plays the chimes.", "Scan with the phone"];
 /// The clock command and the listening modes, on the remote panel's last line.
 const LAST_SET_CLOCK: &str = "Set clock";
 const LAST_MODE: [&str; 6] = ["HET mode", "COMB mode", "FD mode", "TE mode", "PITCH mode", "1:1 mode"];
@@ -198,9 +199,16 @@ pub(super) fn record(app: &BatApp, fb: Fb) {
     }
 }
 
-/// What plays in the headphones and on the speaker: Auto volume, then the two switches, each
-/// shown only on a host that offers it.
+/// What counts as a bat call, and the sounds to mark.
+pub(super) fn detect(app: &BatApp, fb: Fb) {
+    super::stepped_panel(app, fb, Setting::LowestBatCall);
+    super::marks(app, fb);
+}
+
+/// What is heard, in the headphones and on the speaker: Listen to, Auto volume, then the two
+/// switches, each shown only on a host that offers it.
 pub(super) fn sound(app: &BatApp, fb: Fb) {
+    super::stepped_panel(app, fb, Setting::ListenTo);
     let row = crate::layout::control_row(Setting::AutoLevel);
     rounded(fb, row, 6, PANEL);
     if app.selected_setting() == Setting::AutoLevel {
@@ -304,7 +312,7 @@ fn remote_panel(app: &BatApp, fb: Fb) {
         fb,
         &SMALL,
         format_args!(
-            "Tones heard {}. Chimes read {}, failed {}.",
+            "Tones heard {}. Chimes read {}, failed {}",
             remote.tones, remote.chimes_read, remote.chimes_failed
         ),
         x,
@@ -432,7 +440,7 @@ pub(crate) fn lines_with_widths() -> std::vec::Vec<(std::string::String, i32, i3
     for name in [REMOTE_NAME, GUANO_NAME, MIX_FILE_NAME, DEBUG_NAME, DRAW_NAME, CLOCK_FROM_REMOTE_NAME, PAUSE_NAME] {
         add(&BODY, name, 240);
     }
-    add(&SMALL, "Tones heard 100. Chimes read 100, failed 100.", inside);
+    add(&SMALL, "Tones heard 100. Chimes read 100, failed 100", inside);
     add(&SMALL, "Last: Start, 3600 s ago, carrier -100 dBFS", inside);
     add(&SMALL, "Last: Unknown command, 3600 s ago, carrier -100 dBFS", inside);
     for name in LAST_MODE.iter().chain([&LAST_SET_CLOCK]) {
