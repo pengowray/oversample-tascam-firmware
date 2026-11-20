@@ -345,7 +345,7 @@ fn status_bar(app: &BatApp, fb: Fb) {
     if app.muted_for_take() {
         text(fb, &BODY, pages::MUTED_LABEL, x + 8, baseline - 1, LEFT, TEXT);
     } else if app.speaker_playing() {
-        text(fb, &BODY, pages::SPEAKER_LABEL, x + 8, baseline - 1, LEFT, TEXT);
+        speaker_icon(fb, x + 10, cy);
     }
     let c = app.clock_s;
     text(
@@ -357,6 +357,17 @@ fn status_bar(app: &BatApp, fb: Fb) {
         RIGHT,
         if recording { TEXT } else { TEXT_MUTED },
     );
+}
+
+/// A speaker with two sound waves, 17 x 14 px, in the recording bar while sound is going to the
+/// speaker, where a take records it. A cold reader could not tell what the word SPEAKER there
+/// meant. Drawn a bar at a time: a stroked line would add about 1 KB of drawing code to the X8 patch.
+fn speaker_icon(fb: Fb, x: i32, cy: i32) {
+    // The magnet, the cone widening to the right, then a short and a long wave.
+    let bars = [(0, 4, 3), (4, 1, 3), (5, 1, 4), (6, 1, 5), (7, 1, 6), (8, 1, 7), (11, 2, 3), (15, 2, 6)];
+    for (dx, w, half) in bars {
+        fill(fb, Rectangle::new(Point::new(x + dx, cy - half), Size::new(w, 2 * half as u32)), TEXT);
+    }
 }
 
 /// Over the waterfall while the input's sample rate is not 192 kHz: the app
@@ -864,7 +875,8 @@ fn auto_volume_row(app: &BatApp, fb: Fb) {
     let r = control_row(Setting::AutoLevel);
     let (x, y) = (r.top_left.x, r.top_left.y);
     let after = text(fb, &BODY, "Auto volume", x + 10, y + 14, LEFT, TEXT);
-    text(fb, &SMALL, "headphones", after + 5, y + 14, LEFT, TEXT_MUTED);
+    // Auto volume changes what is heard, in headphones or on the speaker, and not what is recorded.
+    text(fb, &SMALL, "listening only", after + 5, y + 14, LEFT, TEXT_MUTED);
     for (i, &volume) in AutoVolume::ALL.iter().enumerate() {
         let c = auto_volume_choice(i);
         let selected = volume == app.auto_volume();
@@ -901,7 +913,9 @@ fn settings(app: &BatApp, fb: Fb) {
         SettingsPage::Phone => pages::phone(app, fb),
         SettingsPage::Tests => pages::tests(app, fb),
     }
-    text(fb, &SMALL, "These settings reset when the recorder is turned off.", 16, SETTINGS_NOTE, LEFT, TEXT_MUTED);
+    if app.settings_reset_at_power_off() {
+        text(fb, &SMALL, "These settings reset when the recorder is turned off.", 16, SETTINGS_NOTE, LEFT, TEXT_MUTED);
+    }
     rounded(fb, DONE, 4, ACCENT);
     text(fb, &BODY_BOLD, "Done", DONE.center().x, DONE.top_left.y + 28, CENTER, TEXT);
 }

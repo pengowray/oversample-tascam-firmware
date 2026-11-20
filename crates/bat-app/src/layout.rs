@@ -153,7 +153,8 @@ pub const MENU: Rectangle = Rectangle::new(Point::new(0, 0), Size::new(40, TITLE
 /// the setting does; then the Auto volume row, with its three choices; then, under a heading, the
 /// sounds to mark, one compact row each, with a colour swatch, a name and a line of help on the left
 /// and the switch on the right. Record and Tests have panels with a name, a switch or a button, and
-/// up to three lines of help. Every page ends with the note that the settings reset at power-off
+/// up to three lines of help. Every page ends with the note that the settings reset at power-off (on a
+/// host that keeps them, only the Tests page has it)
 /// and the Done button.
 pub const TABS_TOP: i32 = 29;
 pub const TAB_H: i32 = 32;

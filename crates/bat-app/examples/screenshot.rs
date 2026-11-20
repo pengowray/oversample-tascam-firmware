@@ -210,6 +210,8 @@ fn main() {
     app.set_guano(std::env::var("GUANO").as_deref() != Ok("off"));
     app.set_pause_option_available(debug && std::env::var("PLAYBACK").is_err());
     app.set_mute_while_recording(std::env::var("MUTE").as_deref() == Ok("on"));
+    // As the X8 patch, which keeps the settings in the X8's settings record.
+    app.set_settings_kept(std::env::var("X8").is_ok());
     // SPEAKER=on: the host plays through its speaker. SPEAKER=hostoff: its own setting is off.
     // SPEAKER=switchoff: the app's Speaker switch is off.
     if let Ok(speaker) = std::env::var("SPEAKER") {

@@ -183,6 +183,11 @@ pub const MANUAL_PHANTOM: *mut u8 = 0x81e8_cc86 as *mut u8;
 /// The phantom power pending flags for inputs 3 to 6, one byte each. Any set after
 /// `PHANTOM_ALL_OFF` brings up the phantom power question.
 pub const PHANTOM_PENDING: *mut u32 = 0x81e8_6864 as *mut u32;
+/// Settings + 0xFE0: 16 of the record's spare bytes, for the bat app's settings. The record is
+/// 0x1000 bytes with a byte sum of the first 0xFFC in its last word. `FUN_80da2778` saves all of it
+/// and `FUN_80da0774` loads all of it, and neither they nor the defaults touch anything between
+/// + 0xB62 and the sum. The defaults leave zeros there, which the bat app does not accept.
+pub const BAT_SETTINGS: *mut [u8; 16] = 0x81e8_d85c as *mut [u8; 16];
 /// `FUN_80da2778(defaults)`: with 0, saves the settings record, the app byte
 /// among them, to the next slot in flash (Thumb address). The next start
 /// opens the app the saved byte names.

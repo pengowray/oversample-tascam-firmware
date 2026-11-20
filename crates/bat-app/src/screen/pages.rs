@@ -43,8 +43,6 @@ pub(super) const SPEAKER_NAME: &str = "Speaker";
 pub(super) const SPEAKER_STATE: [&str; 2] =
     ["Sound plays through headphones only", "Plays when no headphones are plugged in"];
 pub(super) const SPEAKER_HOST_OFF: &str = "Silent: SPEAKER is off in GENERAL SETTINGS";
-/// In the recording bar while sound is going to the speaker, where a take records it.
-pub(super) const SPEAKER_LABEL: &str = "SPEAKER";
 /// The X8 patch's answer to a USB supply under 1.5 A: POWER SOURCE SELECT to BATTERY, in place of
 /// the stock question whose No turns on POWER SAVE MODE (44.1 and 48 kHz only).
 pub(super) const POWER_NAME: &str = "Run from batteries on weak USB";

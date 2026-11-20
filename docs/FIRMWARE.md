@@ -271,6 +271,9 @@ Drawing uses `embedded-graphics` and `u8g2-fonts`.
   `crates/x8-patch/src/patch/keys.rs`.
 - `touch_hook` replaces the touch poll's only call that passes a touch to Qt (`bl` at 0x80DF501A,
   task 9). While the bat screen is up, touches go to the bat app.
+- From B283 the power-off hook (`power_off_save_hook`) also writes the bat app's settings into 16
+  spare bytes of the stock settings record (settings + 0xFE0) before the stock save, and the app reads
+  them when it is built. See "The settings record's spare bytes" in [HOMEBREW.md](HOMEBREW.md).
 - `speaker_hook` and `output_power_hook` (from B281) replace two reads in the stock functions that
   switch the built-in speaker and the output stage (`bl` at 0x80DA00C6 and 0x80D9FF9A). While the bat
   app's sound is the output, GENERAL SETTINGS > SPEAKER is on and no headphones are in, the stock

@@ -26,6 +26,7 @@ mod phone_time;
 pub mod player;
 mod qr;
 mod remote;
+mod saved;
 mod screen;
 mod stages;
 
@@ -45,6 +46,7 @@ pub use level::AutoVolume;
 pub use phone_time::{ClockState, PhoneTime};
 pub use player::{FileEntry, Player};
 pub use remote::{ListeningMode, RecorderCommand, RemoteCommand, RemoteResult};
+pub use saved::SAVED_BYTES;
 pub use stages::Stage;
 
 /// Screen size in pixels.
@@ -698,6 +700,8 @@ pub struct BatApp<'a> {
     speaker: bool,
     /// See [`set_host_speaker`](Self::set_host_speaker).
     host_speaker: Option<bool>,
+    /// See [`set_settings_kept`](Self::set_settings_kept).
+    settings_kept: bool,
     /// See [`speaker_switch`](Self::speaker_switch).
     speaker_switch: bool,
     /// The output's gain for Mute while recording and for 1:1 on a speaker: 1 heard, 0 silent,
@@ -882,6 +886,7 @@ impl<'a> BatApp<'a> {
             field!((*this).draw_on_input).write(false);
             field!((*this).speaker).write(false);
             field!((*this).host_speaker).write(None);
+            field!((*this).settings_kept).write(false);
             field!((*this).speaker_switch).write(true);
             field!((*this).listen_gain).write(1.0);
             field!((*this).modes_skipped).write(false);
@@ -1644,6 +1649,17 @@ impl<'a> BatApp<'a> {
     /// Whether the output would go to the speaker: the host would play it and the switch is on.
     pub fn speaker(&self) -> bool {
         self.speaker && self.speaker_switch
+    }
+
+    /// The host keeps [`saved_settings`](Self::saved_settings) across power-off, so the settings
+    /// pages leave out the note that the settings reset, except on the Tests page, whose switches
+    /// are not saved.
+    pub fn set_settings_kept(&mut self, kept: bool) {
+        self.settings_kept = kept;
+    }
+
+    pub fn settings_reset_at_power_off(&self) -> bool {
+        !self.settings_kept || self.settings_page() == SettingsPage::Tests
     }
 
     /// The host has a speaker with a setting of its own, on or off (the X8's GENERAL SETTINGS >

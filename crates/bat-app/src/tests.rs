@@ -12,6 +12,7 @@ mod cpu_test;
 mod mute;
 mod player;
 mod remote;
+mod saved;
 mod stereo;
 
 const FS: f32 = 192_000.0;

@@ -2364,7 +2364,47 @@ B241 or an earlier build. All the checks in `tools/x8patch.py` pass on this file
 1. **Start and stop.** With Phone remote on and the phone page reloaded, do `Start recording` and `Stop recording` work as before?
 2. **Old phone page.** If a phone still has the old page cached, its commands should do nothing at all. Reload the page.
 
-## Step 51 test file: a Speaker switch, SPEAKER in the recording bar (built 2026-11-20, not yet installed)
+## Step 52 test file: the bat app's settings survive power-off, a speaker icon (built 2026-11-20, not yet installed)
+
+`work/patch58/#PortaX8_0283.203` (B283, SHA-256 `3c56f53b…4c38360d`). B282 (Step 51) with the changes below; Steps 50
+and 51's checks still apply, and this file replaces B282. All the checks in `tools/x8patch.py` pass, and two builds
+give the same file. Nothing in this step has run on a unit.
+
+**What changes.**
+
+- **The bat app's settings are kept across power-off.** Saved: the listening mode with HET's and COMB's tuning, Lowest
+  bat call, Auto volume, Sounds to mark, and every switch on the Record and Phone pages, with the phone code. Not
+  saved: Listen to, which follows the inputs turned on in MANUAL, and the Tests page's two switches. The note `These
+  settings reset when the recorder is turned off.` now shows only on the Tests page.
+- **Where.** 16 bytes at settings + 0xFE0 (0x81E8D85C), in the unused end of the stock settings record. The patch
+  writes them only in `power_off_save_hook`, with interrupts off, just before the stock save sums the record and
+  writes it to flash. So they are saved by a normal power-off after a bat screen has been opened, and not when the
+  batteries are pulled. The app reads them when it is built, the first time a bat screen opens. The bytes carry a
+  version and a check byte; the stock defaults leave zeros there, which the app ignores. An X8 reset to its factory
+  settings resets the bat app's settings too. How the record was read is in
+  [The settings record's spare bytes](#the-settings-records-spare-bytes-2026-11-20).
+- **A speaker icon** replaces the word `SPEAKER` in the recording bar: a cold reader could not tell what the word
+  meant there.
+- **Auto volume's tag** on the Listen page reads `listening only`, not `headphones`: it also sets the speaker's
+  level, and the tag's point is that the recording is not changed.
+
+**Memory.** Patch region free: 248 bytes (1,952 fewer than B282). The next feature needs room made first. No new
+stock hook site (header version 24).
+
+**What to check.** After the checks of Steps 50 and 51:
+
+1. **Kept.** Change the mode, HET's tuning, Auto volume, a mark and two Record switches. Power off with the power
+   switch, power on, open BAT DETECTOR. Are they all as left?
+2. **Stock settings unharmed.** After that power cycle, are the stock settings as before (record rate, file format,
+   the inputs turned on in MANUAL, BACKLIGHT)? This is the check that the spare bytes are spare.
+3. **Phone code.** With Phone code on, note the code, power off and on. Is the code the same, and does the phone page
+   still work with it?
+4. **Never opened.** Power on and off without opening a bat screen, then power on and open one. Are the settings
+   still the ones saved before?
+5. **Older file.** Install B280 or earlier over B283, then B283 again. Do the stock settings and the bat settings both
+   survive? The older builds do not touch the 16 bytes.
+
+## Step 51 test file: a Speaker switch, SPEAKER in the recording bar (built 2026-11-20, never installed: superseded by B283)
 
 `work/patch57/#PortaX8_0282.203` (B282, SHA-256 `bb7ea1bb…0a985ec2`). B281 (Step 50) with three changes to the bat
 app; Step 50's checks still apply, and this file replaces B281. All the checks in `tools/x8patch.py` pass, and two
@@ -4416,6 +4456,20 @@ Changed in Oversample commit `b2bf6a1` (2026-11-11, not pushed). Before it, the 
   of 3- and 4-byte samples, since Oversample writes USB recordings at 16 bits.
 - Since then (a1cf9df and 4b71a26, 2026-11-11 and 12) it records USB audio at the device's own depth, up to 32-bit
   float. From `c302cd4` (2026-11-16) it takes 32-bit float stereo from B276 and later: see Step 45.
+
+## The settings record's spare bytes (2026-11-20)
+
+Read from V2.03 in Ghidra; not checked on a unit (Step 52 check 2).
+
+- The settings record is 0x1000 bytes at 0x81E8C87C. `FUN_80da2778` (save) adds up its first 0xFFC bytes one at a
+  time, stores the sum as a word at + 0xFFC, and writes the whole record to the next of 16 flash slots.
+  `FUN_80da0774` (load) reads a whole slot back into the same place and accepts it when the sum and the signature
+  at its start match. Both keep a copy of the record at 0x81E8D87C.
+- The highest offset that the save, the load and the defaults (`FUN_80da4230`, and the save's own defaults branch)
+  write is + 0xB61. The defaults clear the whole record first. No literal in the firmware holds an address between
+  + 0xB62 and + 0xFFB. Code that reaches the record with a computed offset would not show in that search, so
+  "unused" is likely, not proven.
+- The patch uses + 0xFE0 to + 0xFEF, the far end from the stock fields.
 
 ## The built-in speaker (2026-11-20)
 

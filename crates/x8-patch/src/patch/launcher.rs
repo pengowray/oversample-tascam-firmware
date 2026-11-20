@@ -2,7 +2,7 @@ use core::ptr;
 use core::sync::atomic::{Ordering::Acquire, Ordering::Relaxed, Ordering::Release};
 
 use super::qt::{QtImage, QtTile};
-use super::state::{BLOCKS, LAUNCH_AT, LAUNCH_FROM, LAUNCHING, PLAYBACK, PLAYBACK_OPENING, SCREEN_APP};
+use super::state::{APP_READY, BLOCKS, LAUNCH_AT, LAUNCH_FROM, LAUNCHING, PLAYBACK, PLAYBACK_OPENING, SCREEN_APP};
 use super::{Handler, app_byte, bat_glyph, blocks_per_second, play_glyph, stock, system_mode};
 
 /// The bat tiles, in USER SETTINGS slots 2 and 3 (slots 0 to 2 in the
@@ -71,6 +71,9 @@ pub(super) unsafe extern "C" fn tile_hook(bridge: usize, slot: usize, c: usize, 
 /// call is left alone because that task runs alongside task 1, which would
 /// read the LAUNCHER as the open app and close the bat screen.
 ///
+/// The bat app's settings are saved in the same record (`stock::BAT_SETTINGS`), once a bat screen
+/// has been opened since start-up.
+///
 /// When the patch has set POWER SOURCE SELECT to BATTERY for a weak USB supply, the record is saved
 /// with AUTO, the user's setting.
 pub(super) unsafe extern "C" fn power_off_save_hook(a: usize, b: usize, c: usize, d: usize) -> usize {
@@ -78,6 +81,12 @@ pub(super) unsafe extern "C" fn power_off_save_hook(a: usize, b: usize, c: usize
         // SAFETY: the POWER SOURCE SELECT byte in the settings record; interrupts are off, and the
         // X8 is powering off, so the power path that the RAM byte no longer matches does not matter.
         unsafe { ptr::write_volatile(stock::POWER_SOURCE, source) };
+    }
+    if APP_READY.load(Relaxed) {
+        // The bat app's settings go into spare bytes of the record, only here: the save sums the
+        // record next, and with interrupts off no task can be part way through either.
+        // SAFETY: the app is built, and its task cannot run until interrupts are back on.
+        unsafe { ptr::write_volatile(stock::BAT_SETTINGS, super::task::app().saved_settings()) };
     }
     // SAFETY: the stock function the power-off sequence called, with its arguments.
     let save: Handler = unsafe { core::mem::transmute(stock::SAVE_SETTINGS) };
