@@ -2,7 +2,9 @@ use core::ptr;
 use core::sync::atomic::{Ordering::Acquire, Ordering::Relaxed, Ordering::Release};
 
 use super::qt::{QtImage, QtTile};
-use super::state::{APP_READY, BLOCKS, LAUNCH_AT, LAUNCH_FROM, LAUNCHING, PLAYBACK, PLAYBACK_OPENING, SCREEN_APP};
+use super::state::{
+    APP_READY, BLOCKS, ITCM_OK, LAUNCH_AT, LAUNCH_FROM, LAUNCHING, PLAYBACK, PLAYBACK_OPENING, SCREEN_APP,
+};
 use super::{Handler, app_byte, bat_glyph, blocks_per_second, play_glyph, stock, system_mode};
 
 /// The bat tiles, in USER SETTINGS slots 2 and 3 (slots 0 to 2 in the
@@ -82,7 +84,7 @@ pub(super) unsafe extern "C" fn power_off_save_hook(a: usize, b: usize, c: usize
         // X8 is powering off, so the power path that the RAM byte no longer matches does not matter.
         unsafe { ptr::write_volatile(stock::POWER_SOURCE, source) };
     }
-    if APP_READY.load(Relaxed) {
+    if APP_READY.load(Relaxed) && ITCM_OK.load(Relaxed) {
         // The bat app's settings go into spare bytes of the record, only here: the save sums the
         // record next, and with interrupts off no task can be part way through either.
         // SAFETY: the app is built, and its task cannot run until interrupts are back on.

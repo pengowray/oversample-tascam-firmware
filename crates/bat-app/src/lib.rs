@@ -46,7 +46,7 @@ pub use level::AutoVolume;
 pub use phone_time::{ClockState, PhoneTime};
 pub use player::{FileEntry, Player};
 pub use remote::{ListeningMode, RecorderCommand, RemoteCommand, RemoteResult};
-pub use saved::SAVED_BYTES;
+pub use saved::{SAVED_BYTES, saved_cells_on_weak_usb};
 pub use stages::Stage;
 
 /// Screen size in pixels.
@@ -1715,8 +1715,7 @@ impl<'a> BatApp<'a> {
         self.power_option_available
     }
 
-    /// Whether the host runs from its cells when a USB supply is weak. On by default, and at every
-    /// start, since the settings reset at power-off.
+    /// Whether the host runs from its cells when a USB supply is weak. On by default.
     pub fn cells_on_weak_usb(&self) -> bool {
         self.cells_on_weak_usb
     }

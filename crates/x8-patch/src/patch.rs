@@ -7,11 +7,11 @@ use core::ptr;
 mod audio;
 /// BAT DETECTOR's launcher glyph.
 mod bat_glyph;
+/// Sets the X8's clock from the phone's chimes, and keeps the phone's time for GUANO metadata.
+mod clock;
 /// The CPU test's logs: taken from the app on the DSP task, written to `CPU_TEST.TXT` as a take's
 /// files close.
 mod cpu_log;
-/// Sets the X8's clock from the phone's chimes, and keeps the phone's time for GUANO metadata.
-mod clock;
 /// Adds GUANO metadata to the WAV files of takes from a bat tile as the stock recorder closes them.
 mod guano_file;
 /// Which inputs the app hears, from the track settings.
@@ -38,8 +38,6 @@ mod play_glyph;
 mod playback;
 /// Runs from the cells when a USB supply is weak, instead of POWER SAVE MODE.
 mod power;
-/// The built-in speaker on the bat screens: two hooks, and the stock functions that switch it.
-mod speaker;
 /// Qt for MCUs image descriptors.
 mod qt;
 /// BAT PLAYBACK's card reader task: lists the WAV files, reads their headers and the file playing.
@@ -53,6 +51,8 @@ mod screen;
 /// uncached, so the display controller sees what is written without cache
 /// maintenance.
 mod spare;
+/// The built-in speaker on the bat screens: two hooks, and the stock functions that switch it.
+mod speaker;
 /// The statics that the audio interrupt, the tasks and the hooks share. Reordering them moves the
 /// stacks and rings relative to each other, and changes the offsets and register use in the generated
 /// code, because LLVM merges the small ones into blocks in the order they are defined here.
@@ -197,7 +197,9 @@ unsafe impl<T> Sync for Slot<T> {}
 fn without_interrupts(f: impl FnOnce()) {
     let primask: u32;
     // SAFETY: reads PRIMASK and masks interrupts; restored below.
-    unsafe { core::arch::asm!("mrs {}, PRIMASK", "cpsid i", out(reg) primask, options(nomem, nostack, preserves_flags)) };
+    unsafe {
+        core::arch::asm!("mrs {}, PRIMASK", "cpsid i", out(reg) primask, options(nomem, nostack, preserves_flags))
+    };
     f();
     if primask & 1 == 0 {
         // SAFETY: interrupts were on before.

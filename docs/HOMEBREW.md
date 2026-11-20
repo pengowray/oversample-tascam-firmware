@@ -2366,7 +2366,7 @@ B241 or an earlier build. All the checks in `tools/x8patch.py` pass on this file
 
 ## Step 52 test file: the bat app's settings survive power-off, a speaker icon (built 2026-11-20, not yet installed)
 
-`work/patch58/#PortaX8_0283.203` (B283, SHA-256 `3c56f53b…4c38360d`). B282 (Step 51) with the changes below; Steps 50
+`work/patch58/#PortaX8_0283.203` (B283, SHA-256 `69892f88…f73ebb92`). B282 (Step 51) with the changes below; Steps 50
 and 51's checks still apply, and this file replaces B282. All the checks in `tools/x8patch.py` pass, and two builds
 give the same file. Nothing in this step has run on a unit.
 
@@ -2379,7 +2379,8 @@ give the same file. Nothing in this step has run on a unit.
 - **Where.** 16 bytes at settings + 0xFE0 (0x81E8D85C), in the unused end of the stock settings record. The patch
   writes them only in `power_off_save_hook`, with interrupts off, just before the stock save sums the record and
   writes it to flash. So they are saved by a normal power-off after a bat screen has been opened, and not when the
-  batteries are pulled. The app reads them when it is built, the first time a bat screen opens. The bytes carry a
+  batteries are pulled. The app reads them when it is built, the first time a bat screen opens; `Run from batteries
+  on weak USB` is read at task 1's first message, because it acts before then. The bytes carry a
   version and a check byte; the stock defaults leave zeros there, which the app ignores. An X8 reset to its factory
   settings resets the bat app's settings too. How the record was read is in
   [The settings record's spare bytes](#the-settings-records-spare-bytes-2026-11-20).
@@ -2388,7 +2389,7 @@ give the same file. Nothing in this step has run on a unit.
 - **Auto volume's tag** on the Listen page reads `listening only`, not `headphones`: it also sets the speaker's
   level, and the tag's point is that the recording is not changed.
 
-**Memory.** Patch region free: 248 bytes (1,952 fewer than B282). The next feature needs room made first. No new
+**Memory.** Patch region free: 88 bytes (2,112 fewer than B282). The next feature needs room made first. No new
 stock hook site (header version 24).
 
 **What to check.** After the checks of Steps 50 and 51:
@@ -2403,6 +2404,10 @@ stock hook site (header version 24).
    still the ones saved before?
 5. **Older file.** Install B280 or earlier over B283, then B283 again. Do the stock settings and the bat settings both
    survive? The older builds do not touch the 16 bytes.
+6. **A preset.** Change a bat setting, power off and on, load USER SETTINGS 1, then power off and on without opening
+   a bat screen. Which bat settings does BAT DETECTOR have then?
+7. **Weak USB.** With `Run from batteries on weak USB` off, power off and on, and plug in a weak USB supply before
+   opening a bat screen. Does the stock question appear?
 
 ## Step 51 test file: a Speaker switch, SPEAKER in the recording bar (built 2026-11-20, never installed: superseded by B283)
 
@@ -4469,6 +4474,8 @@ Read from V2.03 in Ghidra; not checked on a unit (Step 52 check 2).
   write is + 0xB61. The defaults clear the whole record first. No literal in the firmware holds an address between
   + 0xB62 and + 0xFFB. Code that reaches the record with a computed offset would not show in that search, so
   "unused" is likely, not proven.
+- Not read: how USER SETTINGS presets are saved and loaded. If a preset holds a copy of the whole record, loading
+  one puts back the bat app's settings from when the preset was saved (Step 52 check 6).
 - The patch uses + 0xFE0 to + 0xFEF, the far end from the stock fields.
 
 ## The built-in speaker (2026-11-20)

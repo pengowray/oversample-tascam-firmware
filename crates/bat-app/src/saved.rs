@@ -22,6 +22,12 @@ fn check(bytes: &[u8; SAVED_BYTES]) -> u8 {
     !sum
 }
 
+/// The Run from batteries on weak USB switch in saved bytes that pass their check, for a host
+/// that acts on it before the app is built.
+pub fn saved_cells_on_weak_usb(saved: &[u8; SAVED_BYTES]) -> Option<bool> {
+    (saved[0] == VERSION && saved[SAVED_BYTES - 1] == check(saved)).then_some(saved[1] & 0x20 != 0)
+}
+
 impl BatApp<'_> {
     /// The settings to keep across power-off, for [`load_settings`](Self::load_settings).
     #[inline(never)]

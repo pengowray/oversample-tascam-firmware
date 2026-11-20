@@ -4,7 +4,7 @@ use core::sync::atomic::{Ordering::Acquire, Ordering::Relaxed, Ordering::Release
 use bat_app::{BatApp, Button};
 
 use super::audio::install_audio_hook;
-use super::screen::{draw_status_strip, enter_work, close_bat_screen, follow_app, request_enter};
+use super::screen::{close_bat_screen, draw_status_strip, enter_work, follow_app, request_enter};
 use super::state::{
     ACTION_HOME, ACTION_MARK, ACTION_PLAY, ACTION_WHEEL, ACTIONS, ACTIONS_READ, ACTIONS_WRITE, AUDIO_INSTALLED,
     AUDIO_NOT_TRIED, AUDIO_STATE, BAT_ACTIVE, BLOCKS, CALLS, CALLS_AT_SECOND, CALLS_PER_S, DRAGGING, LAST_EVENT,
@@ -109,6 +109,12 @@ unsafe fn on_message(msg: usize, via: Via) {
     }
     if AUDIO_STATE.load(Relaxed) == AUDIO_NOT_TRIED {
         install_audio_hook();
+        // Once, at task 1's first message: the saved Run from batteries on weak USB switch applies
+        // before a bat screen has been opened.
+        // SAFETY: spare bytes of the settings record, loaded at start-up.
+        if let Some(on) = bat_app::saved_cells_on_weak_usb(&unsafe { ptr::read_volatile(stock::BAT_SETTINGS) }) {
+            super::power::SWITCH_ON.store(on, Relaxed);
+        }
     }
     count_call();
     if AUDIO_STATE.load(Relaxed) == AUDIO_INSTALLED {
