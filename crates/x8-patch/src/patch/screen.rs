@@ -106,8 +106,8 @@ pub(super) extern "C" fn enter_work() {
         app.set_feed(Feed::Mix);
         super::playback::init(app);
         // What the last power-off saved in the stock settings record (`launcher::power_off_save_hook`).
-        // SAFETY: spare bytes of the record, which the stock firmware loaded at start-up.
-        app.load_settings(&unsafe { ptr::read_volatile(stock::BAT_SETTINGS) });
+        // SAFETY: task 1 wrote the copy at its first message, and only task 1 uses it.
+        app.load_settings(unsafe { (*super::state::BOOT_SETTINGS.0.get()).assume_init_ref() });
         app.set_settings_kept(true);
         APP_READY.store(true, Relaxed);
         start_task();

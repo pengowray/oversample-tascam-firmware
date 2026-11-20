@@ -82,9 +82,11 @@ const MIN_FLOOR_DB: f32 = -140.0;
 /// hops 128 to 191 it takes three. See the `hop_compare` example.
 pub const FFT_HOP: usize = 192;
 const FFT_N: usize = 512;
-/// Detector columns kept for call snapshots: 192 × 1 ms = 192 ms, longer than
-/// the longest call the detector reports (100 ms).
-const HISTORY: usize = 192;
+/// Detector columns kept for call snapshots: 160 × 1 ms = 160 ms. The longest call the
+/// detector reports is 100 ms, and a snapshot needs 106 ms with its margins and the 2 ms
+/// before a call is reported (a test checks this). It was 192 until B284, when the X8 patch
+/// needed the room: a column is 265 bytes of the patch region.
+const HISTORY: usize = 160;
 /// Bins per spectrum column.
 const BINS: usize = FFT_N / 2 + 1;
 /// A snapshot shows the call's own frequency range plus this much either

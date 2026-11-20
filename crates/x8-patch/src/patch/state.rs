@@ -172,6 +172,12 @@ pub(super) struct DspStack([u8; DSP_STACK_BYTES]);
 #[unsafe(link_section = ".dtcm")]
 pub(super) static DSP_STACK: Slot<DspStack> = Slot(UnsafeCell::new(MaybeUninit::uninit()));
 
+/// The bat app's saved settings as the settings record held them at task 1's first message
+/// (`stock::BAT_SETTINGS`). Loading a USER SETTINGS preset replaces the whole record with a copy
+/// from when the preset was saved, these bytes included, so the app is built from this copy and
+/// power-off writes it back when no bat screen was opened. Zeros until then.
+pub(super) static BOOT_SETTINGS: Slot<[u8; 16]> = Slot(UnsafeCell::new(MaybeUninit::zeroed()));
+
 /// Where Qt's present function writes while the bat screen is up (it writes
 /// at offsets 0x0, 0x10 and 0x4c of what it takes for the LCDIF registers).
 pub(super) static DUMMY_LCDIF: Slot<[u32; 32]> = Slot(UnsafeCell::new(MaybeUninit::zeroed()));

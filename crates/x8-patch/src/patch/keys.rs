@@ -109,10 +109,13 @@ unsafe fn on_message(msg: usize, via: Via) {
     }
     if AUDIO_STATE.load(Relaxed) == AUDIO_NOT_TRIED {
         install_audio_hook();
-        // Once, at task 1's first message: the saved Run from batteries on weak USB switch applies
-        // before a bat screen has been opened.
-        // SAFETY: spare bytes of the settings record, loaded at start-up.
-        if let Some(on) = bat_app::saved_cells_on_weak_usb(&unsafe { ptr::read_volatile(stock::BAT_SETTINGS) }) {
+        // Once, at task 1's first message, before a preset can be loaded: keep the bat app's saved
+        // settings. The saved Run from batteries on weak USB switch applies from now, before a bat
+        // screen has been opened.
+        // SAFETY: spare bytes of the settings record, loaded at start-up; only task 1 writes the copy.
+        let saved = unsafe { ptr::read_volatile(stock::BAT_SETTINGS) };
+        unsafe { (*super::state::BOOT_SETTINGS.0.get()).write(saved) };
+        if let Some(on) = bat_app::saved_cells_on_weak_usb(&saved) {
             super::power::SWITCH_ON.store(on, Relaxed);
         }
     }

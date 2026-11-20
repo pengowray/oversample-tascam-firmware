@@ -84,11 +84,19 @@ pub(super) unsafe extern "C" fn power_off_save_hook(a: usize, b: usize, c: usize
         // X8 is powering off, so the power path that the RAM byte no longer matches does not matter.
         unsafe { ptr::write_volatile(stock::POWER_SOURCE, source) };
     }
-    if APP_READY.load(Relaxed) && ITCM_OK.load(Relaxed) {
-        // The bat app's settings go into spare bytes of the record, only here: the save sums the
-        // record next, and with interrupts off no task can be part way through either.
-        // SAFETY: the app is built, and its task cannot run until interrupts are back on.
-        unsafe { ptr::write_volatile(stock::BAT_SETTINGS, super::task::app().saved_settings()) };
+    // The bat app's settings go into spare bytes of the record, only here: the save sums the
+    // record next, and with interrupts off no task can be part way through either. With no bat
+    // screen opened since start-up they are the bytes from start-up, whatever a preset put there.
+    // SAFETY: the app, once built, and the copy, which are not changed while interrupts are off.
+    unsafe {
+        let saved = if APP_READY.load(Relaxed) && ITCM_OK.load(Relaxed) {
+            super::task::app().saved_settings()
+        } else {
+            (*super::state::BOOT_SETTINGS.0.get()).assume_init()
+        };
+        if saved[0] != 0 {
+            ptr::write_volatile(stock::BAT_SETTINGS, saved);
+        }
     }
     // SAFETY: the stock function the power-off sequence called, with its arguments.
     let save: Handler = unsafe { core::mem::transmute(stock::SAVE_SETTINGS) };
