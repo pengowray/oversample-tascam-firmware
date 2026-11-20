@@ -877,10 +877,14 @@ fn outline_selected(fb: Fb, r: Rectangle) {
 fn auto_volume_row(app: &BatApp, fb: Fb) {
     let r = control_row(Setting::AutoLevel);
     let (x, y) = (r.top_left.x, r.top_left.y);
-    let after = text(fb, &BODY, "Auto volume", x + 10, y + 14, LEFT, TEXT);
+    let after = text(fb, &BODY, "Auto volume", x + 10, y + 16, LEFT, TEXT);
     // Auto volume changes what is heard, in headphones or on the speaker, and not what is recorded.
-    // A cold reader took "listening only" to mean that it works only while not recording.
-    text(fb, &SMALL, "not recorded", after + 5, y + 14, LEFT, TEXT_MUTED);
+    // Cold readers took "listening only" to mean that it works only while not recording, and
+    // "not recorded" to be a status.
+    text(fb, &SMALL, "recording is not changed", after + 5, y + 16, LEFT, TEXT_MUTED);
+    // What the chosen option does, as the switches' lines say what their setting does.
+    let help = pages::AUTO_VOLUME_STATE[AutoVolume::ALL.iter().position(|&v| v == app.auto_volume()).unwrap_or(0)];
+    text(fb, &SMALL, help, x + 10, y + 52, LEFT, TEXT_MUTED);
     for (i, &volume) in AutoVolume::ALL.iter().enumerate() {
         let c = auto_volume_choice(i);
         let selected = volume == app.auto_volume();
@@ -912,8 +916,11 @@ fn settings(app: &BatApp, fb: Fb) {
         text(fb, &BODY, page.label(), r.center().x, r.top_left.y + 21, CENTER, TEXT);
     }
     match app.settings_page() {
-        SettingsPage::Listen => listen_page(app, fb),
-        SettingsPage::Output => pages::output(app, fb),
+        SettingsPage::Sound => {
+            stepped_and_marks(app, fb, SettingsPage::Sound);
+            pages::sound(app, fb);
+        }
+        SettingsPage::Detect => stepped_and_marks(app, fb, SettingsPage::Detect),
         SettingsPage::Record => pages::record(app, fb),
         SettingsPage::Phone => pages::phone(app, fb),
         SettingsPage::Tests => pages::tests(app, fb),
@@ -925,10 +932,11 @@ fn settings(app: &BatApp, fb: Fb) {
     text(fb, &BODY_BOLD, "Done", DONE.center().x, DONE.top_left.y + 28, CENTER, TEXT);
 }
 
-/// The two stepped settings and the sounds to mark.
-fn listen_page(app: &BatApp, fb: Fb) {
-    for (i, setting) in Setting::ALL.iter().enumerate() {
-        if setting.page() != SettingsPage::Listen {
+/// A page's stepped setting, at its top (Listen to on Sound, Lowest bat call on Detect), and on
+/// Detect the sounds to mark under it.
+fn stepped_and_marks(app: &BatApp, fb: Fb, page: SettingsPage) {
+    for setting in Setting::ALL.iter() {
+        if setting.page() != page || !matches!(setting, Setting::LowestBatCall | Setting::ListenTo | Setting::Mark(_)) {
             continue;
         }
         let selected = app.selected_setting() == *setting;
@@ -986,7 +994,7 @@ fn listen_page(app: &BatApp, fb: Fb) {
             switch_control(fb, switch(*setting), on);
             continue;
         }
-        let r = setting_row(i);
+        let r = setting_row(0);
         rounded(fb, r, 6, PANEL);
         if selected {
             // The row the wheel changes.
@@ -1041,7 +1049,7 @@ fn listen_page(app: &BatApp, fb: Fb) {
         if *setting == Setting::ListenTo && !app.listen_has_choices() {
             continue;
         }
-        for (b, plus) in [(setting_minus(i), false), (setting_plus(i), true)] {
+        for (b, plus) in [(setting_minus(0), false), (setting_plus(0), true)] {
             rounded(fb, b, 4, BUTTON);
             let c = b.center();
             fill(fb, Rectangle::with_center(c, Size::new(14, 2)), TEXT);
@@ -1049,6 +1057,9 @@ fn listen_page(app: &BatApp, fb: Fb) {
                 fill(fb, Rectangle::with_center(c, Size::new(2, 14)), TEXT);
             }
         }
+    }
+    if page != SettingsPage::Detect {
+        return;
     }
     // Lined up with the text in the panels above.
     text(fb, &BODY_BOLD, "Sounds to mark", 16, SWITCHES_HEADING, LEFT, TEXT);

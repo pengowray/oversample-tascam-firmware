@@ -365,13 +365,13 @@ fn hidden_controls_are_not_tappable() {
     let mut app = BatApp::new(FS, &mut storage, buffers());
     // Without debug figures there is no Tests page to open.
     app.open_settings_page(SettingsPage::Tests);
-    assert_eq!(app.settings_page(), SettingsPage::Listen);
+    assert_eq!(app.settings_page(), SettingsPage::Sound);
     app.set_debug_available(true);
     app.open_settings_page(SettingsPage::Tests);
     let debug = layout::control_row(Setting::DebugInfo).center();
     assert!(app.is_tappable(debug.x, debug.y));
-    app.open_settings_page(SettingsPage::Listen);
-    let minus = layout::setting_minus(1).center();
+    app.open_settings_page(SettingsPage::Sound);
+    let minus = layout::setting_minus(0).center();
     assert!(app.is_tappable(minus.x, minus.y));
     app.set_inputs([Some(InputName { short: "5", long: "Input 5" }), None]);
     assert!(!app.is_tappable(minus.x, minus.y));
@@ -827,7 +827,7 @@ fn the_auto_volume_row_shows_three_choices_a_tap_picks_one_and_the_wheel_steps()
     let mut storage = vec![0.0f32; 1024];
     let mut app = BatApp::new(FS, &mut storage, buffers());
     assert_eq!(app.auto_volume(), AutoVolume::Off);
-    app.open_settings_page(SettingsPage::Output);
+    app.open_settings_page(SettingsPage::Sound);
     let row = layout::control_row(Setting::AutoLevel);
     let (top, bottom) = (row.top_left.y, row.center().y + 18);
     // Every choice can be reached in one tap from any other, at any height of the row.
@@ -1017,15 +1017,19 @@ fn settings_screen_opens_changes_and_closes() {
     let m = layout::MENU.center();
     app.touch(m.x, m.y);
     assert_eq!(app.screen(), Screen::Settings);
-    // The wheel changes the selected row: the first, lowest bat call.
+    // Sound opens first, with Listen to selected. On Detect the wheel changes its first row,
+    // lowest bat call.
+    assert_eq!(app.selected_setting(), Setting::ListenTo);
+    app.open_settings_page(SettingsPage::Detect);
     app.wheel(1);
     assert_eq!(app.lowest_bat_call_hz(), 18_000.0);
     let minus = layout::setting_minus(0).center();
     app.touch(minus.x, minus.y);
     app.touch(minus.x, minus.y);
     assert_eq!(app.lowest_bat_call_hz(), 14_000.0);
-    // + on the second row selects it and moves Listen to on from the mix.
-    let plus = layout::setting_plus(1).center();
+    // + on Sound's first row selects it and moves Listen to on from the mix.
+    app.open_settings_page(SettingsPage::Sound);
+    let plus = layout::setting_plus(0).center();
     app.touch(plus.x, plus.y);
     assert_eq!(app.selected_setting(), Setting::ListenTo);
     assert_eq!(app.source(), MonitorSource::First);
@@ -1106,7 +1110,7 @@ fn switches_flip_on_a_tap_and_follow_the_wheel() {
     let mut app = BatApp::new(FS, &mut storage, buffers());
     assert!(app.is_marked(CallKind::Bat));
     assert!(!app.is_marked(CallKind::Tone) && !app.is_marked(CallKind::Audible) && !app.is_marked(CallKind::Broadband));
-    app.open_settings();
+    app.open_settings_page(SettingsPage::Detect);
     // Steady tones are the second sound to mark: tapping its row anywhere flips it.
     let row = layout::control_row(Setting::Mark(CallKind::Tone));
     app.touch(row.top_left.x + 20, row.center().y);
@@ -1599,10 +1603,10 @@ fn settings_tabs() {
     let mut storage = vec![0.0f32; 1024];
     let mut app = BatApp::new(FS, &mut storage, buffers());
     app.open_settings();
-    assert_eq!(app.settings_page(), SettingsPage::Listen);
+    assert_eq!(app.settings_page(), SettingsPage::Sound);
     assert_eq!(
         app.settings_pages().collect::<Vec<_>>(),
-        [SettingsPage::Listen, SettingsPage::Output, SettingsPage::Phone]
+        [SettingsPage::Sound, SettingsPage::Detect, SettingsPage::Phone]
     );
     app.set_mix_file_available(true);
     app.set_debug_available(true);
@@ -1618,21 +1622,21 @@ fn settings_tabs() {
     assert_eq!(app.selected_setting(), Setting::DebugInfo);
     app.wheel(1);
     assert!(app.debug_info());
-    // Record's MIX file, then back to Listen, where the first setting is selected again.
+    // Record's MIX file, then back to Sound, where the first setting is selected again.
     app.open_settings_page(SettingsPage::Record);
     assert_eq!(app.selected_setting(), Setting::MixFile);
     app.wheel(-1);
     assert!(!app.mix_file());
-    app.open_settings_page(SettingsPage::Listen);
-    assert_eq!(app.selected_setting(), Setting::LowestBatCall);
+    app.open_settings_page(SettingsPage::Sound);
+    assert_eq!(app.selected_setting(), Setting::ListenTo);
     // The page stays when the settings screen is closed and opened again.
     app.open_settings_page(SettingsPage::Record);
     app.button(Button::Home);
     app.open_settings();
     assert_eq!(app.settings_page(), SettingsPage::Record);
-    // A host that stops offering Record's items shows Listen in its place.
+    // A host that stops offering Record's items shows Sound in its place.
     app.set_mix_file_available(false);
-    assert_eq!(app.settings_page(), SettingsPage::Listen);
+    assert_eq!(app.settings_page(), SettingsPage::Sound);
     assert!(draw(&app).iter().any(|&p| p != 0));
 }
 

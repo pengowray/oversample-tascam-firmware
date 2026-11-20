@@ -4,7 +4,7 @@
 //!
 //! SECONDS: how much of the file to play first (default: all of it).
 //! MODE: het, comb, fd, te, pitch, settings for the settings screen, chime for the chime
-//! test, which listens to the file, tools for the settings screen's Tests page (PAGE=record for Record, PAGE=output for Output), cputest for the CPU test's
+//! test, which listens to the file, tools for the settings screen's Tests page (PAGE=record for Record, PAGE=sound for Sound, PAGE=detect for Detect), cputest for the CPU test's
 //! screen (CPU_ROWS=N runs N rows first, with made-up figures, and CPU_STOP=1 stops it early)
 //! or cpurun for the main screen during a CPU test (default het). SCALE: 1 to 4 (default 2).
 //! OFFSET, RANGE (dB) and PER_ROW (0 or 1): waterfall contrast, as
@@ -272,10 +272,11 @@ fn main() {
     if args.get(4).map(String::as_str) == Some("settings") {
         app.open_settings_page(match std::env::var("PAGE").as_deref() {
             Ok("record") => bat_app::SettingsPage::Record,
-            Ok("output") => bat_app::SettingsPage::Output,
+            Ok("sound") => bat_app::SettingsPage::Sound,
+            Ok("detect") => bat_app::SettingsPage::Detect,
             Ok("phone") => bat_app::SettingsPage::Phone,
             Ok("tests") => bat_app::SettingsPage::Tests,
-            _ => bat_app::SettingsPage::Listen,
+            _ => bat_app::SettingsPage::Sound,
         });
     }
     match args.get(4).map(String::as_str) {
@@ -289,7 +290,8 @@ fn main() {
             app.set_mix_file_available(true);
             app.open_settings_page(match std::env::var("PAGE").as_deref() {
                 Ok("record") => bat_app::SettingsPage::Record,
-                Ok("output") => bat_app::SettingsPage::Output,
+                Ok("sound") => bat_app::SettingsPage::Sound,
+                Ok("detect") => bat_app::SettingsPage::Detect,
                 Ok("phone") => bat_app::SettingsPage::Phone,
                 _ => bat_app::SettingsPage::Tests,
             });

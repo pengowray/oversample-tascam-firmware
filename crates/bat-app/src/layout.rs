@@ -146,12 +146,12 @@ pub fn mode_button_at(x: i32, y: i32, modes: &[Mode]) -> Option<Mode> {
 /// settings screen.
 pub const MENU: Rectangle = Rectangle::new(Point::new(0, 0), Size::new(40, TITLE_H as u32));
 
-/// Settings screen: up to five pages, picked with tabs under the title bar. Listen has what the
-/// app listens to and the marks; Output has Auto volume and the two switches about what plays;
-/// Record has what a take's files get; Phone has the phone remote; Tests has the debug figures and
-/// the two tests. Below the tabs, Listen has its two stepped settings, one panel
-/// each, with the name and value on the left, - and + buttons on the right, and a line saying what
-/// the setting does; then, under a heading, the
+/// Settings screen: up to five pages, picked with tabs under the title bar. Sound has what is
+/// heard: Listen to, Auto volume and the two switches about what plays. Detect has Lowest bat call
+/// and the marks. Record has what a take's files get; Phone has the phone remote; Tests has the
+/// debug figures and the two tests. Sound and Detect each start with a stepped setting: a panel
+/// with the name and value on the left, - and + buttons on the right, and a line saying what
+/// the setting does. On Detect, under a heading, come the
 /// sounds to mark, one compact row each, with a colour swatch, a name and a line of help on the left
 /// and the switch on the right. Record and Tests have panels with a name, a switch or a button, and
 /// up to three lines of help. Every page ends with the note that the settings reset at power-off (on a
@@ -166,13 +166,13 @@ pub const SETTING_H: i32 = 66;
 const SETTING_GAP: i32 = 4;
 const STEP_W: u32 = 48;
 const STEP_H: u32 = 40;
-/// The Auto volume row, at the top of the Output page. Its choices need more height than a name
-/// and a help line.
-const AUTO_VOLUME_ROW: Rectangle = Rectangle::new(Point::new(6, PAGE_TOP), Size::new(308, 38));
+/// The Auto volume panel, under Listen to on the Sound page: its name, its three choices, and a
+/// line saying what the chosen one does.
+const AUTO_VOLUME_ROW: Rectangle = Rectangle::new(Point::new(6, PAGE_TOP + 70), Size::new(308, 60));
 /// Baselines of the marks' heading and its help line.
-pub const SWITCHES_HEADING: i32 = 222;
-pub const SWITCHES_HELP: i32 = 234;
-const SWITCHES_TOP: i32 = 238;
+pub const SWITCHES_HEADING: i32 = 152;
+pub const SWITCHES_HELP: i32 = 164;
+const SWITCHES_TOP: i32 = 168;
 pub const SWITCH_ROW_H: i32 = 33;
 const SWITCH_ROW_GAP: i32 = 2;
 const SWITCH_W: u32 = 44;
@@ -217,10 +217,10 @@ pub const fn panel_switch(panel: Rectangle) -> Rectangle {
 pub const RECORD_MIX_FILE: Rectangle = panel(PAGE_TOP, 48);
 pub const RECORD_GUANO: Rectangle = panel(PAGE_TOP + 54, 62);
 pub const RECORD_PAUSE: Rectangle = panel(PAGE_TOP + 122, 48);
-/// Output page: Auto volume's row, whether the sound is muted during a take, and the Speaker
-/// switch. All three are about what plays, in the headphones or on the speaker.
-pub const OUTPUT_MUTE: Rectangle = panel(PAGE_TOP + 44, 48);
-pub const OUTPUT_SPEAKER: Rectangle = panel(PAGE_TOP + 98, 48);
+/// Sound page, under Listen to and Auto volume: whether the sound is muted during a take, and
+/// the Speaker switch. The page has everything about what plays, in the headphones or on the speaker.
+pub const SOUND_MUTE: Rectangle = panel(PAGE_TOP + 134, 48);
+pub const SOUND_SPEAKER: Rectangle = panel(PAGE_TOP + 188, 48);
 /// Last on the page: it matters only with USB plugged in, and keeps 96 and 192 kHz available then.
 pub const RECORD_POWER: Rectangle = panel(PAGE_TOP + 176, 48);
 /// Phone page: the phone remote with its status lines, the phone code's switch with the code,
@@ -294,9 +294,9 @@ pub fn control_row(setting: Setting) -> Rectangle {
         Setting::ClockFromRemote => panel_switch_row(PHONE_CLOCK),
         Setting::PhoneCode => panel_switch_row(PHONE_CODE),
         Setting::PauseWithRec => panel_switch_row(RECORD_PAUSE),
-        Setting::MuteWhileRecording => panel_switch_row(OUTPUT_MUTE),
+        Setting::MuteWhileRecording => panel_switch_row(SOUND_MUTE),
         Setting::CellsOnWeakUsb => panel_switch_row(RECORD_POWER),
-        Setting::Speaker => panel_switch_row(OUTPUT_SPEAKER),
+        Setting::Speaker => panel_switch_row(SOUND_SPEAKER),
         Setting::DebugInfo => panel_switch_row(TESTS_DEBUG),
         Setting::DrawOnInput => panel_switch_row(TESTS_DRAW),
         Setting::Mark(kind) => {
@@ -307,14 +307,14 @@ pub fn control_row(setting: Setting) -> Rectangle {
             )
         }
         Setting::LowestBatCall => setting_row(0),
-        Setting::ListenTo => setting_row(1),
+        Setting::ListenTo => setting_row(0),
     }
 }
 
 /// The three choices of the Auto volume row, side by side under its name, in the order of
 /// `AutoVolume::ALL`, across the row's width. A tap anywhere in the row's height picks the choice
-/// at that x, so each target is 38 px high, and any choice is one tap away.
-const AUTO_VOLUME_Y: i32 = 18;
+/// at that x, so each target is 60 px high, and any choice is one tap away.
+const AUTO_VOLUME_Y: i32 = 22;
 const AUTO_VOLUME_H: u32 = 16;
 const AUTO_VOLUME_GAP: i32 = 2;
 const AUTO_VOLUME_W: [i32; 3] = [88, 88, 116];
@@ -346,9 +346,9 @@ pub fn switch(setting: Setting) -> Rectangle {
         Setting::ClockFromRemote => panel_switch(PHONE_CLOCK),
         Setting::PhoneCode => panel_switch(PHONE_CODE),
         Setting::PauseWithRec => panel_switch(RECORD_PAUSE),
-        Setting::MuteWhileRecording => panel_switch(OUTPUT_MUTE),
+        Setting::MuteWhileRecording => panel_switch(SOUND_MUTE),
         Setting::CellsOnWeakUsb => panel_switch(RECORD_POWER),
-        Setting::Speaker => panel_switch(OUTPUT_SPEAKER),
+        Setting::Speaker => panel_switch(SOUND_SPEAKER),
         Setting::DebugInfo => panel_switch(TESTS_DEBUG),
         Setting::DrawOnInput => panel_switch(TESTS_DRAW),
         _ => {
@@ -383,7 +383,8 @@ pub fn settings_hit(x: i32, y: i32, settings: impl Iterator<Item = Setting>) -> 
     for setting in settings {
         let hit = match setting {
             Setting::LowestBatCall | Setting::ListenTo => {
-                let i = if setting == Setting::LowestBatCall { 0 } else { 1 };
+                // Each is the first panel of its own page.
+                let i = 0;
                 if setting_minus(i).contains(p) {
                     Some(SettingsHit::Minus(setting))
                 } else if setting_plus(i).contains(p) {

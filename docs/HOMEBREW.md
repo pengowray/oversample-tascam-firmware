@@ -2364,7 +2364,30 @@ B241 or an earlier build. All the checks in `tools/x8patch.py` pass on this file
 1. **Start and stop.** With Phone remote on and the phone page reloaded, do `Start recording` and `Stop recording` work as before?
 2. **Old phone page.** If a phone still has the old page cached, its commands should do nothing at all. Reload the page.
 
-## Step 53 test file: an Output settings page, presets leave the bat settings alone (built 2026-11-20, not yet installed)
+## Step 54 test file: Sound and Detect settings pages (built 2026-11-20, not yet installed)
+
+`work/patch60/#PortaX8_0285.203` (B285, SHA-256 `09e63dbe…b884f238`). B284 (Step 53) with the settings pages
+rearranged; the checks of Steps 50 to 53 still apply, and this file replaces B284. All the checks in
+`tools/x8patch.py` pass, and two builds give the same file. Nothing in this step has run on a unit.
+
+**What changes.** The tabs are Sound, Detect, Record, Phone, Tests, and SETTINGS opens on Sound.
+
+- **Sound** (B284's Output, renamed, and now first) has everything about what is heard: `Listen to` (from Listen),
+  `Auto volume`, `Mute while recording` and `Speaker`.
+- **Detect** (B284's Listen) has `Lowest bat call` and `Sounds to mark`.
+- **Auto volume** is a full panel: its name, the three choices, and a line for the chosen one: `Volume is set by the
+  X8's volume control only`, `Quiet sounds are raised and loud sounds lowered`, or `Auto volume, and silent between
+  marked sounds`. Its tag reads `recording is not changed`. Cold readers took B283's `listening only` to mean "only
+  while not recording" and B284's `not recorded` to be a status.
+
+The pictures in [screens/](screens/) are from this build: `settings.png` (Sound) and `settings-detect.png`.
+
+**Memory.** Patch region free: 8,120 bytes (392 fewer than B284). No new stock hook site (header version 24).
+
+**What to check.** After the checks of Steps 50 to 53: do SETTINGS open on Sound, do the five tabs open their pages,
+and do taps and the wheel change `Listen to` on Sound and `Lowest bat call` on Detect?
+
+## Step 53 test file: an Output settings page, presets leave the bat settings alone (built 2026-11-20, never installed: superseded by B285)
 
 `work/patch59/#PortaX8_0284.203` (B284, SHA-256 `6be1c4ab…7d4160a1`). B283 (Step 52) with the changes below; the checks of
 Steps 50 to 52 still apply, and this file replaces B283. All the checks in `tools/x8patch.py` pass, and two builds

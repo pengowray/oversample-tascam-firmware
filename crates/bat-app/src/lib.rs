@@ -239,10 +239,11 @@ impl Gesture {
 /// The pages of the settings screen, in the order of their tabs.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum SettingsPage {
-    /// What the app listens to and counts as a bat call, and the sounds to mark.
-    Listen,
-    /// What plays in the headphones and the speaker: Auto volume, Mute while recording, Speaker.
-    Output,
+    /// What is heard, in the headphones and on the speaker: Listen to, Auto volume, Mute while
+    /// recording, Speaker. First, because these are changed most.
+    Sound,
+    /// What counts as a bat call, and the sounds to mark.
+    Detect,
     /// What a take's files get.
     Record,
     /// The phone remote, the phone page's QR code and the chime test: everything the phone page
@@ -254,12 +255,12 @@ pub enum SettingsPage {
 
 impl SettingsPage {
     pub const ALL: [SettingsPage; 5] =
-        [SettingsPage::Listen, SettingsPage::Output, SettingsPage::Record, SettingsPage::Phone, SettingsPage::Tests];
+        [SettingsPage::Sound, SettingsPage::Detect, SettingsPage::Record, SettingsPage::Phone, SettingsPage::Tests];
 
     pub fn label(self) -> &'static str {
         match self {
-            SettingsPage::Listen => "Listen",
-            SettingsPage::Output => "Output",
+            SettingsPage::Sound => "Sound",
+            SettingsPage::Detect => "Detect",
             SettingsPage::Record => "Record",
             SettingsPage::Phone => "Phone",
             SettingsPage::Tests => "Tests",
@@ -330,10 +331,12 @@ impl Setting {
     pub fn page(self) -> SettingsPage {
         match self {
             Setting::MixFile | Setting::PauseWithRec | Setting::CellsOnWeakUsb => SettingsPage::Record,
-            Setting::AutoLevel | Setting::MuteWhileRecording | Setting::Speaker => SettingsPage::Output,
+            Setting::ListenTo | Setting::AutoLevel | Setting::MuteWhileRecording | Setting::Speaker => {
+                SettingsPage::Sound
+            }
             Setting::ClockFromRemote | Setting::PhoneCode => SettingsPage::Phone,
             Setting::DebugInfo | Setting::DrawOnInput => SettingsPage::Tests,
-            _ => SettingsPage::Listen,
+            Setting::LowestBatCall | Setting::Mark(_) => SettingsPage::Detect,
         }
     }
 }
@@ -778,8 +781,9 @@ impl<'a> BatApp<'a> {
             field!((*this).mode).write(Mode::Het);
             field!((*this).source).write(MonitorSource::Both);
             field!((*this).screen).write(Screen::Main);
-            field!((*this).settings_page).write(SettingsPage::Listen);
-            field!((*this).setting).write(0);
+            field!((*this).settings_page).write(SettingsPage::Sound);
+            // Listen to, the first setting of Sound, the page shown first.
+            field!((*this).setting).write(1);
             field!((*this).min_bat_index).write(MIN_BAT_DEFAULT);
             field!((*this).samples).write(0);
             field!((*this).het).write(Heterodyne::new(sample_rate, 45_000.0));
@@ -1008,7 +1012,7 @@ impl<'a> BatApp<'a> {
         if self.settings_pages().any(|page| page == self.settings_page) {
             self.settings_page
         } else {
-            SettingsPage::Listen
+            SettingsPage::Sound
         }
     }
 
@@ -1024,7 +1028,7 @@ impl<'a> BatApp<'a> {
                     || self.power_option_available
             }
             SettingsPage::Tests => self.debug_available,
-            SettingsPage::Listen | SettingsPage::Output | SettingsPage::Phone => true,
+            SettingsPage::Sound | SettingsPage::Detect | SettingsPage::Phone => true,
         })
     }
 
@@ -2978,7 +2982,7 @@ impl<'a> BatApp<'a> {
                 return true;
             }
             let page_button = match self.settings_page() {
-                SettingsPage::Listen | SettingsPage::Output => false,
+                SettingsPage::Sound | SettingsPage::Detect => false,
                 SettingsPage::Record => {
                     self.guano_available && layout::panel_switch_row(layout::RECORD_GUANO).contains(p)
                 }

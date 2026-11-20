@@ -10,7 +10,7 @@ use super::{
     switch_control, text,
 };
 use crate::layout::{
-    OUTPUT_MUTE, OUTPUT_SPEAKER, PHONE_CLOCK, PHONE_CODE, PHONE_CODE_BASELINE, PHONE_CODE_RIGHT, PHONE_REMOTE,
+    SOUND_MUTE, SOUND_SPEAKER, PHONE_CLOCK, PHONE_CODE, PHONE_CODE_BASELINE, PHONE_CODE_RIGHT, PHONE_REMOTE,
     QR_MARGIN, QR_MODULE, QR_TEXT_X, RECORD_GUANO, RECORD_MIX_FILE, RECORD_PAUSE, RECORD_POWER, TESTS_CPU_TEST,
     TESTS_DEBUG, TESTS_DRAW, panel_switch, phone_time, qr_card,
 };
@@ -38,6 +38,12 @@ pub(super) const PAUSE_STATE: [&str; 2] =
 pub(super) const MUTE_NAME: &str = "Mute while recording";
 pub(super) const MUTE_STATE: [&str; 2] =
     ["Sound keeps playing during a take", "No sound plays during a take. Uses less CPU"];
+/// Under Auto volume's choices, for Off, On and Bats only.
+pub(super) const AUTO_VOLUME_STATE: [&str; 3] = [
+    "Volume is set by the X8's volume control only",
+    "Quiet sounds are raised and loud sounds lowered",
+    "Auto volume, and silent between marked sounds",
+];
 pub(super) const SPEAKER_NAME: &str = "Speaker";
 /// Off, on, and on while the X8's own SPEAKER setting is off, which keeps the speaker silent.
 pub(super) const SPEAKER_STATE: [&str; 2] =
@@ -194,7 +200,7 @@ pub(super) fn record(app: &BatApp, fb: Fb) {
 
 /// What plays in the headphones and on the speaker: Auto volume, then the two switches, each
 /// shown only on a host that offers it.
-pub(super) fn output(app: &BatApp, fb: Fb) {
+pub(super) fn sound(app: &BatApp, fb: Fb) {
     let row = crate::layout::control_row(Setting::AutoLevel);
     rounded(fb, row, 6, PANEL);
     if app.selected_setting() == Setting::AutoLevel {
@@ -204,13 +210,13 @@ pub(super) fn output(app: &BatApp, fb: Fb) {
     if app.input_kind() == crate::InputKind::Live {
         let selected = app.selected_setting() == Setting::MuteWhileRecording;
         let on = app.mute_while_recording();
-        switch_panel(fb, OUTPUT_MUTE, MUTE_NAME, &[state(&MUTE_STATE, on)], on, selected);
+        switch_panel(fb, SOUND_MUTE, MUTE_NAME, &[state(&MUTE_STATE, on)], on, selected);
     }
     if let Some(host_on) = app.host_speaker() {
         let selected = app.selected_setting() == Setting::Speaker;
         let on = app.speaker_switch();
         let line = if on && !host_on { SPEAKER_HOST_OFF } else { state(&SPEAKER_STATE, on) };
-        switch_panel(fb, OUTPUT_SPEAKER, SPEAKER_NAME, &[line], on, selected);
+        switch_panel(fb, SOUND_SPEAKER, SPEAKER_NAME, &[line], on, selected);
     }
 }
 
