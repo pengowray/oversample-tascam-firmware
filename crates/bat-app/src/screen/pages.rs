@@ -50,7 +50,7 @@ pub(super) const MUTED_LABEL: &str = "MUTED";
 /// tuned below `SPEAKER_MIN_TUNING_HZ`.
 pub(super) const SPEAKER_MUTED_LINES: [&str; 2] = ["Speaker is silent in 1:1.", "Plug in headphones to listen."];
 pub(super) const SPEAKER_MUTED_LOW_LINES: [&str; 2] =
-    ["Speaker is silent below 30 kHz.", "Tune higher, or plug in headphones."];
+    ["Speaker is off: tuned below 30 kHz.", "Tune higher, or plug in headphones."];
 /// On the main screen when REC was kept from pausing a take.
 pub(super) const PAUSE_OFF_LINES: [&str; 2] = ["Pausing is off.", "STOP ends the take."];
 pub(super) const CLOCK_FROM_REMOTE_STATE: [&str; 2] =

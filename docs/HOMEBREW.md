@@ -2366,7 +2366,7 @@ B241 or an earlier build. All the checks in `tools/x8patch.py` pass on this file
 
 ## Step 50 test file: the built-in speaker on the bat screens (built 2026-11-20, not yet installed)
 
-`work/patch56/#PortaX8_0281.203` (B281, SHA-256 `c75ad0e4…1571617a`). B280 (Step 49) with the X8's speaker playing the
+`work/patch56/#PortaX8_0281.203` (B281, SHA-256 `9d4bb4e0…b5d76375`). B280 (Step 49) with the X8's speaker playing the
 bat app's sound; Step 49's checks still apply, and this file replaces B280. All the checks in `tools/x8patch.py` pass,
 and two builds give the same file. Nothing in this step has run on a unit.
 
@@ -2378,7 +2378,7 @@ does for stock playback (not checked).
 - **1:1 with live input is silent on the speaker.** 1:1 would play the microphones' sound back to them. The app fades
   its output out over 20 ms and the main screen says `Speaker is silent in 1:1.` / `Plug in headphones to listen.` in
   the waterfall's corner.
-- **HET, and COMB's lowest line, tuned below 30 kHz are silent on the speaker too**, with `Speaker is silent below
+- **HET, and COMB's lowest line, tuned below 30 kHz are silent on the speaker too**, with `Speaker is off: tuned below
   30 kHz.` / `Tune higher, or plug in headphones.` HET plays a tone at f as tuning - f, and plays that tone as f
   again. Both are inside the 15 kHz that the low-pass filter passes when the tuning is below 30 kHz, so the speaker
   and microphones would form a loop. COMB starts at 25, 55, 85 kHz, so it is silent on the speaker until its lowest
