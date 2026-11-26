@@ -1039,10 +1039,7 @@ fn mark_row(app: &BatApp, fb: Fb, kind: CallKind) {
         _ => text(
             fb,
             &SMALL,
-            format_args!(
-                "Reaching down to {} kHz, like handling noise",
-                Fixed::new(app.detector.band().0 / 1000.0, 0)
-            ),
+            format_args!("Reaching down to {} kHz, like handling noise", Fixed::new(app.detector.band().0 / 1000.0, 0)),
             hx,
             hy,
             LEFT,

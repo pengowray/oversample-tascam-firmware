@@ -545,7 +545,10 @@ impl CpuTest {
                 }
                 w.write_str("\n")?;
             }
-            if rows.iter().any(|row| row.result.is_some_and(|r| (r.recorder, r.mix_file) != (first.recorder, first.mix_file))) {
+            if rows
+                .iter()
+                .any(|row| row.result.is_some_and(|r| (r.recorder, r.mix_file) != (first.recorder, first.mix_file)))
+            {
                 writeln!(w, "* The recorder's state differed from the pass's first row.")?;
             }
         }

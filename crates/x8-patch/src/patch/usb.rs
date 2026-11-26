@@ -141,7 +141,9 @@ unsafe fn install_capture() -> bool {
     let len = end - start;
     let at = stock::ITCM_GAP + (start & 2);
     // SAFETY: the stock call's two halfwords in ITCM.
-    let call = unsafe { [ptr::read_volatile(stock::RECORDER_STEP_CALL), ptr::read_volatile(stock::RECORDER_STEP_CALL.add(1))] };
+    let call = unsafe {
+        [ptr::read_volatile(stock::RECORDER_STEP_CALL), ptr::read_volatile(stock::RECORDER_STEP_CALL.add(1))]
+    };
     if call != stock::RECORDER_STEP_CALL_STOCK || at + len > stock::ITCM_GAP_END {
         return false;
     }

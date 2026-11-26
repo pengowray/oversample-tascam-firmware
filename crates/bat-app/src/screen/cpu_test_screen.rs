@@ -3,9 +3,12 @@
 use embedded_graphics::pixelcolor::Rgb565;
 
 use super::{
-    BODY, BODY_BOLD, CENTER, Fb, LEFT, RIGHT, SMALL, hline, no_input_notice, rate_warning, rounded, switch_control, text,
+    BODY, BODY_BOLD, CENTER, Fb, LEFT, RIGHT, SMALL, hline, no_input_notice, rate_warning, rounded, switch_control,
+    text,
 };
-use crate::cpu_test::{End, Log, MEASURE_S, Phase, RowResult, SETTLE_S, View, no_take_reason, every_row, group_heading, mix_note, row_name};
+use crate::cpu_test::{
+    End, Log, MEASURE_S, Phase, RowResult, SETTLE_S, View, every_row, group_heading, mix_note, no_take_reason, row_name,
+};
 use crate::layout::*;
 use crate::palette::*;
 use crate::{AutoVolume, BatApp, Recorder};
@@ -225,10 +228,11 @@ fn stages_row(fb: Fb, result: &RowResult, y: i32) {
     let Some(stages) = result.stages else { return };
     let rest = u32::from(result.dsp_percent).saturating_sub(stages.iter().map(|&s| u32::from(s)).sum());
     let frame = result.draw_percent.saturating_sub(result.copy_percent);
-    let values = [result.dsp_percent.into()]
-        .into_iter()
-        .chain(stages.iter().map(|&s| u32::from(s)))
-        .chain([rest, frame.into(), result.copy_percent.into()]);
+    let values = [result.dsp_percent.into()].into_iter().chain(stages.iter().map(|&s| u32::from(s))).chain([
+        rest,
+        frame.into(),
+        result.copy_percent.into(),
+    ]);
     for (value, &(_, x)) in values.zip(STAGE_COLUMNS.iter()) {
         text(fb, &SMALL, format_args!("{value}"), x, y, RIGHT, TEXT);
     }
@@ -281,7 +285,15 @@ fn passes_and_log(app: &BatApp, fb: Fb) {
                 let line = format_args!("Takes about {} min, including a {minutes} min test take.", 2 * minutes);
                 text(fb, &SMALL, line, LABEL_X, CPU_TEST_LOG_Y + 5, LEFT, TEXT_MUTED);
             } else {
-                text(fb, &SMALL, format_args!("Takes about {minutes} min."), LABEL_X, CPU_TEST_LOG_Y + 5, LEFT, TEXT_MUTED);
+                text(
+                    fb,
+                    &SMALL,
+                    format_args!("Takes about {minutes} min."),
+                    LABEL_X,
+                    CPU_TEST_LOG_Y + 5,
+                    LEFT,
+                    TEXT_MUTED,
+                );
             }
             return;
         }

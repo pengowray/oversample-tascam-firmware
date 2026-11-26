@@ -427,7 +427,6 @@ impl Stft {
     }
 
     fn synthesise(&mut self) {
-
         self.acc.copy_within(LOW_HOP.., 0);
         self.acc[LOW_LEN + 1 - LOW_HOP..].fill(0.0);
         let acc = &mut self.acc;
@@ -499,7 +498,9 @@ impl PeakShift {
                 self.power[below] = low;
                 for (p, z) in self.power[lowest..HALF].iter_mut().zip(&s[lowest..]) {
                     *p = z.norm_sqr();
-                    if C == 1 { strongest = strongest.max(*p); }
+                    if C == 1 {
+                        strongest = strongest.max(*p);
+                    }
                 }
             } else {
                 self.power[HALF] += nyq;
@@ -545,7 +546,13 @@ impl PeakShift {
 
     /// Move bins `from..end` in blocks of [`BLOCK`] bins, aligned to multiples
     /// of [`BLOCK`] so the same bins are grouped in every frame.
-    fn move_blocks<const C: usize>(&mut self, src: &[&[Complex32; HALF]; C], dst: &mut [&mut Shifted; C], from: usize, end: usize) {
+    fn move_blocks<const C: usize>(
+        &mut self,
+        src: &[&[Complex32; HALF]; C],
+        dst: &mut [&mut Shifted; C],
+        from: usize,
+        end: usize,
+    ) {
         let mut a = from;
         while a < end {
             let b = ((a / BLOCK + 1) * BLOCK).min(end);
@@ -1182,7 +1189,7 @@ mod measurements {
 #[cfg(test)]
 mod stereo {
     use super::*;
-    use crate::test_util::{noise, rms, run_blocks, sine, tone_power, chirp};
+    use crate::test_util::{chirp, noise, rms, run_blocks, sine, tone_power};
     use std::time::Instant;
     use std::vec::Vec;
     const FS: f32 = 192_000.0;
@@ -1206,15 +1213,21 @@ mod stereo {
         let n = 48_000;
         let mut l = sine(FS, fa, 0.3, n);
         let mut r = sine(FS, fb, 0.3, n);
-        for (v, z) in l.iter_mut().zip(noise(noise_level, n, 1)) { *v += z; }
-        for (v, z) in r.iter_mut().zip(noise(noise_level, n, 2)) { *v += z; }
+        for (v, z) in l.iter_mut().zip(noise(noise_level, n, 1)) {
+            *v += z;
+        }
+        for (v, z) in r.iter_mut().zip(noise(noise_level, n, 2)) {
+            *v += z;
+        }
         (l, r)
     }
 
     #[test]
     fn same_input_in_both_ears_gives_the_mono_output() {
         let mut x = chirp(FS, 90_000.0, 25_000.0, 0.4, 40_000);
-        for (v, r) in x.iter_mut().zip(noise(0.05, 40_000, 11)) { *v += r; }
+        for (v, r) in x.iter_mut().zip(noise(0.05, 40_000, 11)) {
+            *v += r;
+        }
         let m = mono(&x, 9.3);
         let (a, b) = stereo(&x, &x, 9.3);
         assert!(a == m && b == m);
@@ -1250,7 +1263,9 @@ mod stereo {
             }
         }
     }
-    fn hash(y: &[f32]) -> u64 { y.iter().fold(0xcbf29ce484222325u64, |h, v| (h ^ v.to_bits() as u64).wrapping_mul(0x100000001b3)) }
+    fn hash(y: &[f32]) -> u64 {
+        y.iter().fold(0xcbf29ce484222325u64, |h, v| (h ^ v.to_bits() as u64).wrapping_mul(0x100000001b3))
+    }
     fn snr(y: &[f32], f: f32) -> f32 {
         let t = &y[4 * FRAME_LEN..];
         let total = rms(t).powi(2);
@@ -1263,7 +1278,9 @@ mod stereo {
     #[ignore]
     fn stereo_measurements() {
         let mut x = chirp(FS, 90_000.0, 25_000.0, 0.4, 40_000);
-        for (v, r) in x.iter_mut().zip(noise(0.05, 40_000, 11)) { *v += r; }
+        for (v, r) in x.iter_mut().zip(noise(0.05, 40_000, 11)) {
+            *v += r;
+        }
         std::println!("mono output hash {:016x}", hash(&mono(&x, 9.3)));
         let (a, b) = stereo(&x, &x, 9.3);
         let m = mono(&x, 9.3);
@@ -1274,39 +1291,97 @@ mod stereo {
         for (fa, fb, na) in [(45_000.0, 62_000.0, 0.01), (45_000.0, 62_000.0, 0.0001), (41_000.0, 41_500.0, 0.01)] {
             let mut l = sine(FS, fa, 0.3, n);
             let mut r = sine(FS, fb, 0.3, n);
-            for (v, z) in l.iter_mut().zip(noise(na, n, 1)) { *v += z; }
-            for (v, z) in r.iter_mut().zip(noise(na, n, 2)) { *v += z; }
+            for (v, z) in l.iter_mut().zip(noise(na, n, 1)) {
+                *v += z;
+            }
+            for (v, z) in r.iter_mut().zip(noise(na, n, 2)) {
+                *v += z;
+            }
             let (sl, sr) = stereo(&l, &r, 10.0);
             let (ml, mr) = (mono(&l, 10.0), mono(&r, 10.0));
-            std::println!("tones {fa}/{fb} Hz, noise {na}: tone to residual L mono {:.1} shared {:.1}, R mono {:.1} shared {:.1} dB; level L {:.2} vs {:.2}",
-                snr(&ml, fa / 10.0), snr(&sl, fa / 10.0), snr(&mr, fb / 10.0), snr(&sr, fb / 10.0), rms(&sl[4096..]), rms(&ml[4096..]));
+            std::println!(
+                "tones {fa}/{fb} Hz, noise {na}: tone to residual L mono {:.1} shared {:.1}, R mono {:.1} shared {:.1} dB; level L {:.2} vs {:.2}",
+                snr(&ml, fa / 10.0),
+                snr(&sl, fa / 10.0),
+                snr(&mr, fb / 10.0),
+                snr(&sr, fb / 10.0),
+                rms(&sl[4096..]),
+                rms(&ml[4096..])
+            );
         }
         // Same call at both mics, 20 samples apart, independent noise: difference from separate shifters.
         let mut l = chirp(FS, 80_000.0, 30_000.0, 0.3, n);
         let mut r = std::vec![0.0; 20];
         r.extend_from_slice(&l[..n - 20]);
-        for (v, z) in l.iter_mut().zip(noise(0.02, n, 3)) { *v += z; }
-        for (v, z) in r.iter_mut().zip(noise(0.02, n, 4)) { *v += z; }
+        for (v, z) in l.iter_mut().zip(noise(0.02, n, 3)) {
+            *v += z;
+        }
+        for (v, z) in r.iter_mut().zip(noise(0.02, n, 4)) {
+            *v += z;
+        }
         let (sl, sr) = stereo(&l, &r, 10.0);
         let (ml, mr) = (mono(&l, 10.0), mono(&r, 10.0));
-        let d = |a: &[f32], b: &[f32]| { let e: Vec<f32> = a.iter().zip(b).map(|(x, y)| x - y).collect(); 20.0 * libm::log10f(rms(&e[4096..]) / rms(&b[4096..])) };
-        std::println!("delayed chirp: shared vs separate, difference L {:.1} dB, R {:.1} dB; levels L {:.3}/{:.3} R {:.3}/{:.3}",
-            d(&sl, &ml), d(&sr, &mr), rms(&sl[4096..]), rms(&ml[4096..]), rms(&sr[4096..]), rms(&mr[4096..]));
+        let d = |a: &[f32], b: &[f32]| {
+            let e: Vec<f32> = a.iter().zip(b).map(|(x, y)| x - y).collect();
+            20.0 * libm::log10f(rms(&e[4096..]) / rms(&b[4096..]))
+        };
+        std::println!(
+            "delayed chirp: shared vs separate, difference L {:.1} dB, R {:.1} dB; levels L {:.3}/{:.3} R {:.3}/{:.3}",
+            d(&sl, &ml),
+            d(&sr, &mr),
+            rms(&sl[4096..]),
+            rms(&ml[4096..]),
+            rms(&sr[4096..]),
+            rms(&mr[4096..])
+        );
 
-        let xc = |a: &[f32], b: &[f32]| { let (a, b) = (&a[4096..], &b[4096..]); (0..60).map(|lag| { let s: f32 = a[..a.len() - 60].iter().zip(&b[lag..]).map(|(x, y)| x * y).sum(); s / (rms(a) * rms(b) * (a.len() - 60) as f32) }).fold(f32::MIN, f32::max) };
-        std::println!("delayed chirp: L-R normalised cross-correlation peak, input {:.2}, separate {:.2}, shared {:.2}", xc(&l, &r), xc(&ml, &mr), xc(&sl, &sr));
+        let xc = |a: &[f32], b: &[f32]| {
+            let (a, b) = (&a[4096..], &b[4096..]);
+            (0..60)
+                .map(|lag| {
+                    let s: f32 = a[..a.len() - 60].iter().zip(&b[lag..]).map(|(x, y)| x * y).sum();
+                    s / (rms(a) * rms(b) * (a.len() - 60) as f32)
+                })
+                .fold(f32::MIN, f32::max)
+        };
+        std::println!(
+            "delayed chirp: L-R normalised cross-correlation peak, input {:.2}, separate {:.2}, shared {:.2}",
+            xc(&l, &r),
+            xc(&ml, &mr),
+            xc(&sl, &sr)
+        );
         // Timing: one second of noise per ear.
         let fs = 192_000usize;
         let l = noise(0.5, fs, 5);
         let r = noise(0.5, fs, 6);
-        let best = |f: &mut dyn FnMut()| (0..15).map(|_| { let t = Instant::now(); f(); t.elapsed().as_secs_f64() * 1000.0 }).fold(f64::MAX, f64::min);
+        let best = |f: &mut dyn FnMut()| {
+            (0..15)
+                .map(|_| {
+                    let t = Instant::now();
+                    f();
+                    t.elapsed().as_secs_f64() * 1000.0
+                })
+                .fold(f64::MAX, f64::min)
+        };
         let (mut pl, mut pr) = (PitchShifter::new(FS), PitchShifter::new(FS));
         let (mut ps, mut pr2) = (PitchShifter::new(FS), PitchChannel::new());
         let (mut ya, mut yb) = (std::vec![0.0; 256], std::vec![0.0; 256]);
         for _ in 0..3 {
-            let two = best(&mut || for (a, b) in l.chunks(256).zip(r.chunks(256)) { pl.process(a, &mut ya); pr.process(b, &mut yb); });
-            let shared = best(&mut || for (a, b) in l.chunks(256).zip(r.chunks(256)) { ps.process_stereo(&mut pr2, a, b, &mut ya, &mut yb); });
-            std::println!("noise, ms per s of stereo: two shifters {two:.2}, shared peaks {shared:.2} ({:.0}%)", 100.0 * shared / two);
+            let two = best(&mut || {
+                for (a, b) in l.chunks(256).zip(r.chunks(256)) {
+                    pl.process(a, &mut ya);
+                    pr.process(b, &mut yb);
+                }
+            });
+            let shared = best(&mut || {
+                for (a, b) in l.chunks(256).zip(r.chunks(256)) {
+                    ps.process_stereo(&mut pr2, a, b, &mut ya, &mut yb);
+                }
+            });
+            std::println!(
+                "noise, ms per s of stereo: two shifters {two:.2}, shared peaks {shared:.2} ({:.0}%)",
+                100.0 * shared / two
+            );
         }
     }
 }
