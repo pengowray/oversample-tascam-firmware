@@ -1,17 +1,18 @@
-//! SETTINGS > Tests > Backlight off when dimmed: the backlight goes fully off on the bat screens
-//! once the stock BACKLIGHT timer has dimmed it.
+//! SETTINGS > Tests > Backlight off when dimmed: on the bat screens, the patch writes PWM value 0
+//! to the backlight after the stock BACKLIGHT timer has dimmed it.
 //!
-//! The stock timer dims the light with `FUN_80da95b4(0)`, which writes PWM 1 and remembers level
-//! 0 (work/notes/backlight.md). The patch then writes PWM 0 through the same FPGA driver entry and
-//! leaves the remembered level at 0. A stock wake (touch, button, wheel turn) asks for the
-//! BRIGHTNESS level, which differs from 0, so the stock code turns the light back on by itself.
-//! Whether the FPGA turns the LEDs fully off at 0 is not known; the switch is on the Tests page
-//! until a unit shows it.
+//! The stock timer dims the light with `FUN_80da95b4(0)`, which writes PWM value 1 and stores level
+//! 0 (work/notes/backlight.md). `FUN_80da95b4` writes only when a new level differs from the stored
+//! one. The patch writes PWM 0 through the FPGA driver function that `FUN_80da95b4` calls, and
+//! leaves the stored level at 0. A stock wake (touch, button, wheel turn) asks for the BRIGHTNESS
+//! level, 1 to 3, so `FUN_80da95b4` writes it and the patch has nothing to undo. Whether the FPGA
+//! turns the LEDs fully off at 0 is not known; the switch stays on the Tests page until a unit
+//! shows whether it does.
 //!
-//! The patch writes 0 only while BACKLIGHT is a time (5 to 30 s): with OFF the stock wake does not
-//! restore the brightness, and with ALWAYS the timer never dims. When the bat screen closes or a
-//! pop-up opens over it, the light goes back to the stock dim (PWM 1), so the stock screens are
-//! never left dark.
+//! The patch writes 0 only while BACKLIGHT is set to 5 to 30 s. With OFF a stock wake leaves the
+//! light at the dim level, so a 0 would stay dark; with ALWAYS the timer never dims. When the bat
+//! screen closes or a pop-up opens over it, the PWM value goes back to 1 (the stock dim), so the
+//! recorder's own screens do not stay dark.
 
 use core::ptr;
 use core::sync::atomic::{AtomicBool, Ordering::Acquire, Ordering::Relaxed};
