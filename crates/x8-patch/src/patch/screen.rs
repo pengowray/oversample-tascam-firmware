@@ -15,13 +15,12 @@ use super::inputs::{PLAYBACK_LEFT, PLAYBACK_RIGHT, on_tracks_muted, selected_inp
 use super::itcm::load_itcm;
 use super::state::{
     APP, APP_READY, AUDIO_INSTALLED, AUDIO_SLOT_UNEXPECTED, AUDIO_STATE, BACKLOG_DROPPED, BAT_ACTIVE, BLOCKS, BUFFERS,
-    CALLS_PER_S, COPY_PERMILLE, CYCLES_PER_S, DEBUG_SHOWN, DRAW_PERMILLE, DSP_PERMILLE, DUMMY_LCDIF, FRAME, GUANO_ON,
-    HEAR_MIX, HEARD_WORDS, HOOK_CYCLES_PER_S, HOOK_IN_ITCM, IN_DROPPED, IN_READ, IN_WAITING_MOST, IN_WRITE, ITCM_OK,
-    LAST_EVENT, LAUNCH_AT, LAUNCH_FROM, LAUNCHING, LOAD_WINDOW_START, MIX_FILE_OFF, MUTE_SEEN, MUTE_SEEN_AT, NO_APP,
-    NO_INPUT_WORDS, OUT_LAST, OUT_READ, OUT_WRITE, PENDING, PLAYBACK, POPUP_HIDDEN, PRIMED, SAVED_BUFFER,
-    SAVED_LITERAL, SCREEN_APP, SESSION, SOURCE_PEAK, STOCK_CYCLES_PER_S, TASK, TEST_DSP_MAX, TEST_SETTINGS,
-    TEST_START_BACKLOG, TEST_START_BLOCKS, TEST_START_DRY, TEST_START_LOST, TEST_START_SKIPPED, TOUCHED_SINCE_RENDER,
-    UNDERRUNS, WORD_PEAKS, WORK_ENTER,
+    CALLS_PER_S, COPY_PERMILLE, CYCLES_PER_S, DEBUG_SHOWN, DRAW_PERMILLE, DSP_PERMILLE, DUMMY_LCDIF, FRAME, HEAR_MIX,
+    HEARD_WORDS, HOOK_CYCLES_PER_S, HOOK_IN_ITCM, IN_DROPPED, IN_READ, IN_WAITING_MOST, IN_WRITE, ITCM_OK, LAST_EVENT,
+    LAUNCH_AT, LAUNCH_FROM, LAUNCHING, LOAD_WINDOW_START, MUTE_SEEN, MUTE_SEEN_AT, NO_APP, NO_INPUT_WORDS, OUT_LAST,
+    OUT_READ, OUT_WRITE, PENDING, PLAYBACK, POPUP_HIDDEN, PRIMED, SAVED_BUFFER, SAVED_LITERAL, SCREEN_APP, SESSION,
+    SOURCE_PEAK, STOCK_CYCLES_PER_S, TASK, TEST_DSP_MAX, TEST_SETTINGS, TEST_START_BACKLOG, TEST_START_BLOCKS,
+    TEST_START_DRY, TEST_START_LOST, TEST_START_SKIPPED, TOUCHED_SINCE_RENDER, UNDERRUNS, WORD_PEAKS, WORK_ENTER,
 };
 use super::task::{app, start_task, task_running};
 use super::{app_byte, blocks_per_second, rate_class, read_byte, spare, stock, system_state};
@@ -468,7 +467,6 @@ pub(super) fn update_status(app: &mut BatApp<'static>) {
         app.set_guano_available(false);
         app.set_pause_option_available(false);
         app.set_power_option_available(true);
-        MIX_FILE_OFF.store(false, Relaxed);
         app.set_inputs([Some(PLAYBACK_LEFT), Some(PLAYBACK_RIGHT)]);
     } else {
         app.set_input_kind(InputKind::Live);
@@ -481,16 +479,12 @@ pub(super) fn update_status(app: &mut BatApp<'static>) {
         // SAFETY: MANUAL's track on/off words, which the stock code writes from task 1.
         let words = stock::TRACKS_ON.map(|word| unsafe { ptr::read_volatile(word) });
         app.set_manual_mix_file(master_rec_ready(words));
-        MIX_FILE_OFF.store(!app.mix_file(), Relaxed);
         let [first, second] = selected_inputs();
         let words = first.map_or(NO_INPUT_WORDS, |first| first.word | second.unwrap_or(first).word << 8);
         HEARD_WORDS.store(words, Relaxed);
         app.set_inputs([first, second].map(|input| input.map(|input| input.name)));
     }
-    GUANO_ON.store(app.guano(), Relaxed);
-    super::power::SWITCH_ON.store(app.cells_on_weak_usb(), Relaxed);
-    super::backlight::SWITCH_ON.store(app.backlight_off(), Relaxed);
-    super::pauses::PAUSE_WITH_REC.store(app.pause_with_rec(), Relaxed);
+    super::switches::copy_from_app(app, !PLAYBACK.load(Relaxed) && !app.mix_file());
     if super::pauses::REFUSED.swap(false, Relaxed) {
         app.pause_refused();
     }

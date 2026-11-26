@@ -2366,7 +2366,7 @@ B241 or an earlier build. All the checks in `tools/x8patch.py` pass on this file
 
 ## Step 57 test file: Backlight off when dimmed (built 2026-11-26, not yet installed)
 
-`work/patch63/#PortaX8_0288.203` (B288, SHA-256 `076d6062…4a4c214b`). This file is B287 (Step 56) plus one new switch. Install it
+`work/patch63/#PortaX8_0288.203` (B288, SHA-256 `94c35fee…51daaff0`). This file is B287 (Step 56) plus one new switch. Install it
 in place of B287; the checks of Steps 50 to 56 still apply. All the checks in `tools/x8patch.py` pass, and two builds
 give the same file. Nothing in this step has run on a unit.
 
@@ -2389,7 +2389,7 @@ give the same file. Nothing in this step has run on a unit.
 - **Unknown:** whether the FPGA turns the backlight LEDs fully off at PWM value 0. The stock firmware never writes 0.
   If it does turn them off, the switch can move from Tests to a saved setting.
 
-**Memory.** Patch region free: 8,752 bytes (64 fewer than B287). No new stock hook site (header version 25, as in
+**Memory.** Patch region free: 8,792 bytes (24 fewer than B287). No new stock hook site (header version 25, as in
 B287).
 
 **What to check.** On batteries, set GENERAL SETTINGS > BACKLIGHT to 10 s. Open BAT DETECTOR, then SETTINGS > Tests,

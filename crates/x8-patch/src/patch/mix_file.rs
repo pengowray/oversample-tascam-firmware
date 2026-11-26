@@ -3,7 +3,8 @@ use core::sync::atomic::Ordering::Relaxed;
 
 use x8_patch::file_mask::without_master;
 
-use super::state::{GUANO_ON, MIX_FILE_OFF, SCREEN_APP, TAKE_GUANO, TAKE_WITHOUT_MIX};
+use super::state::{SCREEN_APP, TAKE_GUANO, TAKE_WITHOUT_MIX};
+use super::switches::{self, GUANO, MIX_FILE_OFF};
 use super::{Handler, app_byte, read_byte, stock, system_mode};
 
 /// Takes that the patch may change: MANUAL's normal recording to WAV. Other file
@@ -41,13 +42,13 @@ fn remove_master() -> bool {
 /// its files get the same decision.
 pub(super) unsafe extern "C" fn open_take_hook(names: usize, b: usize, c: usize, d: usize) -> usize {
     let bat_take = system_mode() <= 1 && SCREEN_APP.load(Relaxed) == app_byte() as u32;
-    TAKE_GUANO.store(bat_take && GUANO_ON.load(Relaxed), Relaxed);
+    TAKE_GUANO.store(bat_take && switches::on(GUANO), Relaxed);
     super::location::TAKE_STARTED.store(super::state::BLOCKS.load(Relaxed), Relaxed);
     super::location::LOG_DUE.store(bat_take, Relaxed);
     super::pauses::take_started(bat_take);
     if system_mode() <= 1 && read_byte(stock::FILES_OPEN) == 0 {
         let stale = TAKE_WITHOUT_MIX.swap(false, Relaxed);
-        let wanted = MIX_FILE_OFF.load(Relaxed) && SCREEN_APP.load(Relaxed) == app_byte() as u32 && plain_recording();
+        let wanted = switches::on(MIX_FILE_OFF) && SCREEN_APP.load(Relaxed) == app_byte() as u32 && plain_recording();
         if stale || wanted {
             // SAFETY: the stock function that builds the mask. The stock open
             // function calls it from this same task.

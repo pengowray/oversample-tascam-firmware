@@ -289,18 +289,11 @@ pub fn setting_plus(i: usize) -> Rectangle {
 /// Row of a setting with a control at the right: Auto volume, a sound to mark (`mark` counts
 /// them from 0, top to bottom), the MIX file or the debug figures. A tap anywhere in it acts.
 pub fn control_row(setting: Setting) -> Rectangle {
+    if let Some(panel) = switch_panel(setting) {
+        return panel_switch_row(panel);
+    }
     match setting {
         Setting::AutoLevel => AUTO_VOLUME_ROW,
-        Setting::MixFile => panel_switch_row(RECORD_MIX_FILE),
-        Setting::ClockFromRemote => panel_switch_row(PHONE_CLOCK),
-        Setting::PhoneCode => panel_switch_row(PHONE_CODE),
-        Setting::PauseWithRec => panel_switch_row(RECORD_PAUSE),
-        Setting::MuteWhileRecording => panel_switch_row(SOUND_MUTE),
-        Setting::CellsOnWeakUsb => panel_switch_row(RECORD_POWER),
-        Setting::Speaker => panel_switch_row(SOUND_SPEAKER),
-        Setting::DebugInfo => panel_switch_row(TESTS_DEBUG),
-        Setting::DrawOnInput => panel_switch_row(TESTS_DRAW),
-        Setting::BacklightOff => panel_switch_row(TESTS_BACKLIGHT),
         Setting::Mark(kind) => {
             let j = Setting::MARKS.iter().position(|&k| k == kind).unwrap_or(0) as i32;
             Rectangle::new(
@@ -308,9 +301,25 @@ pub fn control_row(setting: Setting) -> Rectangle {
                 Size::new(308, SWITCH_ROW_H as u32),
             )
         }
-        Setting::LowestBatCall => setting_row(0),
-        Setting::ListenTo => setting_row(0),
+        _ => setting_row(0),
     }
+}
+
+/// The panel of a switch that has a panel of its own, with its name and a line under it.
+pub fn switch_panel(setting: Setting) -> Option<Rectangle> {
+    Some(match setting {
+        Setting::MixFile => RECORD_MIX_FILE,
+        Setting::PauseWithRec => RECORD_PAUSE,
+        Setting::CellsOnWeakUsb => RECORD_POWER,
+        Setting::MuteWhileRecording => SOUND_MUTE,
+        Setting::Speaker => SOUND_SPEAKER,
+        Setting::PhoneCode => PHONE_CODE,
+        Setting::ClockFromRemote => PHONE_CLOCK,
+        Setting::DebugInfo => TESTS_DEBUG,
+        Setting::DrawOnInput => TESTS_DRAW,
+        Setting::BacklightOff => TESTS_BACKLIGHT,
+        _ => return None,
+    })
 }
 
 /// The three choices of the Auto volume row, side by side under its name, in the order of
@@ -343,18 +352,9 @@ pub fn auto_volume_at(x: i32) -> AutoVolume {
 
 /// The switch of a setting's row, at its right.
 pub fn switch(setting: Setting) -> Rectangle {
-    match setting {
-        Setting::MixFile => panel_switch(RECORD_MIX_FILE),
-        Setting::ClockFromRemote => panel_switch(PHONE_CLOCK),
-        Setting::PhoneCode => panel_switch(PHONE_CODE),
-        Setting::PauseWithRec => panel_switch(RECORD_PAUSE),
-        Setting::MuteWhileRecording => panel_switch(SOUND_MUTE),
-        Setting::CellsOnWeakUsb => panel_switch(RECORD_POWER),
-        Setting::Speaker => panel_switch(SOUND_SPEAKER),
-        Setting::DebugInfo => panel_switch(TESTS_DEBUG),
-        Setting::DrawOnInput => panel_switch(TESTS_DRAW),
-        Setting::BacklightOff => panel_switch(TESTS_BACKLIGHT),
-        _ => {
+    match switch_panel(setting) {
+        Some(panel) => panel_switch(panel),
+        None => {
             let r = control_row(setting);
             let y = r.top_left.y + (r.size.height as i32 - SWITCH_H as i32) / 2;
             Rectangle::new(

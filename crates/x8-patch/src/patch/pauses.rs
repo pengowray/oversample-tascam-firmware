@@ -12,8 +12,6 @@ use super::{blocks_per_second, read_byte, stock};
 
 /// The take in progress started from a bat tile (set by `open_take_hook`).
 pub(super) static TAKE_BAT: AtomicBool = AtomicBool::new(false);
-/// The app's switch: REC may pause a take. Off by default. The context running the app sets it.
-pub(super) static PAUSE_WITH_REC: AtomicBool = AtomicBool::new(false);
 /// REC was kept from pausing a take, for the app's notice (task 1 sets it, the app context clears it).
 pub(super) static REFUSED: AtomicBool = AtomicBool::new(false);
 /// Marks the patch posted and the key hook has not seen yet: it passes them to the recorder only,
@@ -38,7 +36,9 @@ pub(super) fn take_started(bat_take: bool) {
 /// Whether REC should be kept from the recording screen's handler: a bat take recording, with
 /// the app's switch off.
 pub(super) fn keep_rec_from_pausing() -> bool {
-    TAKE_BAT.load(Relaxed) && !PAUSE_WITH_REC.load(Relaxed) && read_byte(stock::TRANSPORT) == RECORDING
+    TAKE_BAT.load(Relaxed)
+        && !super::switches::on(super::switches::PAUSE_WITH_REC)
+        && read_byte(stock::TRANSPORT) == RECORDING
 }
 
 /// Follow the recorder (the DSP task).

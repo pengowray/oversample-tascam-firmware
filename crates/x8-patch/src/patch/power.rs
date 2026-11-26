@@ -13,9 +13,6 @@ use x8_patch::power_source::{
 use super::state::BLOCKS;
 use super::{Handler, blocks_per_second, read_byte, stock};
 
-/// The bat app's "Run from batteries on weak USB" switch, copied on each pass of the app. On at start,
-/// as the app's setting is, so it applies before the bat screen first opens.
-pub(super) static SWITCH_ON: AtomicBool = AtomicBool::new(true);
 /// Set when the patch set POWER SOURCE SELECT to BATTERY, until it sets AUTO again.
 static SWITCHED: AtomicBool = AtomicBool::new(false);
 /// Set when the patch went back to AUTO because the cells failed: until the next start, the stock
@@ -50,7 +47,7 @@ fn post_power_source(value: u8) {
 /// question.
 pub(super) fn on_event(kind_ptr: *mut u16, kind: u16, value: i32) {
     let (source, battery_type, level) = (read_byte(stock::POWER_SOURCE), read_byte(stock::BATTERY_TYPE), cell_level());
-    let (switch_on, switched) = (SWITCH_ON.load(Relaxed), SWITCHED.load(Relaxed));
+    let (switch_on, switched) = (super::switches::on(super::switches::CELLS_ON_WEAK_USB), SWITCHED.load(Relaxed));
     if kind == stock::KIND_USB_SUPPLY && value == 0 {
         let answer =
             on_weak_supply(switch_on, source, switched, GAVE_UP.load(Relaxed), battery_type, level, &thresholds());

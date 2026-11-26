@@ -63,6 +63,8 @@ mod speaker;
 mod state;
 /// Stock firmware addresses, V2.03 build 217. See docs/HOMEBREW.md.
 mod stock;
+/// The bat app's switches that task 1 and the hooks read, in one word.
+mod switches;
 /// The DSP task, the patch stack and the bat app they run.
 mod task;
 /// 192 kHz stereo over USB: the rate list, INPUT 3 and 4 into the USB ring, and the 8-channel guard.

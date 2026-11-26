@@ -116,7 +116,7 @@ unsafe fn on_message(msg: usize, via: Via) {
         let saved = unsafe { ptr::read_volatile(stock::BAT_SETTINGS) };
         unsafe { (*super::state::BOOT_SETTINGS.0.get()).write(saved) };
         if let Some(on) = bat_app::saved_cells_on_weak_usb(&saved) {
-            super::power::SWITCH_ON.store(on, Relaxed);
+            super::switches::set_cells_on_weak_usb(on);
         }
     }
     count_call();

@@ -15,13 +15,10 @@
 //! recorder's own screens do not stay dark.
 
 use core::ptr;
-use core::sync::atomic::{AtomicBool, Ordering::Acquire, Ordering::Relaxed};
+use core::sync::atomic::Ordering::Acquire;
 
 use super::state::BAT_ACTIVE;
 use super::{read_byte, stock};
-
-/// The switch, from the DSP task's copy of the app's setting.
-pub(super) static SWITCH_ON: AtomicBool = AtomicBool::new(false);
 
 /// Write `pwm` to the backlight (FPGA register 0x12) through the driver entry that
 /// `FUN_80da95b4` calls, leaving its remembered level alone. From a task: the driver takes the
@@ -56,7 +53,7 @@ pub(super) fn follow() {
     // SAFETY: the BACKLIGHT setting, a halfword in the settings record.
     let timed = unsafe { ptr::read_volatile(stock::BACKLIGHT_TIME) } > 0;
     let dark = read_byte(stock::BACKLIGHT_PWM) == 0;
-    if BAT_ACTIVE.load(Acquire) && SWITCH_ON.load(Relaxed) && timed && dimmed() {
+    if BAT_ACTIVE.load(Acquire) && super::switches::on(super::switches::BACKLIGHT_OFF) && timed && dimmed() {
         if !dark {
             write_pwm(0);
             if !dimmed() {

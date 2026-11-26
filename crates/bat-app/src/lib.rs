@@ -1332,30 +1332,47 @@ impl<'a> BatApp<'a> {
                 let i = AutoVolume::ALL.iter().position(|&v| v == self.level.volume()).unwrap_or(0);
                 self.level.set_volume(AutoVolume::ALL[step(i, AutoVolume::ALL.len())]);
             }
-            // Turning the wheel up switches on, down switches off.
-            Setting::DebugInfo if steps != 0 => self.debug_info = steps > 0,
-            Setting::DebugInfo => {}
-            Setting::MixFile if steps != 0 => self.mix_file = steps > 0,
-            Setting::MixFile => {}
-            Setting::ClockFromRemote if steps != 0 => self.clock_from_remote = steps > 0,
-            Setting::ClockFromRemote => {}
-            Setting::PhoneCode if steps != 0 => self.set_phone_code_required(steps > 0),
-            Setting::PhoneCode => {}
-            Setting::PauseWithRec if steps != 0 => self.pause_with_rec = steps > 0,
-            Setting::PauseWithRec => {}
-            Setting::MuteWhileRecording if steps != 0 => self.mute_while_recording = steps > 0,
-            Setting::MuteWhileRecording => {}
-            Setting::CellsOnWeakUsb if steps != 0 => self.cells_on_weak_usb = steps > 0,
-            Setting::CellsOnWeakUsb => {}
-            Setting::Speaker if steps != 0 => self.speaker_switch = steps > 0,
-            Setting::Speaker => {}
-            Setting::DrawOnInput if steps != 0 => self.draw_on_input = steps > 0,
-            Setting::DrawOnInput => {}
-            Setting::BacklightOff if steps != 0 => self.backlight_off = steps > 0,
-            Setting::BacklightOff => {}
-            // Turning the wheel up switches on, down switches off.
-            Setting::Mark(kind) if steps != 0 => self.set_marked(kind, steps > 0),
-            Setting::Mark(_) => {}
+            // A switch: turning the wheel up switches it on, down switches it off.
+            _ if steps != 0 => self.set_switch(setting, steps > 0),
+            _ => {}
+        }
+    }
+
+    /// The state of an on/off setting, or None for a setting with steps or choices.
+    fn switch_state(&self, setting: Setting) -> Option<bool> {
+        Some(match setting {
+            Setting::DebugInfo => self.debug_info,
+            Setting::DrawOnInput => self.draw_on_input,
+            Setting::BacklightOff => self.backlight_off,
+            Setting::MixFile => self.mix_file,
+            Setting::ClockFromRemote => self.clock_from_remote,
+            Setting::PhoneCode => self.remote.code_required,
+            Setting::PauseWithRec => self.pause_with_rec,
+            Setting::MuteWhileRecording => self.mute_while_recording,
+            Setting::Speaker => self.speaker_switch,
+            Setting::CellsOnWeakUsb => self.cells_on_weak_usb,
+            Setting::Mark(kind) => self.is_marked(kind),
+            Setting::LowestBatCall | Setting::ListenTo | Setting::AutoLevel => return None,
+        })
+    }
+
+    /// Turn an on/off setting on or off. Does nothing for a setting with steps or choices.
+    /// Inlined: on the X8 the patch is 274 bytes larger with this as its own function.
+    #[inline(always)]
+    fn set_switch(&mut self, setting: Setting, on: bool) {
+        match setting {
+            Setting::DebugInfo => self.debug_info = on,
+            Setting::DrawOnInput => self.draw_on_input = on,
+            Setting::BacklightOff => self.backlight_off = on,
+            Setting::MixFile => self.mix_file = on,
+            Setting::ClockFromRemote => self.clock_from_remote = on,
+            Setting::PhoneCode => self.set_phone_code_required(on),
+            Setting::PauseWithRec => self.pause_with_rec = on,
+            Setting::MuteWhileRecording => self.mute_while_recording = on,
+            Setting::Speaker => self.speaker_switch = on,
+            Setting::CellsOnWeakUsb => self.cells_on_weak_usb = on,
+            Setting::Mark(kind) => self.set_marked(kind, on),
+            Setting::LowestBatCall | Setting::ListenTo | Setting::AutoLevel => {}
         }
     }
 
@@ -2180,20 +2197,10 @@ impl<'a> BatApp<'a> {
             Some(layout::SettingsHit::Row(setting)) => select(self, setting),
             Some(layout::SettingsHit::Control(setting)) => {
                 select(self, setting);
-                match setting {
-                    Setting::Mark(kind) => self.set_marked(kind, !self.is_marked(kind)),
-                    Setting::AutoLevel => self.level.set_volume(layout::auto_volume_at(x)),
-                    Setting::DebugInfo => self.debug_info = !self.debug_info,
-                    Setting::MixFile => self.mix_file = !self.mix_file,
-                    Setting::ClockFromRemote => self.clock_from_remote = !self.clock_from_remote,
-                    Setting::PhoneCode => self.set_phone_code_required(!self.remote.code_required),
-                    Setting::PauseWithRec => self.pause_with_rec = !self.pause_with_rec,
-                    Setting::MuteWhileRecording => self.mute_while_recording = !self.mute_while_recording,
-                    Setting::CellsOnWeakUsb => self.cells_on_weak_usb = !self.cells_on_weak_usb,
-                    Setting::Speaker => self.speaker_switch = !self.speaker_switch,
-                    Setting::DrawOnInput => self.draw_on_input = !self.draw_on_input,
-                    Setting::BacklightOff => self.backlight_off = !self.backlight_off,
-                    _ => {}
+                if setting == Setting::AutoLevel {
+                    self.level.set_volume(layout::auto_volume_at(x));
+                } else if let Some(on) = self.switch_state(setting) {
+                    self.set_switch(setting, !on);
                 }
             }
             Some(layout::SettingsHit::Minus(setting)) => {
