@@ -1952,7 +1952,7 @@ Points that need care:
   to move when the MIX is removed. `without_master` in `crates/x8-patch/src/file_mask.rs` does this and has host tests.
 - **A mask must stay the same while files are open.** A mask that names an unopened file would give the writers a null file handle.
   The decision is made once, before the files open, and only when the byte at 0x81CBE672 says no files are open.
-- **Takes left unchanged.** A master on its own, MP3 (settings+0x188 is 6 or more), file modes 1 and 2 (settings+0x215), and overdub
+- **Takes left unchanged.** A master on its own, MP3 (settings+0x188 is 6 or more), DUAL REC on (settings+0x215 is 1; the code also tests for 2), and overdub
   and mix down (recorder+0x654 is non-zero), which write the master on purpose.
 - **Update mode.** Both hooks check the system mode byte first and call the stock function otherwise. The recording functions are not
   known to run in update mode, but this is the same rule as the other hooks.
@@ -3958,7 +3958,7 @@ T=XRI 008c;XRI VER=0002;MAKER=TASCAM;MODEL=X8;FW VER=2.03;SOURCE=3:EXT MIC,4:EXT
 | `AUTO_LEVEL` | `X8Bat|Auto Level` | `ON`, `OFF` | `FUN_80df7144`: settings + 0x34 + track × 0x20 |
 
 The number before each `:` is the track, which is also the number in the file's name. The text is empty when settings
-+ 0x1DF or settings + 0x215 (the file mode, 3 by default) is 0; the menu item for + 0x1DF was not traced, and the patch
++ 0x1DF or settings + 0x215 (DUAL REC, 3 when off) is 0; the menu item for + 0x1DF was not traced, and the patch
 writes neither. All 222 files have the text, and so do the 19 of them that the patch added GUANO to (B254 to B272). A MIX
 file's text ends after `FW VER`. The settings are read when the header is built, so the values are those at the end of
 the file.
@@ -3993,7 +3993,7 @@ it when the take is opened. Ranges are from the mixer's range table at 0x81927F9
 | 0x28, 0x2C | 4 each | Mixer entries 7 and 8 (settings + 0x234, + 0x238). The defaults loop writes all eight entries as level 97 with pans 0 and 40 alternating; nothing else stores to them, and `FUN_00016a6a` applies only entries 1 to 6. Named `unused_channels` | 97, 0, 0, 0 and 97, 40, 0, 0 in all files | `FUN_80da7794` |
 | 0x30 | 1 | Master level (settings + 0x23C, message 0xC08) | 0 to 127: 97, 100 or 113 in the files | `FUN_00016a6a` |
 | 0x31 | 1 | Settings + 0x23D. The defaults write 70; nothing else uses the offset on the settings record | 70 in all files | `FUN_80da7794` |
-| 0x32 | 1 | SOLO (AFL) on or off: settings + 0x23E, message 0xFFE (range entry 0x1B). The handler passes it with the soloed track (range entry 0x1A, 0 to 9, not saved) to `FUN_00016d38`, which sets DSP + 0x62A and + 0x62B and builds the solo mix at state + 0x378 only in apps 2, 6 and 9 on screens 7 and 11 (DSP + 0x625). The V2.00 addendum puts SOLO on INPUT SETTINGS and MIXER SETTINGS in MANUAL and PODCAST | 0 in 86 files, 1 in 41: every take from 260204_0002 to 260218_0046, so it persists between takes | `FUN_00016d38`, `FUN_00016d1a` |
+| 0x32 | 1 | SOLO (AFL) on or off: settings + 0x23E, message 0xFFE (range entry 0x1B). The handler passes it with the soloed track (range entry 0x1A, 0 to 9, not saved) to `FUN_00016d38`, which sets DSP + 0x62A and + 0x62B and builds the solo mix at state + 0x378. On screens 7 and 11 (DSP + 0x625) it solos only while the flag is 1; on other screens it solos any chosen track. `FUN_00016d1a` sends the monitor to that mix on screens 7 and 11 only in apps 2, 6 and 9. The V2.00 addendum puts SOLO on INPUT SETTINGS and MIXER SETTINGS in MANUAL and PODCAST | 0 in 86 files, 1 in 41: every take from 260204_0002 to 260218_0046, so it persists between takes | `FUN_00016d38`, `FUN_00016d1a` |
 | 0x33 | 1 | Settings + 0x23F. Only copied, as 0x0B | 0 | |
 | 0x34 | 3 | Not written | 0 | |
 | 0x37 | 1 | One byte and two 32-bit words (0x38, 0x3C). In apps 9 to 11 the byte comes from the writer's state and the words from the first two words of file slot 0 at 0x81CB7A48 (slots are 0x214 bytes; word 0x1D is the frame count). Otherwise kept from the project that was open, or 0. Not named | 0 in all files | `FUN_80db2102` |
@@ -4021,7 +4021,13 @@ The mixer's range table at 0x81927F90 has 12-byte entries (maximum at + 2, minim
 MS decode width, 0x19 the byte at 0x0E, 0x1A the soloed track (0 to 9), 0x1B SOLO, 0x1C 0 to 100 (no user found) and 0x1D the
 master level. The settings range table at 0x81969224 (`FUN_80dee4f8`) holds the metronome's entries 0x20 to 0x25 and entry 0x26
 for the byte at 0x0A. The offsets above were found with a Ghidra script that lists every load and store with a given immediate
-offset; "only copied" means none of those hits has the settings record as its base.
+offset; "only copied" means none of those hits has the settings record as its base. The mixer is also reached through the pointer at 0x81E8685C (channel bytes 0, 1 and 3, and the master
+level at + 0x20), which that scan cannot see, so "only copied" means none was found.
+
+**Other `.bin` names in the firmware.** Besides `%s.bin`, `%sF.bin` and `%sM.bin`, the image has `%s%04d.bin` and `%s%04d_2.bin`
+with the folder names `Temp` and `Undo` (`FUN_80db442c`, `FUN_80db4630`, `FUN_80db6ccc`), and `Tr%d_3.bin` (`FUN_80db2102`).
+`FUN_80db442c` opens `Temp0001.bin` to `Temp0024.bin` with `w+`, one for each file slot, which points to scratch files for overdub,
+punch-in and undo. None is on the archive drive and their contents were not traced. `DR-44WL_SSID.bin` has no code reference.
 
 Nothing in the file is an input's source, gain or phantom power, and the mixer settings change only the MIX file and
 what is heard, not a track's own file. So GUANO takes nothing from it. The patch could not read the file in any case:
