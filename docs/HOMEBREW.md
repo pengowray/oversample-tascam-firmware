@@ -4020,8 +4020,8 @@ The mixer's range table at 0x81927F90 has 12-byte entries (maximum at + 2, minim
 0x17 are four for each track: 0 to 100 (by elimination, the channel's byte + 2), pan 0 to 40, level 0 to 127, out of the mix 0 to 1. Then 0x18
 MS decode width, 0x19 the byte at 0x0E, 0x1A the soloed track (0 to 9), 0x1B SOLO, 0x1C 0 to 100 (no user found) and 0x1D the
 master level. The settings range table at 0x81969224 (`FUN_80dee4f8`) holds the metronome's entries 0x20 to 0x25 and entry 0x26
-for the byte at 0x0A. The offsets above were found with a Ghidra script that lists every load and store with a given immediate
-offset; "only copied" means none of those hits has the settings record as its base. The mixer is also reached through the pointer at 0x81E8685C (channel bytes 0, 1 and 3, and the master
+for the byte at 0x0A. The offsets above were found with `tools/ghidra/q.sh offs 0x215 0x23e ...`, which lists every load and store with a given
+immediate offset; "only copied" means none of those hits has the settings record as its base. The mixer is also reached through the pointer at 0x81E8685C (channel bytes 0, 1 and 3, and the master
 level at + 0x20), which that scan cannot see, so "only copied" means none was found.
 
 **Other `.bin` names in the firmware.** Besides `%s.bin`, `%sF.bin` and `%sM.bin`, the image has `%s%04d.bin` and `%s%04d_2.bin`

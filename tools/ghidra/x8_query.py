@@ -5,6 +5,8 @@
 #   callers ADDR...  functions that call the function at each address
 #   disasm ADDR N    N instructions from ADDR
 #   refsin LO HI     every reference whose target is in [LO, HI)
+#   offs OFF...      every load and store with one of these immediate offsets,
+#                    such as settings fields: offs 0x215 0x23e (slow, whole program)
 # Several commands can go in one run, separated by ";" (quote it in the shell).
 # Output goes to the file named by X8_OUT (default: stdout).
 #@category X8
@@ -65,6 +67,22 @@ def run(cmd, args):
             if ins is None: break
             out.write("%s  %s\n" % (ins.getAddress(), ins))
             ins = ins.getNext()
+    elif cmd == "offs":
+        # Every load and store whose operands include one of the given
+        # immediates, such as [r5,#0x23e]. It cannot see a field reached
+        # through a pointer plus a different offset, or a block copy.
+        offs = set(int(s, 16) for s in args)
+        for ins in currentProgram.getListing().getInstructions(True):
+            m = ins.getMnemonicString().lower()
+            if not (m.startswith("ldr") or m.startswith("str")):
+                continue
+            hit = None
+            for i in range(ins.getNumOperands()):
+                for o in ins.getOpObjects(i):
+                    if hasattr(o, "getValue") and o.getValue() in offs:
+                        hit = o.getValue()
+            if hit is not None:
+                out.write("%s  %-36s %s  in %s\n" % (ins.getAddress(), ins, hex(hit), fname(ins.getAddress())))
 
 groups, cur = [], []
 for a in args:
