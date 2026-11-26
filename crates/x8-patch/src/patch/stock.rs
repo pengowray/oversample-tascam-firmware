@@ -154,6 +154,20 @@ pub const BACKLIGHT_DIMMED: *const u8 = 0x8196_a3f0 as *const u8;
 pub const BACKLIGHT_TIME: *const i16 = 0x81e8_c8a2 as *const i16;
 /// The PWM value last written to the backlight: 1 dimmed, 5, 35 or 55 for BRIGHTNESS LOW to HIGH.
 pub const BACKLIGHT_PWM: *const u8 = 0x81d0_196d as *const u8;
+/// The stock dim's PWM value.
+pub const PWM_DIM: u32 = 1;
+/// GENERAL SETTINGS > BRIGHTNESS (settings + 0x21): 1 LOW, 2 MID, 3 HIGH.
+pub const BRIGHTNESS: *const u8 = 0x81e8_c89d as *const u8;
+/// `FUN_80da95b4(level)`: level 0 to 3 writes PWM 1, 5, 35 or 55, unless the level is the one it
+/// remembers and its force flag is 0 (Thumb address).
+pub const SET_BACKLIGHT_LEVEL: usize = 0x80da_95b5;
+/// `FUN_80da95b4`'s force flag, after the level it remembers (0x819A347B): 1 writes the level
+/// even if it is unchanged; the function clears it.
+pub const BACKLIGHT_FORCE: *mut u8 = 0x819a_347c as *mut u8;
+/// The FPGA driver's table (the literal `FUN_80da95b4` loads), and the offset of the entry that
+/// writes the backlight PWM (FPGA register 0x12) with the value in r0.
+pub const FPGA_DRIVER: usize = 0x8192_12b4;
+pub const FPGA_BACKLIGHT_ENTRY: usize = 0x48;
 /// 1 when FPGA register 2 bit 0 says there is no external power; the stock timer dims only then
 /// (task 1's input state + 0xE).
 pub const ON_CELLS_ONLY: *const u8 = 0x8196_a3ee as *const u8;

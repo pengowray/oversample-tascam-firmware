@@ -5,6 +5,8 @@ use core::ptr;
 
 /// The audio hook, the cycle counter and `process_input`, which feeds the app from the input ring.
 mod audio;
+/// Tests > Backlight off when dimmed: PWM 0 after the stock BACKLIGHT timer's dim.
+mod backlight;
 /// BAT DETECTOR's launcher glyph.
 mod bat_glyph;
 /// Button presses the patch gives task 1, and the hook that lets them act with HOLD on.

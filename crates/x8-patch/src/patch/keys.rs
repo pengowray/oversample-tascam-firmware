@@ -123,6 +123,7 @@ unsafe fn on_message(msg: usize, via: Via) {
     if AUDIO_STATE.load(Relaxed) == AUDIO_INSTALLED {
         follow_app();
         super::speaker::follow();
+        super::backlight::follow();
     }
     // SAFETY: the message copy on task 1's stack, 0x14 bytes.
     unsafe { handle_message(msg, via) };

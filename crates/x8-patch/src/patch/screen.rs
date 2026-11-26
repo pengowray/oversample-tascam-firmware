@@ -100,6 +100,7 @@ pub(super) extern "C" fn enter_work() {
         app.set_recorder(Recorder::Stopped, 0);
         app.set_debug_available(true);
         app.set_draw_option_available(true);
+        app.set_backlight_option_available(true);
         app.set_host_build(super::patch_build());
         app.set_auto_level_target(AUTO_LEVEL_OUTPUT / OUTPUT_GAIN);
         app.set_mix_available(true);
@@ -193,6 +194,7 @@ pub(super) fn leave_bat_screen() {
 pub(super) fn hide_for_popup() {
     // Pop-ups install their own key handler, so task 1 would not turn the speaker off.
     super::speaker::close();
+    super::backlight::restore();
     leave_bat_screen();
     POPUP_HIDDEN.store(true, Release);
 }
@@ -486,6 +488,7 @@ pub(super) fn update_status(app: &mut BatApp<'static>) {
     }
     GUANO_ON.store(app.guano(), Relaxed);
     super::power::SWITCH_ON.store(app.cells_on_weak_usb(), Relaxed);
+    super::backlight::SWITCH_ON.store(app.backlight_off(), Relaxed);
     super::pauses::PAUSE_WITH_REC.store(app.pause_with_rec(), Relaxed);
     if super::pauses::REFUSED.swap(false, Relaxed) {
         app.pause_refused();

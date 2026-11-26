@@ -2364,7 +2364,44 @@ B241 or an earlier build. All the checks in `tools/x8patch.py` pass on this file
 1. **Start and stop.** With Phone remote on and the phone page reloaded, do `Start recording` and `Stop recording` work as before?
 2. **Old phone page.** If a phone still has the old page cached, its commands should do nothing at all. Reload the page.
 
-## Step 56 test file: the phone remote works with HOLD on (built 2026-11-26, not yet installed)
+## Step 57 test file: Backlight off when dimmed (built 2026-11-26, not yet installed)
+
+`work/patch63/#PortaX8_0288.203` (B288, SHA-256 `3489f784…e0386976`). B287 (Step 56) with one new switch; the checks of
+Steps 50 to 56 still apply, and this file replaces B287. All the checks in `tools/x8patch.py` pass, and two builds
+give the same file. Nothing in this step has run on a unit.
+
+- **New switch: SETTINGS > Tests > Backlight off when dimmed.** Off by default, and not saved across power-off, like
+  the other Tests switches. When GENERAL SETTINGS > BACKLIGHT's time runs out, the stock firmware dims the backlight
+  to PWM 1 (BRIGHTNESS LOW, MID and HIGH are 5, 35 and 55), so the screen still glows. With the switch on and a bat
+  screen open, the patch then writes PWM 0. A touch, button press or wheel turn turns the light back on at the
+  BRIGHTNESS level, through the stock wake.
+- **When it does nothing.** On USB power (the stock timer never dims then), with BACKLIGHT at ALWAYS (never dims),
+  and with BACKLIGHT at OFF (the stock wake leaves the light dim, so the patch keeps PWM 1).
+- **How.** Task 1 checks on each message: bat screen open, switch on, BACKLIGHT 5 to 30 s, and the stock dimmed flag
+  (0x8196A3F0) set. Then it writes 0 through the FPGA driver entry that `FUN_80da95b4` uses
+  (`*(0x819212B4 + 0x48)`), leaving that function's remembered level at 0, as the stock dim left it. A stock wake asks
+  for the BRIGHTNESS level, which differs, so the stock code writes it. If a touch woke the light between the check
+  and the write, the patch writes the BRIGHTNESS level itself. When the bat screen closes or a pop-up opens over it,
+  the light goes back to the stock dim (PWM 1), so a stock screen is never left dark.
+- **Not known:** whether the FPGA turns the LEDs fully off at PWM 0. The stock firmware never writes 0. This test
+  decides whether the switch becomes a normal setting.
+
+**Memory.** Patch region free: 8,640 bytes (176 fewer than B287). No new stock hook site (header version 25).
+
+**What to check.** On batteries, set GENERAL SETTINGS > BACKLIGHT to 10 s. Open BAT DETECTOR, then SETTINGS > Tests,
+turn on Backlight off when dimmed, and go back to the main screen. Debug info on shows `pwm` on its third line.
+
+1. **Dark.** Touch nothing for 10 s. Does the screen go fully dark, with no glow in a dark room? With Debug info on,
+   a photo with a long exposure shows `dimmed 1 pwm 0` on the third line.
+2. **Wake.** Touch the screen. Does the light come back at the BRIGHTNESS level? Repeat with a button press (MARK) and
+   a wheel turn. Does the first press still act, as it does after the stock dim?
+3. **Switch off.** Turn the switch off and wait 10 s. Is the stock dim back, with the faint glow?
+4. **Leaving.** With the screen dark, press HOME and hold it to return to the LAUNCHER. Is the LAUNCHER lit?
+5. **Pop-up.** Slide HOLD on, wait for the screen to go dark, and press REC. HOLD keeps the press from waking the
+   light. Can the HOLD pop-up be seen, at least dimly?
+6. **BACKLIGHT OFF.** Set BACKLIGHT to OFF. Does the bat screen stay dim (stock), never dark?
+
+## Step 56 test file: the phone remote works with HOLD on (built 2026-11-26, installed 2026-11-26)
 
 `work/patch62/#PortaX8_0287.203` (B287, SHA-256 `0867dd50…c482d555`). B286 (Step 55) with one change; the checks of
 Steps 50 to 55 still apply, and this file replaces B286. All the checks in `tools/x8patch.py` pass, and two builds

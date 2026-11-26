@@ -956,6 +956,29 @@ fn the_drawing_switch_is_offered_by_the_host_and_is_off_during_the_cpu_test() {
 }
 
 #[test]
+fn the_backlight_switch_is_offered_by_the_host_and_starts_off() {
+    let mut storage = vec![0.0f32; 1024];
+    let mut app = BatApp::new(FS, &mut storage, buffers());
+    app.set_debug_available(true);
+    app.open_settings_page(SettingsPage::Tests);
+    let row = layout::control_row(Setting::BacklightOff).center();
+    app.touch(row.x, row.y);
+    assert!(!app.backlight_off(), "a host that cannot turn the backlight off shows no switch");
+    app.set_backlight_option_available(true);
+    app.touch(row.x, row.y);
+    assert!(app.backlight_off());
+    // Under the Freeze the screen switch and above the Done button.
+    assert!(layout::TESTS_BACKLIGHT.top_left.y >= layout::TESTS_DRAW.bottom_right().unwrap().y);
+    assert!(layout::TESTS_BACKLIGHT.bottom_right().unwrap().y <= layout::DONE.top_left.y);
+    // Tests switches are not saved.
+    let saved = app.saved_settings();
+    let mut storage = vec![0.0f32; 1024];
+    let mut fresh = BatApp::new(FS, &mut storage, buffers());
+    assert!(fresh.load_settings(&saved));
+    assert!(!fresh.backlight_off());
+}
+
+#[test]
 fn no_input_draws_a_notice_and_no_meters() {
     let mut storage = vec![0.0f32; 1024];
     let mut app = BatApp::new(FS, &mut storage, buffers());

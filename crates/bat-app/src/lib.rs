@@ -283,6 +283,9 @@ pub enum Setting {
     /// Whether the host redraws the screen only after a touch, button or wheel turn: see
     /// [`BatApp::draw_on_input`].
     DrawOnInput,
+    /// Whether the host turns the backlight fully off once its own timer has dimmed it: see
+    /// [`BatApp::backlight_off`].
+    BacklightOff,
     /// Whether a take also writes the stock recorder's MIX file: see
     /// [`BatApp::set_mix_file_available`].
     MixFile,
@@ -307,12 +310,13 @@ pub enum Setting {
 }
 
 impl Setting {
-    pub const ALL: [Setting; 16] = [
+    pub const ALL: [Setting; 17] = [
         Setting::LowestBatCall,
         Setting::ListenTo,
         Setting::AutoLevel,
         Setting::DebugInfo,
         Setting::DrawOnInput,
+        Setting::BacklightOff,
         Setting::MixFile,
         Setting::PauseWithRec,
         Setting::MuteWhileRecording,
@@ -335,7 +339,7 @@ impl Setting {
                 SettingsPage::Sound
             }
             Setting::ClockFromRemote | Setting::PhoneCode => SettingsPage::Phone,
-            Setting::DebugInfo | Setting::DrawOnInput => SettingsPage::Tests,
+            Setting::DebugInfo | Setting::DrawOnInput | Setting::BacklightOff => SettingsPage::Tests,
             Setting::LowestBatCall | Setting::Mark(_) => SettingsPage::Detect,
         }
     }
@@ -701,6 +705,9 @@ pub struct BatApp<'a> {
     draw_option_available: bool,
     /// See [`draw_on_input`](Self::draw_on_input).
     draw_on_input: bool,
+    backlight_option_available: bool,
+    /// See [`backlight_off`](Self::backlight_off).
+    backlight_off: bool,
     /// See [`set_speaker`](Self::set_speaker).
     speaker: bool,
     /// See [`set_host_speaker`](Self::set_host_speaker).
@@ -890,6 +897,8 @@ impl<'a> BatApp<'a> {
             field!((*this).cells_on_weak_usb).write(true);
             field!((*this).draw_option_available).write(false);
             field!((*this).draw_on_input).write(false);
+            field!((*this).backlight_option_available).write(false);
+            field!((*this).backlight_off).write(false);
             field!((*this).speaker).write(false);
             field!((*this).host_speaker).write(None);
             field!((*this).settings_kept).write(false);
@@ -1342,6 +1351,8 @@ impl<'a> BatApp<'a> {
             Setting::Speaker => {}
             Setting::DrawOnInput if steps != 0 => self.draw_on_input = steps > 0,
             Setting::DrawOnInput => {}
+            Setting::BacklightOff if steps != 0 => self.backlight_off = steps > 0,
+            Setting::BacklightOff => {}
             // Turning the wheel up switches on, down switches off.
             Setting::Mark(kind) if steps != 0 => self.set_marked(kind, steps > 0),
             Setting::Mark(_) => {}
@@ -1757,6 +1768,28 @@ impl<'a> BatApp<'a> {
         self.draw_on_input = on;
     }
 
+    /// The host can turn its backlight fully off (the X8 patch): offer the switch on the Tests
+    /// page, which is shown when the host has debug figures.
+    pub fn set_backlight_option_available(&mut self, available: bool) {
+        self.backlight_option_available = available;
+    }
+
+    pub fn backlight_option_available(&self) -> bool {
+        self.debug_available && self.backlight_option_available
+    }
+
+    /// Whether the host turns the backlight fully off once its own timer has dimmed it, and back
+    /// on with the next touch, button press or wheel turn. The X8's timer dims the light to its
+    /// lowest level and leaves it faintly lit. Off by default, and not saved: on the Tests page
+    /// until a unit shows that the light really goes dark.
+    pub fn backlight_off(&self) -> bool {
+        self.backlight_off
+    }
+
+    pub fn set_backlight_off(&mut self, on: bool) {
+        self.backlight_off = on;
+    }
+
     /// Whether Mute while recording is silencing the headphones now (or fading them out).
     pub fn muted_for_take(&self) -> bool {
         self.mute_while_recording
@@ -1858,6 +1891,7 @@ impl<'a> BatApp<'a> {
             Setting::CellsOnWeakUsb => self.power_option_available,
             Setting::Speaker => self.host_speaker.is_some(),
             Setting::DrawOnInput => self.draw_option_available(),
+            Setting::BacklightOff => self.backlight_option_available(),
             _ => true,
         }
     }
@@ -2158,6 +2192,7 @@ impl<'a> BatApp<'a> {
                     Setting::CellsOnWeakUsb => self.cells_on_weak_usb = !self.cells_on_weak_usb,
                     Setting::Speaker => self.speaker_switch = !self.speaker_switch,
                     Setting::DrawOnInput => self.draw_on_input = !self.draw_on_input,
+                    Setting::BacklightOff => self.backlight_off = !self.backlight_off,
                     _ => {}
                 }
             }

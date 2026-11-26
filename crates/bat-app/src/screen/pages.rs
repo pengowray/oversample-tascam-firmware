@@ -11,8 +11,8 @@ use super::{
 };
 use crate::layout::{
     PHONE_CLOCK, PHONE_CODE, PHONE_CODE_BASELINE, PHONE_CODE_RIGHT, PHONE_REMOTE, QR_MARGIN, QR_MODULE, QR_TEXT_X,
-    RECORD_GUANO, RECORD_MIX_FILE, RECORD_PAUSE, RECORD_POWER, SOUND_MUTE, SOUND_SPEAKER, TESTS_CPU_TEST, TESTS_DEBUG,
-    TESTS_DRAW, panel_switch, phone_time, qr_card,
+    RECORD_GUANO, RECORD_MIX_FILE, RECORD_PAUSE, RECORD_POWER, SOUND_MUTE, SOUND_SPEAKER, TESTS_BACKLIGHT,
+    TESTS_CPU_TEST, TESTS_DEBUG, TESTS_DRAW, panel_switch, phone_time, qr_card,
 };
 use crate::palette::*;
 use crate::{BatApp, Mode, RemoteCommand, RemoteResult, Setting, qr};
@@ -90,6 +90,10 @@ pub(super) const DEBUG_STATE: [&str; 2] =
 pub(super) const DRAW_NAME: &str = "Freeze the screen";
 pub(super) const DRAW_STATE: [&str; 2] =
     ["Screen is redrawn up to 10 times a second", "Redrawn only after a touch, button press or wheel turn"];
+/// Turns the backlight fully off after GENERAL SETTINGS > BACKLIGHT has dimmed it.
+pub(super) const BACKLIGHT_NAME: &str = "Backlight off when dimmed";
+pub(super) const BACKLIGHT_STATE: [&str; 2] =
+    ["Backlight dims but stays faintly lit", "Backlight turns off after dimming. A touch lights it"];
 pub(super) const GUANO_NAME: &str = "GUANO metadata";
 pub(super) const GUANO_STATE: [&str; 2] =
     ["No GUANO metadata. WAV files are stock X8 files", "Each WAV file gets start time, recorder model, location"];
@@ -283,6 +287,11 @@ pub(super) fn tests(app: &BatApp, fb: Fb) {
         let on = app.draw_on_input_switch();
         switch_panel(fb, TESTS_DRAW, DRAW_NAME, &[state(&DRAW_STATE, on)], on, selected);
     }
+    if app.backlight_option_available() {
+        let selected = app.selected_setting() == Setting::BacklightOff;
+        let on = app.backlight_off();
+        switch_panel(fb, TESTS_BACKLIGHT, BACKLIGHT_NAME, &[state(&BACKLIGHT_STATE, on)], on, selected);
+    }
 }
 
 /// The name of a phone command on the remote panel's last line.
@@ -430,12 +439,22 @@ pub(crate) fn lines_with_widths() -> std::vec::Vec<(std::string::String, i32, i3
     for line in CODE_NEEDED_LINES.iter().chain(&CODE_WRONG_LINES) {
         add(&BODY, line, crate::layout::WF_W as i32 - 20);
     }
-    let states = [MIX_FILE_FOLLOWS, DEBUG_STATE, DRAW_STATE, GUANO_STATE, PAUSE_STATE, CLOCK_FROM_REMOTE_STATE];
+    let states =
+        [MIX_FILE_FOLLOWS, DEBUG_STATE, DRAW_STATE, BACKLIGHT_STATE, GUANO_STATE, PAUSE_STATE, CLOCK_FROM_REMOTE_STATE];
     for line in states.iter().flatten().chain([&MIX_FILE_OVERRIDES, &GUANO_HELP]) {
         add(&SMALL, line, inside);
     }
     // The name's line ends at the switch.
-    for name in [REMOTE_NAME, GUANO_NAME, MIX_FILE_NAME, DEBUG_NAME, DRAW_NAME, CLOCK_FROM_REMOTE_NAME, PAUSE_NAME] {
+    for name in [
+        REMOTE_NAME,
+        GUANO_NAME,
+        MIX_FILE_NAME,
+        DEBUG_NAME,
+        DRAW_NAME,
+        BACKLIGHT_NAME,
+        CLOCK_FROM_REMOTE_NAME,
+        PAUSE_NAME,
+    ] {
         add(&BODY, name, 240);
     }
     add(&SMALL, "Tones heard 100. Chimes read 100, failed 100", inside);
