@@ -3977,26 +3977,26 @@ it when the take is opened. Ranges are from the mixer's range table at 0x81927F9
 |---|---|---|---|---|
 | 0x00 | 4 | Version | 1. A file with 0 here and at least 0x34 bytes is an older layout: the reader fills 0x40 onwards with the defaults below and sets this to 1 | `FUN_80db037c` |
 | 0x04 | 4 | The take's length in whole seconds (frames / sample rate) | `260430_0070` has 157, and 157.7 s of audio | `FUN_80db2102` |
-| 0x08 | 1 | The app that recorded it (settings + 0x214) | 2 MANUAL in 116 files, 5 in one; 9 for apps 9 to 11 | |
-| 0x09 | 1 | File mode (settings + 0x215) | 3 in all files | |
-| 0x0A | 1 | Settings + 0x216, message 0xFFD | 0 in all files. Not traced | |
-| 0x0B | 1 | Settings + 0x217 | 0. Not traced | |
-| 0x0C | 1 | MS DECODE (settings + 0x218) | 0 off, 1 INPUT 1-2, 2 INPUT 3-4, 3 INPUT 5-6 | `FUN_00016c70` |
+| 0x08 | 1 | The app that recorded it (settings + 0x214): 1 ASMR, 2 MANUAL, 3 MUSIC, 4 VOICE, 5 FIELD, 6 PODCAST, 9 POCKET STUDIO (`work/notes/launcher.md`) | 2 in 126 files, 5 in one (its only file is a stereo master); 9 for apps 9 to 11 | |
+| 0x09 | 1 | DUAL REC (settings + 0x215): 3 OFF, 1 ON. Message 0x104 sets it, with settings + 0x1D6 = 1 for FLOAT and 0 for MP3. With 1, the writer saves the same 268 bytes again as `<name>F.bin` (FLOAT) or `<name>M.bin` (MP3), formats at 0x813BC220 and 0x813BC228. The code also tests for 0, which no setting writes. Overdub saves this byte, sets it to 3 and restores it | 3 in all files | `FUN_80dc42e4`, `FUN_80db2102` |
+| 0x0A | 1 | Settings + 0x216, message 0xFFD, range 0 to 8 (entry 0x26 at 0x81969224). The DSP reads bit 0 in VOICE and bit 1 in MUSIC (send gain 0 or 1.0 for channels 3 and 4, state + 0x1B0 + 0x94), and bit 2 in PODCAST (state + 0x62C). The screen setting was not found | 0 in all files | `FUN_00015f50`, `FUN_000161d8`, `FUN_00017578` |
+| 0x0B | 1 | Settings + 0x217. No load or store uses this offset on the settings record; it is only copied with its neighbours | 0 | |
+| 0x0C | 1 | MS DECODE (settings + 0x218) | 0 OFF, 1 TRACK 1-2, 2 TRACK 3-4, 3 TRACK 5-6 (the manual's names) | `FUN_00016c70` |
 | 0x0D | 1 | MS decode width (settings + 0x219, message 0xC05) | 0 to 100, default 50. Indexes the mid gain table, and 100 less it the side gain table | `FUN_00016df2` |
-| 0x0E | 1 | Settings + 0x21A, message 0xC06 | 0 to 100, default 100. Not traced | |
-| 0x0F | 1 | Settings + 0x21B | 0. Not traced | |
+| 0x0E | 1 | Settings + 0x21A, message 0xC06 (range entry 0x19). Stored, and returned when a query packet asks for it (`FUN_80d96f68`); no DSP code reads it, and the Qt side has no case for 0xC06 | 0 to 100, default 100 | |
+| 0x0F | 1 | Settings + 0x21B. Only copied, as 0x0B | 0 | |
 | 0x10 + 4 × n, n = 0 to 5 | 4 | Mixer channel for track n + 1 | | `FUN_00016a6a` |
 | + 0 | 1 | Level (message 0xC03) | 0 to 127, default 97. Indexes the gain table at DSP data + 0x238 | `FUN_00016b64` |
 | + 1 | 1 | Pan (message 0xC02) | 0 left, 20 centre, 40 right | `FUN_00016bac` |
-| + 2 | 1 | Range 0 to 100 in the range table. By its place, a send level; not traced | 0 in all files | |
+| + 2 | 1 | Range 0 to 100 (range entry 4 × track). Stereo link (tap codes 0x71 to 0x76) copies it and the level from the pair's second track to its first. `FUN_00016a6a` does not apply it | 0 in all files | `FUN_80dd4bcc` |
 | + 3 | 1 | Out of the mix (message 0xC04) | 0 or 1. Used only in app 6 | `FUN_00016c34` |
-| 0x28, 0x2C | 4 each | Two more entries shaped like a mixer channel | 97, 0, 0, 0 and 97, 40, 0, 0 in all files: as a level and a pan, the default level panned fully left and fully right. Not traced | |
+| 0x28, 0x2C | 4 each | Mixer entries 7 and 8 (settings + 0x234, + 0x238). The defaults loop writes all eight entries as level 97 with pans 0 and 40 alternating; nothing else stores to them, and `FUN_00016a6a` applies only entries 1 to 6. Named `unused_channels` | 97, 0, 0, 0 and 97, 40, 0, 0 in all files | `FUN_80da7794` |
 | 0x30 | 1 | Master level (settings + 0x23C, message 0xC08) | 0 to 127: 97, 100 or 113 in the files | `FUN_00016a6a` |
-| 0x31 | 1 | Settings + 0x23D | 70 in all files. Not traced | |
-| 0x32 | 1 | Settings + 0x23E, message 0xFFE | 0 or 1. Not traced | |
-| 0x33 | 1 | Settings + 0x23F | 0 | |
+| 0x31 | 1 | Settings + 0x23D. The defaults write 70; nothing else uses the offset on the settings record | 70 in all files | `FUN_80da7794` |
+| 0x32 | 1 | SOLO (AFL) on or off: settings + 0x23E, message 0xFFE (range entry 0x1B). The handler passes it with the soloed track (range entry 0x1A, 0 to 9, not saved) to `FUN_00016d38`, which sets DSP + 0x62A and + 0x62B and builds the solo mix at state + 0x378 only in apps 2, 6 and 9 on screens 7 and 11 (DSP + 0x625). The V2.00 addendum puts SOLO on INPUT SETTINGS and MIXER SETTINGS in MANUAL and PODCAST | 0 in 86 files, 1 in 41: every take from 260204_0002 to 260218_0046, so it persists between takes | `FUN_00016d38`, `FUN_00016d1a` |
+| 0x33 | 1 | Settings + 0x23F. Only copied, as 0x0B | 0 | |
 | 0x34 | 3 | Not written | 0 | |
-| 0x37 | 1 | One byte and two 32-bit words (0x38, 0x3C) copied from the recorder's state, or kept from the project that was open | 0 in all files. Not traced | `FUN_80db2102` |
+| 0x37 | 1 | One byte and two 32-bit words (0x38, 0x3C). In apps 9 to 11 the byte comes from the writer's state and the words from the first two words of file slot 0 at 0x81CB7A48 (slots are 0x214 bytes; word 0x1D is the frame count). Otherwise kept from the project that was open, or 0. Not named | 0 in all files | `FUN_80db2102` |
 | 0x40 + 0x20 × n, n = 0 to 5 | 0x20 | The 4-band EQ of track n + 1: bands at + 0, + 4, + 8 and + 0xC, then 16 bytes of 0 | The defaults in all files. Saved from settings + 0xAF4 only in apps 9 to 11; a track's EQ is also at settings + 0x40 + 0x20 × track | `FUN_80da7764` (defaults), `FUN_80dbe324`, `FUN_00029998` |
 | band + 0 | 1 | Frequency, an index into the table of 64 at 0x30AB8 (32 Hz to 18 kHz). Band 4 counts from the table's 33rd entry | Default 16 in bands 1 and 4, 32 in bands 2 and 3: 400 Hz, 1.7 kHz, 1.7 kHz and 5.5 kHz | `FUN_00029998`, value kind 0 |
 | band + 1 | 1 | Gain, an index into the table at 0x31084: 0 to 24 for -12 to 12 dB | Default 12, 0 dB | value kind 1 |
@@ -4006,15 +4006,22 @@ it when the take is opened. Ranges are from the mixer's range table at 0x81927F9
 | 0x100 | 4 | Tempo, 20 to 250 (the low 16 bits are used) | Default 120 | `FUN_80dc67e6`, range entry 0x1E at 0x81969224 |
 | 0x104 | 2 | Beats, 1 to 9 | Default 4 | message 0x501, range entry 0x1F |
 | 0x106 | 2 | Level, 0 to 100 | Default 50 | `FUN_80dc68a8`, range entry 0x21 |
-| 0x108 | 1 | A setting of 0 to 2. Not traced | Default 0 | `FUN_80dc6848`, range entry 0x20 |
-| 0x109 | 1 | Bit 0 and bit 1 are two settings of 0 or 1; bits 2 and 3 a setting of 0 to 2. Not traced | Default 2 | `FUN_80dc6954`, `FUN_80dc69b0`, `FUN_80dc6a18` |
-| 0x10A | 1 | A setting of 0 to 47. Setting the beats writes beats + 23 here. Not traced | Default 27 | `FUN_80dc68fc`, range entry 0x22 |
+| 0x108 | 1 | SOUND: 0 CLICK, 1 STICK, 2 BELL (message 0x503) | Default 0 | `FUN_80dc6848`, range entry 0x20, `FUN_80df0074` |
+| 0x109 | 1 | Bit 0 bar display (message 0x506), bit 1 ACCENT (0x507; the click player `FUN_80df00c8` uses the accent sound on the first beat when it is set), bits 2 and 3 CLICK: 0 OFF, 1 REC, 2 REC&PLAY (0x508) | Default 2: ACCENT on | `FUN_80dc6954`, `FUN_80dc69b0`, `FUN_80dc6a18` |
+| 0x10A | 1 | SIGNATURE (message 0x505), 0 to 47: by the default 27 = 4/4, beats n giving n + 23 = n/4, and the manual's range 1/1 to 12/8, the list is 1/1 to 12/1, 1/2 to 12/2, 1/4 to 12/4, 1/8 to 12/8. The list's text was not found | Default 27 | `FUN_80dc68fc`, range entry 0x22 |
 | 0x10B | 1 | Not used | 0 | |
 
 The EQ's three tables were read from the unpacked ITCM image (`work/ram/itcm-00000400.bin`). `FUN_00029998(track,
 band, kind, value)` looks the value up and `FUN_00025120` makes the band's filter from frequency, gain and Q. Which
 filter shape each band has (shelf or peak) was not read. The 12 bytes at 0x100 were first taken for reverb; their
 ranges (a tempo of 20 to 250, 1 to 9 beats) and the 0x5xx messages show they are the metronome's.
+
+The mixer's range table at 0x81927F90 has 12-byte entries (maximum at + 2, minimum at + 4, current value at + 8). Entries 0 to
+0x17 are four for each track: 0 to 100 (by elimination, the channel's byte + 2), pan 0 to 40, level 0 to 127, out of the mix 0 to 1. Then 0x18
+MS decode width, 0x19 the byte at 0x0E, 0x1A the soloed track (0 to 9), 0x1B SOLO, 0x1C 0 to 100 (no user found) and 0x1D the
+master level. The settings range table at 0x81969224 (`FUN_80dee4f8`) holds the metronome's entries 0x20 to 0x25 and entry 0x26
+for the byte at 0x0A. The offsets above were found with a Ghidra script that lists every load and store with a given immediate
+offset; "only copied" means none of those hits has the settings record as its base.
 
 Nothing in the file is an input's source, gain or phantom power, and the mixer settings change only the MIX file and
 what is heard, not a track's own file. So GUANO takes nothing from it. The patch could not read the file in any case:
