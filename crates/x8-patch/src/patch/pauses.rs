@@ -59,7 +59,7 @@ pub(super) fn track() {
         if transport == RECORDING {
             // The recorded position is where the pause ended.
             OWN_MARKS.fetch_add(1, Relaxed);
-            super::remote::post_button(stock::MARK);
+            super::buttons::post_button(stock::MARK);
         }
     }
 }

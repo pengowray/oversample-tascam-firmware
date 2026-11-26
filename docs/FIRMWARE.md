@@ -284,7 +284,7 @@ Drawing uses `embedded-graphics` and `u8g2-fonts`.
 - The phone remote presses buttons by posting the same message that a real button press posts, into
   task 1's mailbox (a message block from 0x80D70027, sent with `snd_mbx`). The marker added after a
   pause posts MARK the same way.
-- `hold_hook` (from B287) replaces task 1's call to the HOLD getter `FUN_80daca30` (`bl` at
+- `hold_hook` (from B287, in `buttons.rs`) replaces task 1's call to the HOLD getter `FUN_80daca30` (`bl` at
   0x80D6CCF2), the check that turns a button press into the HOLD pop-up. For 1 s after the patch
   posts a press it answers that HOLD is off, so the phone remote starts and stops takes with HOLD on.
   A button pressed by hand in that second also gets past HOLD. The getter's other callers, and task

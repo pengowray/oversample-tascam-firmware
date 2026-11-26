@@ -2366,7 +2366,7 @@ B241 or an earlier build. All the checks in `tools/x8patch.py` pass on this file
 
 ## Step 56 test file: the phone remote works with HOLD on (built 2026-11-26, not yet installed)
 
-`work/patch62/#PortaX8_0287.203` (B287, SHA-256 `7475f3bd…435cc969`). B286 (Step 55) with one change; the checks of
+`work/patch62/#PortaX8_0287.203` (B287, SHA-256 `9fd88e09…146e1bd6`). B286 (Step 55) with one change; the checks of
 Steps 50 to 55 still apply, and this file replaces B286. All the checks in `tools/x8patch.py` pass, and two builds
 give the same file. Nothing in this step has run on a unit.
 

@@ -7,6 +7,8 @@ use core::ptr;
 mod audio;
 /// BAT DETECTOR's launcher glyph.
 mod bat_glyph;
+/// Button presses the patch gives task 1, and the hook that lets them act with HOLD on.
+mod buttons;
 /// Sets the X8's clock from the phone's chimes, and keeps the phone's time for GUANO metadata.
 mod clock;
 /// The CPU test's logs: taken from the app on the DSP task, written to `CPU_TEST.TXT` as a take's
@@ -42,7 +44,7 @@ mod power;
 mod qt;
 /// BAT PLAYBACK's card reader task: lists the WAV files, reads their headers and the file playing.
 mod reader;
-/// Carries out the phone remote's commands by posting button presses to task 1.
+/// Carries out the phone remote's start and stop commands with REC and HOME presses.
 mod remote;
 /// Opening and closing the bat screen, and drawing it with the debug strips.
 mod screen;
@@ -64,6 +66,7 @@ mod task;
 /// 192 kHz stereo over USB: the rate list, INPUT 3 and 4 into the USB ring, and the 8-channel guard.
 mod usb;
 
+use buttons::hold_hook;
 use guano_file::guano_hook;
 use keys::{key_hook, rec_key_hook, touch_hook};
 use launcher::{
@@ -71,7 +74,6 @@ use launcher::{
     icon_width_hook, phantom_off_hook, power_off_save_hook, slot_hook, text_hook, tile_hook, title_y_hook,
 };
 use mix_file::{file_mask_hook, open_take_hook};
-use remote::hold_hook;
 use speaker::{output_power_hook, speaker_hook};
 use usb::{usb_alt_hook, usb_init_hook, usb_reset_hook};
 

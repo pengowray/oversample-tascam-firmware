@@ -1,11 +1,8 @@
-use core::ptr;
-use core::sync::atomic::{
-    AtomicBool, AtomicU32,
-    Ordering::{Acquire, Relaxed, Release},
-};
+use core::sync::atomic::{AtomicU32, Ordering::Relaxed};
 
 use bat_app::{BatApp, RecorderCommand, RemoteResult};
 
+use super::buttons::post_button;
 use super::state::{BLOCKS, HEAR_MIX};
 use super::{blocks_per_second, read_byte, stock};
 
@@ -13,10 +10,6 @@ use super::{blocks_per_second, read_byte, stock};
 static GOAL: AtomicU32 = AtomicU32::new(GOAL_NONE);
 static GOAL_SINCE: AtomicU32 = AtomicU32::new(0);
 static LAST_PRESS: AtomicU32 = AtomicU32::new(0);
-/// When the patch last gave task 1 a button press, from any task, once it has given one. Read by
-/// `hold_hook` in task 1.
-static POSTED: AtomicBool = AtomicBool::new(false);
-static POSTED_AT: AtomicU32 = AtomicU32::new(0);
 
 const GOAL_NONE: u32 = 0;
 const GOAL_RECORDING: u32 = 1;
@@ -33,10 +26,6 @@ const GIVE_UP_S: u32 = 5;
 const PRESS_AGAIN_S: u32 = 2;
 /// The stock code ignores REC while its worker task is still closing the last take's files.
 const STANDBY_AFTER_S: u32 = 1;
-/// For this long after the patch posts a button press, task 1 is told that HOLD is off, so the press
-/// acts instead of opening the HOLD pop-up. Task 1 reads the press within a few ms; a button pressed
-/// by hand in this second also gets past HOLD.
-const PAST_HOLD_S: u32 = 1;
 
 // The recorder's transport byte: see `stock::TRANSPORT`.
 const STOPPED: u8 = 0;
@@ -44,45 +33,6 @@ const STANDBY: u8 = 2;
 const RECORDING: u8 = 3;
 const PAUSED: u8 = 4;
 const PAUSED_BY_EVENT: u8 = 6;
-
-/// Give task 1 a button press, as `FUN_80d6c058` does after its press and release translation.
-/// That translation is left out on purpose: it keeps shared state that task 9 also uses, and for
-/// HOME it polls the audio engine. For REC and HOME it passes the code on unchanged at the press.
-/// The block allocator and the mailbox are safe from any task, as the Bluetooth remote's task
-/// shows. The press gets past HOLD: see `hold_hook`.
-pub(super) fn post_button(code: i32) {
-    POSTED_AT.store(BLOCKS.load(Relaxed), Relaxed);
-    POSTED.store(true, Release);
-    // SAFETY: the stock functions named in `stock`, called from a task as the stock code does.
-    unsafe {
-        let new_block: unsafe extern "C" fn(*mut usize) -> i32 = core::mem::transmute(stock::NEW_MESSAGE);
-        let send: unsafe extern "C" fn(i32, usize) -> i32 = core::mem::transmute(stock::SND_MBX);
-        let mut block = 0usize;
-        if new_block(&mut block) != 0 {
-            return;
-        }
-        ptr::write_volatile((block + 4) as *mut u32, 1);
-        // Category 0 and kind 0 mean a button press.
-        let message = (block + 8) as *mut u8;
-        ptr::write_bytes(message, 0, stock::MESSAGE_BYTES);
-        ptr::write_volatile(message.add(stock::MESSAGE_CODE_OFFSET).cast::<i32>(), code);
-        send(stock::TASK_1_MAILBOX, block);
-    }
-}
-
-/// Replaces task 1's call to the HOLD getter, the check that turns a button press into the HOLD
-/// pop-up while HOLD is on. Says HOLD is off just after the patch posted a press, so the phone
-/// remote can start and stop takes, and a pause's end can add its mark, with HOLD on.
-pub(super) unsafe extern "C" fn hold_hook(_: usize, _: usize, _: usize, _: usize) -> usize {
-    if POSTED.load(Acquire)
-        && BLOCKS.load(Relaxed).wrapping_sub(POSTED_AT.load(Relaxed)) < PAST_HOLD_S * blocks_per_second()
-    {
-        return 0;
-    }
-    // SAFETY: the stock getter this call went to, with no arguments; it reads one byte.
-    let hold: unsafe extern "C" fn() -> usize = unsafe { core::mem::transmute(stock::HOLD_ON) };
-    unsafe { hold() & 0xff }
-}
 
 fn guide_on() -> bool {
     read_byte(stock::RECORDING_GUIDE) == 1
