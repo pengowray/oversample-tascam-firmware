@@ -2364,7 +2364,39 @@ B241 or an earlier build. All the checks in `tools/x8patch.py` pass on this file
 1. **Start and stop.** With Phone remote on and the phone page reloaded, do `Start recording` and `Stop recording` work as before?
 2. **Old phone page.** If a phone still has the old page cached, its commands should do nothing at all. Reload the page.
 
-## Step 55 test file: no full stop at the end of the settings pages' help lines (built 2026-11-20, not yet installed)
+## Step 56 test file: the phone remote works with HOLD on (built 2026-11-26, not yet installed)
+
+`work/patch62/#PortaX8_0287.203` (B287, SHA-256 `7475f3bd…435cc969`). B286 (Step 55) with one change; the checks of
+Steps 50 to 55 still apply, and this file replaces B286. All the checks in `tools/x8patch.py` pass, and two builds
+give the same file. Nothing in this step has run on a unit.
+
+- **Start and stop with HOLD on.** Before, the phone's `Start recording` and `Stop recording` were refused while
+  HOLD was on, with one low note and `Cannot start: HOLD is on.` The REC and HOME presses the patch posts now get
+  past HOLD, so the phone starts and stops takes with HOLD on. Buttons pressed by hand still get the HOLD pop-up.
+- **How.** Task 1's main loop asks the HOLD getter `FUN_80daca30` before it hands a button press to the screen
+  (`bl` at 0x80D6CCF2); with HOLD on, the press becomes the HOLD pop-up (kind 9, code 0x4D). The new call hook
+  `hold_hook` answers that HOLD is off for 1 s after the patch posts a press. Task 1 reads a posted press within a
+  few ms, so a button pressed by hand in that second is the only other press that gets past HOLD. The getter's
+  three other callers are on pop-up and power paths, not on a button press, and are left alone.
+- **Also fixed.** The marker the patch adds at the end of a pause (MARK, posted the same way) no longer opens the
+  HOLD pop-up with HOLD on. After a phone stop with the mix muted while stopped, the press that returns to standby
+  is no longer skipped with HOLD on.
+- **The CPU test** can now start its recording pass with HOLD on. `No recording pass: HOLD is on.` is gone.
+
+**Memory.** Patch region free: 8,816 bytes (584 more than B286, from the removed HOLD notices). One new stock hook
+site, a call (header version 25).
+
+**What to check.** Turn Phone remote on, then slide HOLD on.
+
+1. **Start.** From stop, and from standby, press `Start recording` on the phone. Does the take start, with two rising
+   beeps, and no HOLD pop-up?
+2. **Stop.** Press `Stop recording`. Does the take end, with two falling beeps?
+3. **Buttons still locked.** With HOLD still on, press REC and HOME by hand. Does each show the HOLD pop-up and do
+   nothing else?
+4. **HOLD pop-up already up.** Press REC by hand, then press `Start recording` on the phone while the pop-up shows.
+   Does the take start within 5 s, or is there one low note and `Recorder did not respond`?
+
+## Step 55 test file: no full stop at the end of the settings pages' help lines (built 2026-11-20, never installed: superseded by B287)
 
 `work/patch61/#PortaX8_0286.203` (B286, SHA-256 `6011d3bc…13f51032`). B285 (Step 54) with two changes; the checks of
 Steps 50 to 54 still apply, and this file replaces B285. All the checks in `tools/x8patch.py` pass, and two builds

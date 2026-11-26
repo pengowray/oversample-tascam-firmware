@@ -57,8 +57,6 @@ pub enum RemoteResult {
     AlreadyRecording,
     Stopped,
     AlreadyStopped,
-    /// The HOLD switch is on, and the X8 would show its HOLD pop-up instead of recording.
-    HoldOn(RecorderCommand),
     /// MANUAL's recording guide is on, and REC would open it instead of recording.
     GuideOn,
     /// A settings page is open in MANUAL, and the X8 ignores REC until it closes.

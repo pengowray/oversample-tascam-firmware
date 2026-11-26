@@ -15,7 +15,7 @@ use crate::layout::{
     TESTS_DRAW, panel_switch, phone_time, qr_card,
 };
 use crate::palette::*;
-use crate::{BatApp, Mode, RecorderCommand, RemoteCommand, RemoteResult, Setting, qr};
+use crate::{BatApp, Mode, RemoteCommand, RemoteResult, Setting, qr};
 
 /// In the title bar of the main screen while the remote's switch is on. Muted while it waits for
 /// a tone, and in the accent colour while the chime decoders run.
@@ -369,8 +369,6 @@ pub(super) fn result_lines(result: RemoteResult) -> &'static [&'static str] {
         RemoteResult::AlreadyRecording => &["Phone asked to start.", "Already recording."],
         RemoteResult::Stopped => &["Phone: recording stopped"],
         RemoteResult::AlreadyStopped => &["Phone asked to stop.", "Already stopped."],
-        RemoteResult::HoldOn(RecorderCommand::Start) => &["Cannot start: HOLD is on.", "Slide HOLD off."],
-        RemoteResult::HoldOn(RecorderCommand::Stop) => &["Cannot stop: HOLD is on.", "Slide HOLD off."],
         RemoteResult::GuideOn => &["Cannot start: recording guide", "is on. Turn it off in MANUAL."],
         RemoteResult::PageOpen => &["Cannot start: MANUAL settings", "page open. Press PLAY, close it."],
         RemoteResult::NoResponse => &["Recorder did not respond to", "the phone's command within 5 s."],
@@ -451,8 +449,6 @@ pub(crate) fn lines_with_widths() -> std::vec::Vec<(std::string::String, i32, i3
         RemoteResult::AlreadyRecording,
         RemoteResult::Stopped,
         RemoteResult::AlreadyStopped,
-        RemoteResult::HoldOn(RecorderCommand::Start),
-        RemoteResult::HoldOn(RecorderCommand::Stop),
         RemoteResult::GuideOn,
         RemoteResult::PageOpen,
         RemoteResult::NoResponse,

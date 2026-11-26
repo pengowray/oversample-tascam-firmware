@@ -166,7 +166,7 @@ The memory ranges and their sizes are in [HARDWARE.md](HARDWARE.md#memory-free-f
 ### The patch header
 
 The patch starts with a header, `X8_PATCH_HEADER` in `crates/x8-patch/src/patch.rs`: the magic
-`BATX`, a header version (21 at B273), the addresses of 34 entry points, the address of the logo screen's lower image
+`BATX`, a header version (25 at B287), the addresses of 38 entry points, the address of the logo screen's lower image
 handle and the y positions of that screen's two images, and a build number.
 `tools/x8patch.py` reads the entry points from the header, so the stock firmware's hook sites
 always point at the right functions after a rebuild. The build field is 0 in the ELF file;
@@ -186,7 +186,7 @@ value it expects, and it refuses the build if any site differs.
 | Function entry | The first 4 bytes of a stock function become a `b.w` to a patch function that does the whole job. | The bridge's USER SETTINGS slot getter (0x80D6A238). The patch's `slot_hook` reports slots 2 and 3 as holding a MANUAL preset. |
 | Fact | A stock word the patch's constants depend on is checked and left alone. | The layout word for 8-bit alpha images, which the bat tiles' icons use. |
 
-At B273 there are 36 hook sites: 2 pointer words, 3 tail calls, 29 calls and 2 function entries,
+At B287 there are 40 hook sites: 2 pointer words, 3 tail calls, 33 calls and 2 function entries,
 plus 1 fact that is only checked. The logo screen (from B259) also changes a handle literal and 3
 `movs` immediates, and the USB audio (from B263) 3 more `movs` immediates in `FUN_80df4a24`, the
 packet sizes of the 2-channel alternate settings.
@@ -282,7 +282,13 @@ Drawing uses `embedded-graphics` and `u8g2-fonts`.
   the speaker is in use. See "The built-in
   speaker" in [HOMEBREW.md](HOMEBREW.md) and `crates/x8-patch/src/patch/speaker.rs`.
 - The phone remote presses buttons by posting the same message that a real button press posts, into
-  task 1's mailbox (a message block from 0x80D70027, sent with `snd_mbx`).
+  task 1's mailbox (a message block from 0x80D70027, sent with `snd_mbx`). The marker added after a
+  pause posts MARK the same way.
+- `hold_hook` (from B287) replaces task 1's call to the HOLD getter `FUN_80daca30` (`bl` at
+  0x80D6CCF2), the check that turns a button press into the HOLD pop-up. For 1 s after the patch
+  posts a press it answers that HOLD is off, so the phone remote starts and stops takes with HOLD on.
+  A button pressed by hand in that second also gets past HOLD. The getter's other callers, and task
+  1's other HOLD check (on a power event), are left alone.
 
 ### The bat tiles: BAT DETECTOR and BAT PLAYBACK
 

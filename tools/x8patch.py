@@ -141,6 +141,11 @@ BUILDS = {
             # The output stage switch FUN_80d9ff82 reads the transport byte: with SPEAKER on and
             # nothing plugged in, it turns the output stage off from record standby to a take's end.
             ("output stage during a take", 0x80D9FF9A, 0x80D6C6B2, "output_power_hook"),
+            # Task 1's main loop FUN_80d6c9f0 asks the HOLD getter FUN_80daca30 whether to turn a
+            # button press into the HOLD pop-up (kind 9, code 0x4D) before the screen handler sees
+            # it. Its other check in that loop, on a power event, and the getter's other callers
+            # are left alone.
+            ("HOLD check on a button press", 0x80D6CCF2, 0x80DACA30, "hold_hook"),
         ],
         "facts": [
             # The veneer FUN_80e06310 goes to ITCM 0x1e484, which returns 0x1e498,
@@ -196,12 +201,13 @@ HEADER_FIELDS = ["magic", "version", "key_hook", "rec_key_hook", "touch_hook", "
                  "icon_height2_hook", "icon_height3_hook", "icon_width2_hook", "icon_width3_hook",
                  "power_off_save_hook", "open_take_hook", "file_mask_hook", "guano_hook", "usb_init_hook",
                  "usb_alt_hook", "phantom_off_hook", "usb_reset_hook", "speaker_hook", "output_power_hook",
+                 "hold_hook",
                  "logo_lower",
                  "logo_upper_y", "logo_lower_y", "build"]
-HEADER_FORMAT = "<4s42I"
+HEADER_FORMAT = "<4s43I"
 # The packer writes the update file's build number here, for the CPU test to show.
 BUILD_OFFSET = struct.calcsize(HEADER_FORMAT) - 4
-HEADER_VERSION = 24
+HEADER_VERSION = 25
 
 B_W, BL = 0x9000, 0xD000   # bits 15, 14 and 12 of the second halfword
 

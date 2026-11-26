@@ -376,11 +376,11 @@ fn a_take_that_does_not_start_ends_the_test_with_the_reason() {
     let mut figures = HostFigures::default();
     run_pass(&mut app, &mut figures, 30);
     assert_eq!(app.take_remote_command(), Some(RecorderCommand::Start));
-    app.remote_result(RemoteResult::HoldOn(RecorderCommand::Start));
+    app.remote_result(RemoteResult::GuideOn);
     assert!(!app.cpu_test_running());
     assert_eq!(app.take_remote_command(), None, "no take to stop");
     let log = the_log(&mut app);
-    assert!(log.contains("No recording pass: HOLD is on."), "{log}");
+    assert!(log.contains("No recording pass: the recording guide is on."), "{log}");
 }
 
 #[test]

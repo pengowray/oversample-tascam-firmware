@@ -236,7 +236,7 @@ fn a_result_shows_for_a_while() {
     let mut storage = vec![0.0f32; SECOND];
     let mut buffers = Box::new(Buffers::new());
     let mut app = remote_app(&mut storage, &mut buffers);
-    app.remote_result(RemoteResult::HoldOn(RecorderCommand::Start));
+    app.remote_result(RemoteResult::GuideOn);
     assert!(app.remote.result_shown(app.samples).is_some());
     let silence = vec![0.0f32; 6 * SECOND];
     run(&mut app, &silence);

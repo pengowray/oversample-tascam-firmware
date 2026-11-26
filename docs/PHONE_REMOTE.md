@@ -112,8 +112,8 @@ check its SipHash against the published vector (key `00 01 .. 0f`, message `00 0
 | Code | Command | Argument | What the X8 does |
 |---|---|---|---|
 | 0 | none | | Never sent. |
-| 1 | Start recording | 0: leave `Mute while recording` as it is. From B273, 1: turn it on, 2: turn it off | From stop or standby, presses REC until it records. If it is already recording, it beeps as if it had started. With argument 1 or 2 it first sets the X8's `Mute while recording` switch (SETTINGS, Record tab), also when it is already recording; BAT PLAYBACK, which has no such switch, starts and ignores the argument. Builds B249 to B272 answer argument 1 or 2 with the unknown notice and do not start. |
-| 2 | Stop recording | 0 | Ends the take. If it is already stopped, it beeps as if it had stopped. |
+| 1 | Start recording | 0: leave `Mute while recording` as it is. From B273, 1: turn it on, 2: turn it off | From stop or standby, presses REC until it records, also with HOLD on (from B287; earlier builds refuse with one low note). If it is already recording, it beeps as if it had started. With argument 1 or 2 it first sets the X8's `Mute while recording` switch (SETTINGS, Record tab), also when it is already recording; BAT PLAYBACK, which has no such switch, starts and ignores the argument. Builds B249 to B272 answer argument 1 or 2 with the unknown notice and do not start. |
+| 2 | Stop recording | 0 | Ends the take, also with HOLD on (from B287). If it is already stopped, it beeps as if it had stopped. |
 | 3 | Set clock | 0 | Sets the clock to the chime's time, whatever the `Set X8 clock from chimes` setting. During a take, it sets the clock when the take ends. From B257. |
 | 4 | Listening mode | The mode: 1 HET, 2 COMB, 3 FD, 4 TE, 5 PITCH, 6 1:1 | Plays that mode in the headphones, as if its mode button had been pressed. A mode that the build hides, such as PITCH on the X8, gets one low note and changes nothing. From B257. |
 

@@ -417,7 +417,6 @@ pub(crate) fn mix_note(mix_file: Option<bool>) -> &'static str {
 /// Why the take for the second pass did not start.
 pub(crate) fn no_take_reason(result: RemoteResult) -> &'static str {
     match result {
-        RemoteResult::HoldOn(_) => "HOLD is on",
         RemoteResult::GuideOn => "the recording guide is on",
         RemoteResult::PageOpen => "a settings page is open in MANUAL",
         RemoteResult::NoResponse => "the recorder did not start",
