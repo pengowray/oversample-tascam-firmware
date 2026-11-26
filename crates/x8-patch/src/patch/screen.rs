@@ -194,8 +194,9 @@ pub(super) fn leave_bat_screen() {
 pub(super) fn hide_for_popup() {
     // Pop-ups install their own key handler, so task 1 would not turn the speaker off.
     super::speaker::close();
-    super::backlight::restore();
     leave_bat_screen();
+    // After BAT_ACTIVE is cleared, so task 1 cannot turn the light off again under the pop-up.
+    super::backlight::restore();
     POPUP_HIDDEN.store(true, Release);
 }
 

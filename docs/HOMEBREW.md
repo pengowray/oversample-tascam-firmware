@@ -2366,7 +2366,7 @@ B241 or an earlier build. All the checks in `tools/x8patch.py` pass on this file
 
 ## Step 57 test file: Backlight off when dimmed (built 2026-11-26, not yet installed)
 
-`work/patch63/#PortaX8_0288.203` (B288, SHA-256 `3489f784…e0386976`). B287 (Step 56) with one new switch; the checks of
+`work/patch63/#PortaX8_0288.203` (B288, SHA-256 `076d6062…4a4c214b`). B287 (Step 56) with one new switch; the checks of
 Steps 50 to 56 still apply, and this file replaces B287. All the checks in `tools/x8patch.py` pass, and two builds
 give the same file. Nothing in this step has run on a unit.
 
@@ -2386,26 +2386,24 @@ give the same file. Nothing in this step has run on a unit.
 - **Not known:** whether the FPGA turns the LEDs fully off at PWM 0. The stock firmware never writes 0. This test
   decides whether the switch becomes a normal setting.
 
-**Memory.** Patch region free: 8,640 bytes (176 fewer than B287). No new stock hook site (header version 25).
+**Memory.** Patch region free: 8,752 bytes (64 fewer than B287). No new stock hook site (header version 25).
 
 **What to check.** On batteries, set GENERAL SETTINGS > BACKLIGHT to 10 s. Open BAT DETECTOR, then SETTINGS > Tests,
-turn on Backlight off when dimmed, and go back to the main screen. Debug info on shows `pwm` on its third line.
+turn on Backlight off when dimmed, and go back to the main screen.
 
-1. **Dark.** Touch nothing for 10 s. Does the screen go fully dark, with no glow in a dark room? With Debug info on,
-   a photo with a long exposure shows `dimmed 1 pwm 0` on the third line.
+1. **Dark.** In a dark room, touch nothing for 10 s. Does the screen go fully dark, with no glow?
 2. **Wake.** Touch the screen. Does the light come back at the BRIGHTNESS level? Repeat with a button press (MARK) and
    a wheel turn. Does the first press still act, as it does after the stock dim?
 3. **Switch off.** Turn the switch off and wait 10 s. Is the stock dim back, with the faint glow?
-4. **Leaving.** With the screen dark, press HOME and hold it to return to the LAUNCHER. Is the LAUNCHER lit?
-5. **Pop-up.** Slide HOLD on, wait for the screen to go dark, and press REC. HOLD keeps the press from waking the
+4. **Pop-up.** Slide HOLD on, wait for the screen to go dark, and press REC. HOLD keeps the press from waking the
    light. Can the HOLD pop-up be seen, at least dimly?
-6. **BACKLIGHT OFF.** Set BACKLIGHT to OFF. Does the bat screen stay dim (stock), never dark?
+5. **BACKLIGHT OFF.** Set BACKLIGHT to OFF. Does the bat screen stay dim (stock), never dark?
 
 ## Step 56 test file: the phone remote works with HOLD on (built 2026-11-26, installed 2026-11-26)
 
 `work/patch62/#PortaX8_0287.203` (B287, SHA-256 `0867dd50…c482d555`). B286 (Step 55) with one change; the checks of
 Steps 50 to 55 still apply, and this file replaces B286. All the checks in `tools/x8patch.py` pass, and two builds
-give the same file. Nothing in this step has run on a unit.
+give the same file. Installed on the unit on 2026-11-26 (over B278); results not yet reported.
 
 - **Start and stop with HOLD on.** Before, the phone's `Start recording` and `Stop recording` were refused while
   HOLD was on, with one low note and `Cannot start: HOLD is on.` The REC and HOME presses the patch posts now get
