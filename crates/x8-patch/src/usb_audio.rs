@@ -1,6 +1,6 @@
-//! 192 kHz stereo over USB: the decisions that have no firmware addresses, so the host tests can
-//! run them. docs/HOMEBREW.md, "192 kHz stereo over USB (2026-11-11)", has the stock code they
-//! work with.
+//! USB audio: the decisions that have no firmware addresses, so the host tests can run them.
+//! docs/HOMEBREW.md, "192 kHz stereo over USB (2026-11-11)" and "Channel names and an input report
+//! over USB (2026-11-27)", has the stock code they work with.
 //!
 //! The stock UAC2 audio function sends audio to the host on interface 2, in one of three
 //! alternate settings: 1 is 8 channels of 3 bytes, 2 is 2 channels of 3 bytes, 3 is 8 channels of
@@ -12,6 +12,11 @@
 //! At 192 kHz the patch sends what the stock audio routine sends at 96 kHz and below, in the same
 //! order: the mix left and right, then INPUT 1 to 6 after the dual-gain merge, as many as the
 //! setting has, captured each frame from the stock 192 kHz routine.
+//!
+//! The patch also names the 8 channels to the host with UAC2 channel name strings, and answers one
+//! vendor request with a report of the input settings (`InputReport`).
+
+use crate::take_guano::Inputs;
 
 /// The highest rate the stock firmware offers over USB.
 pub const HIGHEST_STOCK_RATE: u32 = 96_000;
@@ -232,6 +237,173 @@ pub fn listed(ranges: &[[u32; 3]], rate: u32) -> bool {
     })
 }
 
+/// Where the audio function's descriptors (0x813B69FC in V2.03) start in the configuration
+/// descriptor that `FUN_80df471c` builds at 0x2000F000.
+pub const AUDIO_DESCRIPTORS_AT: usize = 32;
+/// The three descriptors in the configuration that describe 8 channels: the capture terminal
+/// (input terminal ID 4, iChannelNames at + 13) and the AS_GENERAL descriptors of interface 2's
+/// alternate settings 1 and 3 (iChannelNames at + 15). For each: where the descriptor starts in
+/// the configuration, where its iChannelNames byte is (bytes 108, 157 and 249), and its first 4
+/// stock bytes. The 2-channel setting keeps its left and right channel config and no names.
+pub const CHANNEL_NAME_SITES: [(usize, usize, [u8; 4]); 3] =
+    [(95, 108, [0x11, 0x24, 0x02, 0x04]), (142, 157, [0x10, 0x24, 0x01, 0x02]), (234, 249, [0x10, 0x24, 0x01, 0x02])];
+/// The string index of the first channel's name, which the patch writes in each iChannelNames.
+/// UAC2 numbers the other channels' names on from it: 16 is the mix left, 17 the mix right, and
+/// 18 to 23 are INPUT 1 to 6.
+pub const FIRST_CHANNEL_NAME: u8 = 16;
+/// The channels the names are for: the mix left and right, then INPUT 1 to 6.
+pub const NAMED_CHANNELS: u8 = 8;
+/// Characters in the longest channel name, `Input 1: INT MIC`.
+const LONGEST_NAME: usize = 16;
+/// Size of the longest channel name's string descriptor: bLength, bDescriptorType, then the name
+/// in UTF-16.
+pub const NAME_DESCRIPTOR_BYTES: usize = 2 + 2 * LONGEST_NAME;
+/// The USB descriptor type of a string descriptor.
+const STRING_DESCRIPTOR: u8 = 3;
+
+/// The vendor request the patch answers: device to host, vendor, to the device (`bmRequestType`
+/// 0xC0), `bRequest` 0x58, `wValue` 1, `wIndex` 0. The setup packet's first 6 bytes; `wLength`
+/// follows.
+pub const REPORT_REQUEST: [u8; 6] = [0xc0, 0x58, 1, 0, 0, 0];
+/// Bytes in version 1 of the report. A later version may add bytes after these.
+pub const REPORT_BYTES: usize = 28;
+pub const REPORT_VERSION: u8 = 1;
+
+/// Where an input's signal comes from, as the stock XRI text names it. The number is the source's
+/// code in the report.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[repr(u8)]
+pub enum Source {
+    Unknown = 0,
+    IntMic = 1,
+    PlugIn = 2,
+    ExtMic = 3,
+    LineIn = 4,
+    ExtIn = 5,
+}
+
+impl Source {
+    /// The name the XRI text uses, or nothing for `Unknown`.
+    pub fn text(self) -> &'static [u8] {
+        match self {
+            Source::Unknown => b"",
+            Source::IntMic => b"INT MIC",
+            Source::PlugIn => b"PLUG IN",
+            Source::ExtMic => b"EXT MIC",
+            Source::LineIn => b"LINE IN",
+            Source::ExtIn => b"EXT IN",
+        }
+    }
+}
+
+/// The input settings the report gives the host, read from the X8's memory when the host asks.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct InputReport {
+    /// The patch build, as the update screen shows it.
+    pub build: u16,
+    /// The settings that the GUANO metadata also has.
+    pub inputs: Inputs,
+    /// Settings + 0x258 to + 0x25B, one byte for each of inputs 3 to 6: 0 when the input is set to
+    /// LINE IN, otherwise EXT MIC.
+    pub line_or_mic: [u8; 4],
+    /// Inputs 5 and 6 carry EXT IN (DSP state + 0x623 is 1).
+    pub ext_in_on_5_6: bool,
+    /// Tracks turned on in MANUAL, bit 0 for track 1.
+    pub tracks_on: u8,
+}
+
+impl InputReport {
+    /// The source of `input`, 0 for INPUT 1 to 5 for INPUT 6, by the rules of `FUN_80df6ba0`
+    /// and `FUN_80dcfa78`.
+    pub fn source(&self, input: usize) -> Source {
+        match input {
+            0 | 1 if self.inputs.built_in_mics => Source::IntMic,
+            0 | 1 => Source::PlugIn,
+            4 | 5 if self.ext_in_on_5_6 => Source::ExtIn,
+            2..=5 if self.line_or_mic[input - 2] == 0 => Source::LineIn,
+            2..=5 => Source::ExtMic,
+            _ => Source::Unknown,
+        }
+    }
+
+    /// The sources of INPUT 1 to 6.
+    pub fn sources(&self) -> [Source; 6] {
+        core::array::from_fn(|input| self.source(input))
+    }
+
+    /// Version 1 of the report, all 28 bytes. docs/HOMEBREW.md has the table of bytes.
+    pub fn bytes(&self) -> [u8; REPORT_BYTES] {
+        let inputs = &self.inputs;
+        let mut out = [0u8; REPORT_BYTES];
+        out[0] = b'X';
+        out[1] = b'8';
+        out[2] = REPORT_VERSION;
+        out[3] = REPORT_BYTES as u8;
+        [out[4], out[5]] = self.build.to_le_bytes();
+        out[6] = u8::from(inputs.built_in_mics) | u8::from(inputs.phantom_24v) << 1;
+        out[7] = inputs.ms_decode;
+        let sources = self.sources();
+        for i in 0..6 {
+            out[8 + i] = sources[i] as u8;
+            out[18 + i] = inputs.track_sources[i];
+        }
+        for i in 0..4 {
+            out[14 + i] = u8::from(inputs.phantom[i] != 0);
+        }
+        out[24] = self.tracks_on;
+        out[25] = inputs.mic_trim[0];
+        out[26] = inputs.mic_trim[1];
+        out
+    }
+}
+
+/// Whether a setup packet is the request for the report.
+pub fn is_report_request(setup: &[u8; 8]) -> bool {
+    setup[..6] == REPORT_REQUEST
+}
+
+/// Writes the string descriptor for string `index` into `out` and returns its length, if `index`
+/// is one of the channel names: `Mix L`, `Mix R`, then `Input 1: INT MIC` to `Input 6: EXT IN`,
+/// with each input's source from `sources`. None for any other index.
+pub fn channel_name(index: u8, sources: &[Source; 6], out: &mut [u8; NAME_DESCRIPTOR_BYTES]) -> Option<usize> {
+    let channel = index.checked_sub(FIRST_CHANNEL_NAME)?;
+    let chars = match channel {
+        0 => put_wide(out, 0, b"Mix L"),
+        1 => put_wide(out, 0, b"Mix R"),
+        2..NAMED_CHANNELS => {
+            let input = channel - 2;
+            let mut chars = put_wide(out, 0, b"Input ");
+            chars = put_wide(out, chars, &[b'1' + input]);
+            let source = sources[input as usize];
+            if source != Source::Unknown {
+                chars = put_wide(out, chars, b": ");
+                chars = put_wide(out, chars, source.text());
+            }
+            chars
+        }
+        _ => return None,
+    };
+    let size = 2 + 2 * chars;
+    out[0] = size as u8;
+    out[1] = STRING_DESCRIPTOR;
+    Some(size)
+}
+
+/// Writes ASCII `text` into a string descriptor as UTF-16, from character `at` on, and returns
+/// the number of characters written so far. Text past the longest name is left out.
+fn put_wide(out: &mut [u8; NAME_DESCRIPTOR_BYTES], at: usize, text: &[u8]) -> usize {
+    let mut at = at;
+    for &c in text {
+        if at >= LONGEST_NAME {
+            break;
+        }
+        out[2 + 2 * at] = c;
+        out[3 + 2 * at] = 0;
+        at += 1;
+    }
+    at
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -390,5 +562,142 @@ mod tests {
     fn ring_holds_whole_frames() {
         assert_eq!(ring_frames(6), 2_218);
         assert_eq!(ring_frames(24), 554);
+    }
+
+    /// The three stock descriptors, from the audio descriptors at 0x813B69FC in V2.03 (at 63, 110
+    /// and 202 there), with bNrChannels 8 and iChannelNames 0.
+    #[test]
+    fn channel_name_sites_are_the_stock_descriptors() {
+        let capture: [u8; 17] = [0x11, 0x24, 0x02, 0x04, 0x01, 0x02, 0x00, 0x07, 0x08, 0, 0, 0, 0, 0, 0, 0, 0];
+        let general: [u8; 16] = [0x10, 0x24, 0x01, 0x02, 0x00, 0x01, 0x01, 0, 0, 0, 0x08, 0, 0, 0, 0, 0];
+        let stock: [(usize, &[u8]); 3] = [(63, &capture), (110, &general), (202, &general)];
+        for (&(start, names, lead), &(at, descriptor)) in CHANNEL_NAME_SITES.iter().zip(&stock) {
+            assert_eq!(start, AUDIO_DESCRIPTORS_AT + at);
+            assert_eq!(descriptor[..4], lead);
+            assert_eq!(descriptor[0] as usize, descriptor.len());
+            // iChannelNames is the byte before bmControls (2 bytes) and iTerminal in the input
+            // terminal, and the last byte of AS_GENERAL.
+            let field = if descriptor.len() == 17 { 13 } else { 15 };
+            assert_eq!(names, start + field);
+            assert_eq!(descriptor[field], 0);
+            // bNrChannels: 8.
+            assert_eq!(descriptor[if descriptor.len() == 17 { 8 } else { 10 }], 8);
+        }
+        assert_eq!(CHANNEL_NAME_SITES.map(|(_, names, _)| names), [108, 157, 249]);
+        // Alternate setting 1's endpoint, 164, follows its AS_GENERAL and its 6-byte format type.
+        assert_eq!(CHANNEL_NAME_SITES[1].0 + 16 + 6, 164);
+        assert_eq!(CHANNEL_NAME_SITES[2].0 + 16 + 6, 256);
+    }
+
+    fn report() -> InputReport {
+        InputReport {
+            build: 289,
+            inputs: Inputs {
+                track_sources: [1, 1, 2, 2, 3, 4],
+                phantom: [1, 0, 0, 1],
+                phantom_24v: true,
+                mic_trim: [2, 5],
+                built_in_mics: true,
+                ms_decode: 2,
+            },
+            line_or_mic: [1, 0, 1, 0],
+            ext_in_on_5_6: false,
+            tracks_on: 0b10_1101,
+        }
+    }
+
+    #[test]
+    fn sources_follow_the_stock_rules() {
+        use Source::*;
+        let mut r = report();
+        assert_eq!(r.sources(), [IntMic, IntMic, ExtMic, LineIn, ExtMic, LineIn]);
+        r.inputs.built_in_mics = false;
+        r.ext_in_on_5_6 = true;
+        assert_eq!(r.sources(), [PlugIn, PlugIn, ExtMic, LineIn, ExtIn, ExtIn]);
+        r.line_or_mic = [0, 7, 0, 0];
+        assert_eq!(r.sources(), [PlugIn, PlugIn, LineIn, ExtMic, ExtIn, ExtIn]);
+        assert_eq!(r.source(6), Unknown);
+    }
+
+    #[test]
+    fn the_report_has_every_byte_in_its_place() {
+        let bytes = report().bytes();
+        assert_eq!(
+            bytes,
+            [
+                b'X', b'8', 1, 28, // magic, version, length
+                0x21, 0x01, // build 289
+                0b11, 2, // built-in mics and 24 V, MS DECODE on INPUT 3-4
+                1, 1, 3, 4, 3, 4, // sources of INPUT 1 to 6
+                1, 0, 0, 1, // phantom power on INPUT 3 to 6
+                1, 1, 2, 2, 3, 4, // INPUT SELECT for tracks 1 to 6
+                0b10_1101, 2, 5, 0, // tracks on, MIC TRIM, spare
+            ]
+        );
+        let mut r = report();
+        r.inputs.phantom = [0, 2, 0, 0];
+        r.inputs.phantom_24v = false;
+        r.inputs.built_in_mics = false;
+        let bytes = r.bytes();
+        assert_eq!(bytes[6], 0);
+        assert_eq!(bytes[14..18], [0, 1, 0, 0]);
+        assert_eq!(bytes[8..10], [2, 2]);
+    }
+
+    #[test]
+    fn only_the_report_request_matches() {
+        let request = |b: [u8; 6]| [b[0], b[1], b[2], b[3], b[4], b[5], 28, 0];
+        assert!(is_report_request(&request(REPORT_REQUEST)));
+        // wLength does not matter.
+        assert!(is_report_request(&[0xc0, 0x58, 1, 0, 0, 0, 0xff, 0xff]));
+        for other in [
+            [0x40, 0x58, 1, 0, 0, 0], // host to device
+            [0xc1, 0x58, 1, 0, 0, 0], // to an interface
+            [0xa0, 0x58, 1, 0, 0, 0], // class
+            [0xc0, 0x57, 1, 0, 0, 0],
+            [0xc0, 0x58, 2, 0, 0, 0],
+            [0xc0, 0x58, 1, 1, 0, 0],
+            [0xc0, 0x58, 1, 0, 1, 0],
+            [0xc0, 0x58, 1, 0, 0, 1],
+        ] {
+            assert!(!is_report_request(&request(other)), "{other:x?}");
+        }
+    }
+
+    fn name(index: u8, sources: &[Source; 6]) -> Option<std::string::String> {
+        let mut out = [0xaa; NAME_DESCRIPTOR_BYTES];
+        let size = channel_name(index, sources, &mut out)?;
+        assert_eq!(out[0] as usize, size);
+        assert_eq!(out[1], 3);
+        let units: std::vec::Vec<u16> =
+            out[2..size].chunks(2).map(|pair| u16::from_le_bytes([pair[0], pair[1]])).collect();
+        Some(std::string::String::from_utf16(&units).unwrap())
+    }
+
+    #[test]
+    fn channels_are_named_from_their_sources() {
+        use Source::*;
+        let sources = [IntMic, PlugIn, ExtMic, LineIn, ExtIn, ExtIn];
+        let names: std::vec::Vec<_> = (16..24).map(|i| name(i, &sources).unwrap()).collect();
+        assert_eq!(
+            names,
+            [
+                "Mix L",
+                "Mix R",
+                "Input 1: INT MIC",
+                "Input 2: PLUG IN",
+                "Input 3: EXT MIC",
+                "Input 4: LINE IN",
+                "Input 5: EXT IN",
+                "Input 6: EXT IN"
+            ]
+        );
+        assert_eq!(name(18, &[Unknown; 6]).as_deref(), Some("Input 1"));
+        // The longest name fills the descriptor.
+        let mut out = [0; NAME_DESCRIPTOR_BYTES];
+        assert_eq!(channel_name(18, &sources, &mut out), Some(NAME_DESCRIPTOR_BYTES));
+        for index in [0, 1, 4, 5, 15, 24, 255] {
+            assert_eq!(name(index, &sources), None, "{index}");
+        }
     }
 }
