@@ -1,6 +1,7 @@
 use core::ptr;
 
 use bat_app::InputName;
+use x8_patch::take_guano::Inputs;
 
 use super::{read_byte, stock};
 
@@ -64,6 +65,27 @@ pub(super) fn on_tracks_muted() -> bool {
         any = true;
     }
     any
+}
+
+/// The input settings that the GUANO metadata and the USB input report give, as they are now.
+pub(super) fn input_settings() -> Inputs {
+    // SAFETY: bytes of the settings record and of the system and DSP state (see `stock`).
+    Inputs {
+        track_sources: core::array::from_fn(|track| {
+            read_byte(unsafe { stock::TRACK_SOURCES.add(track * stock::TRACK_SOURCE_STEP) })
+        }),
+        // An input still waiting for the phantom power question's answer is off, though its
+        // setting says on.
+        phantom: unsafe {
+            let pending = ptr::read_volatile(stock::PHANTOM_PENDING).to_le_bytes();
+            let set = ptr::read_volatile(stock::PHANTOM);
+            core::array::from_fn(|i| u8::from(set[i] != 0 && pending[i] == 0))
+        },
+        phantom_24v: read_byte(stock::PHANTOM_VOLTAGE) == 1,
+        mic_trim: unsafe { ptr::read_volatile(stock::MIC_TRIM) },
+        built_in_mics: read_byte(stock::INPUTS_1_2_KIND) == 1,
+        ms_decode: read_byte(stock::MS_DECODE),
+    }
 }
 
 /// Tracks turned on in the app, as a bit for each of tracks 1 to 6.
