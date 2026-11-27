@@ -253,11 +253,9 @@ pub const CHANNEL_NAME_SITES: [(usize, usize, [u8; 4]); 3] =
 pub const FIRST_CHANNEL_NAME: u8 = 16;
 /// The channels the names are for: the mix left and right, then INPUT 1 to 6.
 pub const NAMED_CHANNELS: u8 = 8;
-/// Characters in the longest channel name, `Input 1: INT MIC`.
-const LONGEST_NAME: usize = 16;
-/// Size of the longest channel name's string descriptor: bLength, bDescriptorType, then the name
-/// in UTF-16.
-pub const NAME_DESCRIPTOR_BYTES: usize = 2 + 2 * LONGEST_NAME;
+/// Size of the longest channel name's string descriptor, `Input 1: INT MIC`: bLength,
+/// bDescriptorType, then the name in UTF-16.
+pub const NAME_DESCRIPTOR_BYTES: usize = 2 + 2 * 16;
 /// The USB descriptor type of a string descriptor.
 const STRING_DESCRIPTOR: u8 = 3;
 
@@ -282,19 +280,42 @@ pub enum Source {
     ExtIn = 5,
 }
 
-impl Source {
-    /// The name the XRI text uses, or nothing for `Unknown`.
-    pub fn text(self) -> &'static [u8] {
-        match self {
-            Source::Unknown => b"",
-            Source::IntMic => b"INT MIC",
-            Source::PlugIn => b"PLUG IN",
-            Source::ExtMic => b"EXT MIC",
-            Source::LineIn => b"LINE IN",
-            Source::ExtIn => b"EXT IN",
-        }
-    }
+/// Part of a channel name in UTF-16LE, as the string descriptor has it, made at compile time:
+/// the bytes and how many of them are used.
+struct WideText {
+    bytes: [u8; WIDE_TEXT_BYTES],
+    len: usize,
 }
+/// Bytes for the longest part, `: INT MIC`.
+const WIDE_TEXT_BYTES: usize = 18;
+
+/// `text`, in ASCII, as UTF-16LE.
+const fn wide(text: &[u8]) -> WideText {
+    assert!(2 * text.len() <= WIDE_TEXT_BYTES);
+    let mut bytes = [0; WIDE_TEXT_BYTES];
+    let mut i = 0;
+    while i < text.len() {
+        assert!(text[i] < 0x80);
+        bytes[2 * i] = text[i];
+        i += 1;
+    }
+    WideText { bytes, len: 2 * text.len() }
+}
+
+/// The first part of each channel's name.
+const CHANNEL_LABELS: [WideText; NAMED_CHANNELS as usize] = [
+    wide(b"Mix L"),
+    wide(b"Mix R"),
+    wide(b"Input 1"),
+    wide(b"Input 2"),
+    wide(b"Input 3"),
+    wide(b"Input 4"),
+    wide(b"Input 5"),
+    wide(b"Input 6"),
+];
+/// What follows an input's label: its source as the XRI text names it, in the order of `Source`.
+const SOURCE_SUFFIXES: [WideText; 6] =
+    [wide(b""), wide(b": INT MIC"), wide(b": PLUG IN"), wide(b": EXT MIC"), wide(b": LINE IN"), wide(b": EXT IN")];
 
 /// The input settings the report gives the host, read from the X8's memory when the host asks.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -366,42 +387,19 @@ pub fn is_report_request(setup: &[u8; 8]) -> bool {
 /// is one of the channel names: `Mix L`, `Mix R`, then `Input 1: INT MIC` to `Input 6: EXT IN`,
 /// with each input's source from `sources`. None for any other index.
 pub fn channel_name(index: u8, sources: &[Source; 6], out: &mut [u8; NAME_DESCRIPTOR_BYTES]) -> Option<usize> {
-    let channel = index.checked_sub(FIRST_CHANNEL_NAME)?;
-    let chars = match channel {
-        0 => put_wide(out, 0, b"Mix L"),
-        1 => put_wide(out, 0, b"Mix R"),
-        2..NAMED_CHANNELS => {
-            let input = channel - 2;
-            let mut chars = put_wide(out, 0, b"Input ");
-            chars = put_wide(out, chars, &[b'1' + input]);
-            let source = sources[input as usize];
-            if source != Source::Unknown {
-                chars = put_wide(out, chars, b": ");
-                chars = put_wide(out, chars, source.text());
-            }
-            chars
-        }
-        _ => return None,
+    let channel = index.wrapping_sub(FIRST_CHANNEL_NAME) as usize;
+    let label = CHANNEL_LABELS.get(channel)?;
+    let source = match channel.checked_sub(2) {
+        Some(input) => *sources.get(input)?,
+        None => Source::Unknown,
     };
-    let size = 2 + 2 * chars;
+    let suffix = &SOURCE_SUFFIXES[source as usize];
+    let size = 2 + label.len + suffix.len;
     out[0] = size as u8;
     out[1] = STRING_DESCRIPTOR;
+    out[2..2 + label.len].copy_from_slice(&label.bytes[..label.len]);
+    out[2 + label.len..size].copy_from_slice(&suffix.bytes[..suffix.len]);
     Some(size)
-}
-
-/// Writes ASCII `text` into a string descriptor as UTF-16, from character `at` on, and returns
-/// the number of characters written so far. Text past the longest name is left out.
-fn put_wide(out: &mut [u8; NAME_DESCRIPTOR_BYTES], at: usize, text: &[u8]) -> usize {
-    let mut at = at;
-    for &c in text {
-        if at >= LONGEST_NAME {
-            break;
-        }
-        out[2 + 2 * at] = c;
-        out[3 + 2 * at] = 0;
-        at += 1;
-    }
-    at
 }
 
 #[cfg(test)]

@@ -414,6 +414,27 @@ pub const USB_SPEED: *const u8 = 0x8191_8e3c as *const u8;
 /// stored by the device callback before it calls the interface's handler.
 pub const USB_ALT_IF2: *const u8 = 0x8191_8e41 as *const u8;
 
+// USB channel names and the input report (docs/HOMEBREW.md, "Channel names and an input report
+// over USB").
+/// `FUN_80dc6f00(handle, event, param)`, the USB device stack's device callback (Thumb address).
+/// The class config list (0x81918E54, the list `USB_CLASS_INIT` is given) holds it at + 4, and the
+/// stack calls it through that word on every device event. It returns 0 for done, 5 to stall, and 1
+/// for every event it does not handle.
+pub const USB_DEVICE_CALLBACK: usize = 0x80dc_6f01;
+pub const USB_DEVICE_CALLBACK_OFFSET: usize = 4;
+/// Device callback events. 13, GET_DESCRIPTOR for a string: param + 0 and + 4 are the reply's
+/// pointer and length, which the callback writes; + 8 is the language (u16) and + 0xA the string
+/// index. 19, a vendor request: param + 0 points at the setup packet, + 4 and + 8 are the reply's
+/// pointer and length (wLength at the setup stage), and the byte at + 0xC is 1 at the setup stage.
+pub const USB_EVENT_STRING: usize = 13;
+pub const USB_EVENT_VENDOR: usize = 19;
+/// Settings + 0x258, one byte for each of inputs 3 to 6: 0 when the input is set to LINE IN,
+/// otherwise EXT MIC (`FUN_80df6ba0`).
+pub const LINE_OR_MIC: *const [u8; 4] = 0x81e8_cad4 as *const [u8; 4];
+/// DSP state + 0x623: 1 while inputs 5 and 6 carry EXT IN. `FUN_80dcfa78` sets it to 1 with its
+/// case 7 routing and to 0 with case 6.
+pub const EXT_IN_ON_5_6: *const u8 = 0x0002_a2cf as *const u8;
+
 // Power (docs/HOMEBREW.md, "USB power and POWER SAVE MODE").
 /// Settings + 0x1D8, BATTERY TYPE (0 alkaline, 1 Ni-MH, 2 lithium), and + 0x1D9, POWER SOURCE
 /// SELECT (0 BATTERY, 1 AUTO).

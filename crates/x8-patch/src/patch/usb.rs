@@ -3,13 +3,17 @@
 //! 96 kHz and below, in the same order (the mix left and right, then INPUT 1 to 6), captured each
 //! frame from the stock 192 kHz routine. See docs/HOMEBREW.md, "192 kHz stereo over USB", and
 //! x8_patch::usb_audio for the decisions.
+//!
+//! Also names the 8 channels to the host and answers the input report request, through a wrapper
+//! around the device callback. See docs/HOMEBREW.md, "Channel names and an input report over USB".
 
 use core::ptr;
 use core::sync::atomic::{AtomicBool, AtomicU32, Ordering::Acquire, Ordering::Relaxed, Ordering::Release};
 
 use x8_patch::usb_audio::{
-    BIG_IN_PACKET, STOCK_TOP_RANGE, STRIDE_SITES, StockFrame, WIDE_TOP_RANGE, alt_to_use, big_packet, must_stop,
-    rate_to_use, ring_frames, stock_sample, thumb_bl, with_modified_imm,
+    BIG_IN_PACKET, CHANNEL_NAME_SITES, FIRST_CHANNEL_NAME, InputReport, NAME_DESCRIPTOR_BYTES, NAMED_CHANNELS,
+    REPORT_BYTES, STOCK_TOP_RANGE, STRIDE_SITES, StockFrame, WIDE_TOP_RANGE, alt_to_use, big_packet, channel_name,
+    is_report_request, must_stop, rate_to_use, ring_frames, stock_sample, thumb_bl, with_modified_imm,
 };
 
 use super::{Handler, read_byte, stock, system_mode};
@@ -30,6 +34,22 @@ static RING_WRITE: AtomicU32 = AtomicU32::new(0);
 struct InBuffers([u8; 4 * BIG_IN_PACKET as usize]);
 #[unsafe(link_section = ".dtcm")]
 static mut IN_BUFFERS: InBuffers = InBuffers([0; 4 * BIG_IN_PACKET as usize]);
+
+/// Set once `usb_init_hook` has put `device_callback` in the class config list. Until then the
+/// configuration names no channels.
+static DEVICE_CALLBACK: AtomicBool = AtomicBool::new(false);
+
+/// The reply to a request for a channel name, and the reply to the input report request. In DTCM,
+/// for the USB controller's DMA. `.dtcm` is not zeroed at start-up, so each reply is written in
+/// full before the stack sends it.
+#[repr(C, align(4))]
+struct NameReply([u8; NAME_DESCRIPTOR_BYTES]);
+#[unsafe(link_section = ".dtcm")]
+static mut NAME_REPLY: NameReply = NameReply([0; NAME_DESCRIPTOR_BYTES]);
+#[repr(C, align(4))]
+struct ReportReply([u8; REPORT_BYTES]);
+#[unsafe(link_section = ".dtcm")]
+static mut REPORT_REPLY: ReportReply = ReportReply([0; REPORT_BYTES]);
 
 /// The block's 4 frames as the capture stub copies them from the stock 192 kHz routine.
 #[repr(C, align(4))]
@@ -212,9 +232,12 @@ core::arch::global_asm!(
 );
 
 /// Replaces the USB task's call to the device stack's class init, in `FUN_80dc7064`.
+/// r1 (`b`) is the class config list.
 pub(super) unsafe extern "C" fn usb_init_hook(a: usize, b: usize, c: usize, d: usize) -> usize {
     if system_mode() <= 1 {
         prepare();
+        // SAFETY: `b` is the class config list the stock code passes to the class init.
+        unsafe { install_device_callback(b) };
     }
     // SAFETY: the stock function this call replaced, with its arguments.
     let init: Handler = unsafe { core::mem::transmute(stock::USB_CLASS_INIT) };
@@ -236,12 +259,16 @@ pub(super) unsafe extern "C" fn usb_alt_hook(handle: usize, interface: usize, al
 }
 
 /// Replaces the device callback's call to `FUN_80df4a24(handle, speed)` at bus reset, which sets
-/// the stock packet sizes. With the bigger buffers, then gives the 8-channel settings room for
-/// 192 kHz: 600 and 800 bytes at high speed, in the descriptor and in their endpoint records.
+/// the stock packet sizes. Then, with `device_callback` in place, names the 8 channels at any
+/// speed. With the bigger buffers, then gives the 8-channel settings room for 192 kHz: 600 and 800
+/// bytes at high speed, in the descriptor and in their endpoint records.
 pub(super) unsafe extern "C" fn usb_reset_hook(handle: usize, speed: usize, c: usize, d: usize) -> usize {
     // SAFETY: the stock function this call replaced, with its arguments.
     let reset: Handler = unsafe { core::mem::transmute(stock::USB_BUS_RESET) };
     let result = unsafe { reset(handle, speed, c, d) };
+    if DEVICE_CALLBACK.load(Acquire) {
+        name_channels();
+    }
     if !big() || speed != 2 {
         return result;
     }
@@ -265,6 +292,122 @@ pub(super) unsafe extern "C" fn usb_reset_hook(handle: usize, speed: usize, c: u
         }
     }
     result
+}
+
+/// Sets iChannelNames to the first channel name's string index in the capture terminal and in
+/// interface 2's two 8-channel settings, each only if its descriptor starts with its stock bytes.
+fn name_channels() {
+    for (start, names, lead) in CHANNEL_NAME_SITES {
+        // SAFETY: bytes of the configuration descriptor the stock bus reset has just walked.
+        unsafe {
+            let at = stock::USB_CONFIG.add(start);
+            if (0..4).all(|k| ptr::read_volatile(at.add(k)) == lead[k]) {
+                ptr::write_volatile(stock::USB_CONFIG.add(names), FIRST_CHANNEL_NAME);
+            }
+        }
+    }
+}
+
+/// Points the class config list's device callback word at `device_callback`, only if it holds
+/// the stock device callback.
+///
+/// # Safety
+/// Only from `usb_init_hook`, with the list it was given, before the device stack starts.
+unsafe fn install_device_callback(list: usize) {
+    if DEVICE_CALLBACK.load(Relaxed) || list == 0 {
+        return;
+    }
+    let ours: Handler = device_callback;
+    let word = (list + stock::USB_DEVICE_CALLBACK_OFFSET) as *mut usize;
+    // SAFETY: a word of the stock class config list in `.data`; the device stack has not started.
+    unsafe {
+        if ptr::read_volatile(word) != stock::USB_DEVICE_CALLBACK {
+            return;
+        }
+        ptr::write_volatile(word, ours as usize);
+    }
+    DEVICE_CALLBACK.store(true, Release);
+}
+
+/// Wraps the device callback once `install_device_callback` has put it in the class config list.
+/// Answers the channel name strings and the input report request, and passes every other event,
+/// other vendor requests among them, to the stock device callback with its arguments unchanged.
+unsafe extern "C" fn device_callback(handle: usize, event: usize, param: usize, d: usize) -> usize {
+    if param != 0 {
+        // SAFETY: the stack's block for this event, which the stock callback also reads.
+        let answered = match event {
+            stock::USB_EVENT_STRING => unsafe { answer_channel_name(param) },
+            stock::USB_EVENT_VENDOR => unsafe { answer_report(param) },
+            _ => false,
+        };
+        if answered {
+            return 0;
+        }
+    }
+    // SAFETY: the stock callback, with its arguments.
+    let stock_callback: Handler = unsafe { core::mem::transmute(stock::USB_DEVICE_CALLBACK) };
+    unsafe { stock_callback(handle, event, param, d) }
+}
+
+/// Answers a string descriptor request for one of the channel names, in any language, as the
+/// stock string getter answers: the reply's pointer at param + 0 and its length at param + 4.
+/// False for any other string.
+///
+/// # Safety
+/// `param` must be the stack's block for event 13.
+unsafe fn answer_channel_name(param: usize) -> bool {
+    // SAFETY: the string index byte of the block.
+    let index = unsafe { ptr::read_volatile((param + 0xa) as *const u8) };
+    if !(FIRST_CHANNEL_NAME..FIRST_CHANNEL_NAME + NAMED_CHANNELS).contains(&index) {
+        return false;
+    }
+    // SAFETY: the patch's reply buffer, which only the USB task uses, between requests.
+    let reply = unsafe { ptr::addr_of_mut!(NAME_REPLY.0) };
+    let Some(len) = channel_name(index, &input_report().sources(), unsafe { &mut *reply }) else { return false };
+    // SAFETY: the block's pointer and length words.
+    unsafe {
+        ptr::write_volatile(param as *mut usize, reply as usize);
+        ptr::write_volatile((param + 4) as *mut u32, len as u32);
+    }
+    true
+}
+
+/// Answers the input report request at its setup stage: the report, clipped to the length the
+/// stack gives at param + 8 (wLength), with the reply's pointer at param + 4 and its length at
+/// param + 8. False for any other vendor request.
+///
+/// # Safety
+/// `param` must be the stack's block for event 19.
+unsafe fn answer_report(param: usize) -> bool {
+    // SAFETY: the block's setup packet pointer and setup stage flag.
+    let (setup, setup_stage) =
+        unsafe { (ptr::read_volatile(param as *const *const [u8; 8]), ptr::read_volatile((param + 0xc) as *const u8)) };
+    // SAFETY: the 8-byte setup packet the stack has stored.
+    if setup.is_null() || setup_stage != 1 || !is_report_request(&unsafe { ptr::read_volatile(setup) }) {
+        return false;
+    }
+    // SAFETY: the block's length word, then the patch's reply buffer, which only the USB task
+    // uses, between requests.
+    unsafe {
+        let len = ptr::read_volatile((param + 8) as *const u32).min(REPORT_BYTES as u32);
+        let reply = ptr::addr_of_mut!(REPORT_REPLY.0);
+        *reply = input_report().bytes();
+        ptr::write_volatile((param + 4) as *mut usize, reply as usize);
+        ptr::write_volatile((param + 8) as *mut u32, len);
+    }
+    true
+}
+
+/// The input settings as they are now.
+fn input_report() -> InputReport {
+    InputReport {
+        build: super::patch_build() as u16,
+        inputs: super::inputs::input_settings(),
+        // SAFETY: bytes of the settings record.
+        line_or_mic: unsafe { ptr::read_volatile(stock::LINE_OR_MIC) },
+        ext_in_on_5_6: read_byte(stock::EXT_IN_ON_5_6) == 1,
+        tracks_on: super::inputs::tracks_on() as u8,
+    }
 }
 
 /// Wraps the audio class callback once `prepare` has put it in the class config list.
