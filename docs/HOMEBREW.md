@@ -4685,6 +4685,86 @@ for 100 ms as the speaker comes on and 200 ms for the output stage, inside the k
 calls before it closes the screen for a pop-up, because a pop-up installs its own key handler and the key hooks do
 not run under it. The stock firmware also calls `FUN_80da0024` from the system task (`FUN_80dbe324`).
 
+## Channel names and an input report over USB (2026-11-27)
+
+A design from reading V2.03, for a later build. Nothing here is built or has run on a unit.
+
+**Why.** Over USB the X8 sends 8 channels and names none of them: the capture terminal and the three stream
+settings all have `iChannelNames` 0 (see [What the X8 presents over USB](#what-the-x8-presents-over-usb-and-what-it-carries)).
+A host shows "channel 5" for INPUT 3. The patch can name the channels in the standard UAC2 way, and answer one
+vendor request with the input settings, without a new hook site.
+
+### What the stock firmware does
+
+- **The device callback.** `0x80DC6F00` (Ghidra has no function there; `tools/ghidra/q.sh rawdis 0x80dc6f00 170`
+  decodes it) is the NXP stack's device callback, `(handle, event, param)`. Its `tbb` table at 0x80DC6F14 has 22
+  entries: event 1 bus reset, 9 SET_CONFIGURATION, 10 SET_INTERFACE, 11 device descriptor (`0x80DF49C8`), 12
+  configuration descriptor (`0x80DF49D4`), 13 string descriptor (`0x80DF49EA`), 21 GET_CONFIGURATION, 22
+  GET_INTERFACE. Every other event returns 1 (high).
+- **Where the stack finds it.** The class config list is at 0x81918E54 in `.data`: the class list (0x81921284), the
+  device callback (0x80DC6F01) and the class count (4). `FUN_80dfae1c(handle, event, param)` calls the callback
+  through the word at 0x81918E58 on every event. The USB task passes the list's address as r1 to the class init call
+  at 0x80DC70A0, which `usb_init_hook` already replaces. `work/ram/sdram-81900000.bin` has the three words (high).
+- **String descriptors.** Event 13's param is the buffer pointer (+0), the length (+4), the language (+8, 16 bits)
+  and the string index (+0xA). `0x80DF49EA` answers index 0 to 4 from the table at 0x8196BE00 and returns 5 (stall)
+  for anything else. The strings are the language list, `TASCAM`, `Portacapture X8`, `0123456789ABCDEF` and
+  `Mixcast 4 CONTROL` (high).
+- **Vendor requests.** `FUN_80e2252a` is the stack's control request handler. A request with bit 6 of
+  `bmRequestType` set goes to `FUN_80dfae1c` as event 0x13 (19), with param = the setup packet pointer (+0), the
+  buffer pointer (+4), the length (+8) and a setup-stage flag (+0xC). The stock callback returns 1 for event 19, which
+  the handler does not treat as a refusal: for a request to the host it then sends `wLength` bytes from address 0
+  (medium; not tried). A device-to-host request reaches the callback only at the setup stage.
+- **Channels 3 to 8 are inputs, not tracks.** They are the six merged inputs at 0x20010358 + 4i (DSP state + 0x50),
+  which the merge writes for input i + 1. Tracks read them through pointers that INPUT SELECT sets
+  (`work/notes/audio.md`), so INPUT SELECT does not change what USB carries.
+- **Each input's source**, as the stock XRI text names it (`FUN_80df6ba0`):
+
+  | Input | Source | From |
+  |---|---|---|
+  | 1 and 2 | `INT MIC` when system state + 0x947 (0x81969DDF) is 1, else `PLUG IN` | `FUN_80da6efa` |
+  | 3 to 6 | `LINE IN` when settings + 0x258 + (input - 3) is 0, else `EXT MIC` | `FUN_80df6ba0` |
+  | 5 and 6 | `EXT IN` while the byte at 0x2A2CF is 1 | `FUN_80dcfa78` sets it to 1 with its case 7 routing and 0 with case 6 |
+
+  `USB` is a track source only (INPUT SELECT value 5): audio from the host, which is not on channels 3 to 8.
+
+### The design
+
+No new hook site. All of it is skipped in update mode (system mode above 1), like the rest of the USB patch.
+
+| Part | Change | How |
+|---|---|---|
+| Device callback | The word at config list + 4 points at the patch's wrapper | In `usb_init_hook`, r1 is the list. Replace the word only if it holds 0x80DC6F01. The wrapper answers event 13 for its own string indices and event 19 for its own request, and passes everything else to the stock callback unchanged |
+| `iChannelNames` | 16 in the capture terminal (ID 4) and in the two 8-channel stream settings | In `usb_reset_hook`, after the stock function: bytes 108, 157 and 249 of the configuration at 0x2000F000, each only if its descriptor starts with the stock bytes (`11 24 02 04`, `10 24 01 02`, `10 24 01 02`) and the wrapper is in place. Not tied to the speed or the bigger buffers. The 2-channel setting keeps its left and right channel config |
+| Reply buffers | One for a string, one for the report | In `.dtcm`, as the packet buffers are, for the USB controller's DMA |
+
+**The strings.** Index 16 to 23, in any language, one for each channel: `Mix L`, `Mix R`, then `Input 1: INT MIC` to
+`Input 6: EXT IN`, with each input's source from the table above, read when the host asks. A host that reads strings
+only when the X8 is plugged in keeps the old names after a change on the X8.
+
+**The vendor request.** `bmRequestType` 0xC0 (device to host, vendor, device), `bRequest` 0x58, `wValue` 1,
+`wIndex` 0. The answer is 28 bytes (fewer if `wLength` is smaller):
+
+| Byte | Meaning |
+|---|---|
+| 0, 1 | `X8` (0x58, 0x38) |
+| 2 | Report version, 1 |
+| 3 | Length of the report, 28 |
+| 4, 5 | Patch build, little-endian |
+| 6 | Bit 0: inputs 1 and 2 are the built-in mics. Bit 1: PHANTOM VOLTAGE is 24 V |
+| 7 | MS DECODE: 0 off, or the pair it decodes, 1 to 3 |
+| 8 to 13 | Source of INPUT 1 to 6: 0 not known, 1 `INT MIC`, 2 `PLUG IN`, 3 `EXT MIC`, 4 `LINE IN`, 5 `EXT IN` |
+| 14 to 17 | Phantom power for INPUT 3 to 6, as switched: 0 off, 1 on |
+| 18 to 23 | INPUT SELECT for tracks 1 to 6: 1 INPUT 1-2, 2 INPUT 3-4, 3 INPUT 5-6, 4 EXT IN, 5 USB |
+| 24 | Tracks turned on in MANUAL, bit 0 for track 1 |
+| 25, 26 | MIC TRIM for MIC L and MIC R, 0 to 6 for -3 to 3 dB |
+| 27 | 0 |
+
+A later version may add bytes after these and raise byte 3. Input gain and level are not in the report: where the
+X8 keeps them outside the XRI text is not known.
+
+**Risk.** The wrapper runs on every USB device event, in the USB task. A fault in it could stop USB audio and the
+card reader until the next start; recording to the card does not depend on it.
+
 ## USB power and POWER SAVE MODE (2026-11-11)
 
 How the X8 decides that a USB supply is too weak, what the pop-up then changes, and how the patch runs the X8 from its

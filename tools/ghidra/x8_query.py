@@ -4,6 +4,8 @@
 #   xrefs ADDR...    references to each address, with the function they are in
 #   callers ADDR...  functions that call the function at each address
 #   disasm ADDR N    N instructions from ADDR
+#   rawdis ADDR N    N Thumb instructions from ADDR, decoded from the bytes, for
+#                    code Ghidra's analysis left as data (nothing is saved)
 #   refsin LO HI     every reference whose target is in [LO, HI)
 #   offs OFF...      every load and store with one of these immediate offsets,
 #                    such as settings fields: offs 0x215 0x23e (slow, whole program)
@@ -67,6 +69,27 @@ def run(cmd, args):
             if ins is None: break
             out.write("%s  %s\n" % (ins.getAddress(), ins))
             ins = ins.getNext()
+    elif cmd == "rawdis":
+        from java.math import BigInteger
+        a, n = A(args[0]), int(args[1])
+        pc = currentProgram.getProgramContext()
+        tmode = pc.getRegister("TMode")
+        for _ in range(n):
+            ins = getInstructionAt(a)
+            if ins is None:
+                if tmode is not None:
+                    try:
+                        pc.setValue(tmode, a, a.add(1), BigInteger.ONE)
+                    except Exception:
+                        pass
+                disassemble(a)
+                ins = getInstructionAt(a)
+            if ins is None:
+                out.write("%s  .short 0x%04x\n" % (a, getShort(a) & 0xffff))
+                a = a.add(2)
+                continue
+            out.write("%s  %s\n" % (a, ins))
+            a = a.add(ins.getLength())
     elif cmd == "offs":
         # Every load and store whose operands include one of the given
         # immediates, such as [r5,#0x23e]. It cannot see a field reached
