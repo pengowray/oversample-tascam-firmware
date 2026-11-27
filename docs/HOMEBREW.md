@@ -2364,6 +2364,56 @@ B241 or an earlier build. All the checks in `tools/x8patch.py` pass on this file
 1. **Start and stop.** With Phone remote on and the phone page reloaded, do `Start recording` and `Stop recording` work as before?
 2. **Old phone page.** If a phone still has the old page cached, its commands should do nothing at all. Reload the page.
 
+## Step 58 test file: names for the 8 USB channels, and an input report over USB (built 2026-11-27, not yet installed)
+
+`work/patch64/#PortaX8_0289.203` (B289, SHA-256 `b71284ee…fc5500f1`). This file is B288 (Step 57) plus the design in
+[Channel names and an input report over USB](#channel-names-and-an-input-report-over-usb-2026-11-27). Install it in
+place of B288; the checks of Steps 50 to 57 still apply. All the checks in `tools/x8patch.py` pass, and two builds
+give the same file. Nothing in this step has run on a unit.
+
+- **Channel names.** Over USB the X8 sends 8 channels in alternate settings 1 and 3 of interface 2. The descriptors
+  of the capture terminal (input terminal ID 4) and of those two settings now have `iChannelNames` 16: string 16 is
+  the first channel's name, and strings 17 to 23 are the names of the other 7. A host that reads UAC2 channel names
+  shows `Mix L`, `Mix R`, then `Input 1: INT MIC` to `Input 6: EXT IN`, with each input's source as the XRI text
+  names it. The X8 builds each name when the host asks for it. A host that reads the names only when
+  the X8 is plugged in keeps the old names after a change on the X8. The 2-channel setting (alternate setting 2)
+  keeps its left and right channel config and has no names.
+- **Input report.** A vendor request (`bmRequestType` 0xC0, `bRequest` 0x58, `wValue` 1, `wIndex` 0) gets the
+  28-byte report whose bytes are listed in the design. It has the patch build; whether inputs 1 and 2 are the
+  built-in mics; whether PHANTOM VOLTAGE is 24 V; MS DECODE; each input's source; whether phantom power is on for
+  INPUT 3 to 6 now (an input still waiting for the phantom power question counts as off); INPUT SELECT for each
+  track; the tracks turned on in MANUAL; and the MIC TRIM values. A request for fewer bytes gets the first `wLength`
+  bytes. Nothing on the X8 changes, and nothing in Oversample asks for the report yet.
+- **How.** When the USB task starts, `usb_init_hook` replaces the device callback word in the class config list
+  (0x81918E58) with the address of the patch's wrapper, `device_callback`, but only if the word holds the stock
+  callback 0x80DC6F01. The wrapper answers string indices 16 to 23 and the vendor request above, and passes every
+  other event, other vendor requests among them, to the stock callback unchanged. After each bus reset,
+  `usb_reset_hook` writes the string index 16 into the `iChannelNames` bytes of the three descriptors (bytes 108, 157
+  and 249 of the configuration descriptor at 0x2000F000). It writes each byte only if the wrapper is in place and the
+  descriptor holding that byte starts with its stock bytes. The patch builds the string and the report in DTCM, for
+  the USB controller's DMA. In update mode the patch makes none of these changes.
+- **Risk.** The wrapper runs on every USB device event, in the USB task. A fault in the wrapper could stop USB audio
+  and the card reader until the X8 is turned off and on. Recording to the card does not use the wrapper.
+
+**Memory.** Patch region free: 7,224 bytes (1,568 fewer than B288). DTCM free: 2,216 bytes (64 fewer). No new stock
+hook site (header version 25, as in B288).
+
+**What to check.** Connect the X8 to a computer over USB as an audio interface, then:
+
+1. **Audio as before.** Does recording from the X8 in the computer's audio software still work at 48 kHz and at
+   96 kHz, in 8 channels and in 2? Does the card reader still mount?
+2. **Names.** On a Mac, open Audio MIDI Setup and select the X8's input. Are the 8 channels named `Mix L`, `Mix R`,
+   `Input 1: …` to `Input 6: …`? On Linux, run `lsusb -v -d 0644:8074`. Do the input terminal and alternate
+   settings 1 and 3 of interface 2 each show `iChannelNames` as 16, with `Mix L` after it?
+3. **Sources.** With nothing plugged into the EXT MIC jack, are inputs 1 and 2 `INT MIC`? On the X8, set
+   INPUT 3 to line and INPUT 4 to mic, unplug and replug the USB cable, and look again. Is input 3 `LINE IN` and
+   input 4 `EXT MIC`?
+4. **Report.** On Linux, read the report with Python and pyusb:
+   `usb.core.find(idVendor=0x0644, idProduct=0x8074).ctrl_transfer(0xC0, 0x58, 1, 0, 28)`. Does it
+   start with the ASCII letters `X8`, then the report version 1 and the length 28, then the build 289 as two bytes
+   (0x21, 0x01)? Switch on phantom power for INPUT 3 and read the report again. Does byte 14 (counting from 0) change
+   from 0 to 1?
+
 ## Step 57 test file: Backlight off when dimmed (built 2026-11-26, not yet installed)
 
 `work/patch63/#PortaX8_0288.203` (B288, SHA-256 `94c35fee…51daaff0`). This file is B287 (Step 56) plus one new switch. Install it
@@ -4687,7 +4737,7 @@ not run under it. The stock firmware also calls `FUN_80da0024` from the system t
 
 ## Channel names and an input report over USB (2026-11-27)
 
-A design from reading V2.03, for a later build. Nothing here is built or has run on a unit.
+A design from reading V2.03, built in B289 ([Step 58](#step-58-test-file-names-for-the-8-usb-channels-and-an-input-report-over-usb-built-2026-11-27-not-yet-installed)). Nothing here has run on a unit.
 
 **Why.** Over USB the X8 sends 8 channels and names none of them: the capture terminal and the three stream
 settings all have `iChannelNames` 0 (see [What the X8 presents over USB](#what-the-x8-presents-over-usb-and-what-it-carries)).

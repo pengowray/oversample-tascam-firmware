@@ -201,6 +201,13 @@ The patch also changes these at run time, from inside its hooks:
   and the third sub-range of the USB clock's rate list (DTCM 0x2000022E), widened to 96 and
   192 kHz. Both or neither: each is checked for its stock value first. See
   [192 kHz stereo over USB](HOMEBREW.md#192-khz-stereo-over-usb-2026-11-11).
+- From B289, when the USB task starts: the device callback word in the class config list
+  (0x81918E58). If the word holds the stock callback 0x80DC6F01, the patch replaces it with its
+  wrapper `device_callback`. The wrapper answers the channel name strings (indices 16 to 23) and
+  the input report vendor request, and passes every other event to the stock callback. After each bus reset, `usb_reset_hook` sets
+  iChannelNames to 16 at bytes 108, 157 and 249 of the configuration descriptor (0x2000F000), each
+  only if its descriptor starts with its stock bytes and the wrapper is in place. See
+  [Channel names and an input report over USB](HOMEBREW.md#channel-names-and-an-input-report-over-usb-2026-11-27).
 
 ### Running code: tasks, stacks and timing
 
@@ -213,6 +220,7 @@ The patch also changes these at run time, from inside its hooks:
 | System task (stock), from B272 | The phantom power hook on the app change (`launcher::phantom_off_hook`): when BAT PLAYBACK opens MANUAL, no phantom power question, and MANUAL's stored phantom power is put back. |
 | Qt's task (stock) | The launcher hooks: the tile, text, icon, slot and delete-mode hooks. |
 | Task 4 (stock) | The GUANO hook and the location log, at the end of a take. |
+| USB task (stock), from B289 | The patch's wrapper `device_callback`, on every USB device event. It builds a channel name or the input report when the host asks for one, and calls the stock callback at 0x80DC6F01 for everything else. |
 | Task 1 (stock), from B266 | The key hooks also answer a weak USB supply by setting POWER SOURCE SELECT to BATTERY while the bat app's `Run from batteries on weak USB` switch is on, and power-off saves AUTO in its place (`patch/power.rs`). |
 | DSP task (patch, priority 16) | Processes the input ring through the bat app, draws the screen about 10 times a second (5 while recording, 2 while MANUAL's mix is muted or the stock BACKLIGHT timer has the light dimmed; with the Tests page's `Freeze the screen` on, only after a touch, button press or wheel turn, or when the recorder starts, pauses or stops), and runs the clock, the phone remote and the BAT PLAYBACK player. Each pass stops after 30 ms and the task then sleeps 2 ms, so a mode that cannot keep up loses input instead of freezing the unit. 32 KB stack in DTCM. |
 | Card reader task (patch, priority 12) | BAT PLAYBACK's card access: lists folders and WAV files and streams the chosen file into a read ring. Created with the DSP task; it touches the card only while BAT PLAYBACK is open and sleeps otherwise. 10 KB stack in DTCM. |
