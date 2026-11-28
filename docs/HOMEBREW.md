@@ -2364,11 +2364,13 @@ B241 or an earlier build. All the checks in `tools/x8patch.py` pass on this file
 1. **Start and stop.** With Phone remote on and the phone page reloaded, do `Start recording` and `Stop recording` work as before?
 2. **Old phone page.** If a phone still has the old page cached, its commands should do nothing at all. Reload the page.
 
-## Step 63 test file: PHONE TIME shows the location's accuracy (built 2026-11-28, not yet installed)
+## Step 63 test file: PHONE TIME shows the location's accuracy (built and installed 2026-11-28)
 
 `work/patch69/#PortaX8_0294.203` (B294, SHA-256 `edb63082…ca060a46`). This file is B293 (Step 62) plus one change.
 Install it in place of B293; the checks of Steps 50 to 62 still apply. All the checks in `tools/x8patch.py` pass.
-Nothing in this step has run on a unit.
+**On the unit (owner, 2026-11-28):** B294 is installed and works. The Phone tab's QR code with the phone code
+(Step 61) scans on a phone and seems to work. `Backlight off when dimmed` (Tests tab) works, as it did on the build
+tested before. The checks listed in Steps 61 to 63 were not reported one by one.
 
 - **PHONE TIME.** When the latest chime's phone command gave the accuracy of its location, the location line ends
   with it: `Location: -36.12346, 146.00001, accuracy 10 m`, or `accuracy over 10 km`
