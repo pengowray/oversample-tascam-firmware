@@ -202,6 +202,9 @@ pub const PHANTOM_PENDING: *mut u32 = 0x81e8_6864 as *mut u32;
 /// and `FUN_80da0774` loads all of it, and neither they nor the defaults touch anything between
 /// + 0xB62 and the sum. The defaults leave zeros there, which the bat app does not accept.
 pub const BAT_SETTINGS: *mut [u8; 16] = 0x81e8_d85c as *mut [u8; 16];
+/// Settings + 0xFDE: 2 more of the spare bytes, for the UTC offset of the clock's local time
+/// (`x8_patch::entry_times::saved_zone`).
+pub const CLOCK_ZONE: *mut [u8; 2] = 0x81e8_d85a as *mut [u8; 2];
 /// `FUN_80da2778(defaults)`: with 0, saves the settings record, the app byte
 /// among them, to the next slot in flash (Thumb address). The next start
 /// opens the app the saved byte names.
@@ -309,6 +312,18 @@ pub const TASK_4_COMMAND: usize = 0x80dc_9309;
 pub const TASK_4_BUSY: usize = 0x80dc_9357;
 pub const COMMAND_READ_CLOCK: i32 = 75;
 pub const COMMAND_SET_CLOCK: i32 = 76;
+/// `FUN_80dfd8a6(record)`: writes a clock record's date to the clock chip. Command 76 is its only
+/// caller (Thumb address).
+pub const SET_CLOCK_DATE: usize = 0x80df_d8a7;
+/// `FUN_80e31074(out)`: the file system's clock read. Fills 9 words; the first 6 are seconds,
+/// minutes, hours, the day, months since January and years since 1900. Takes the clock chip's
+/// bus for the read (Thumb address).
+pub const FILE_CLOCK: usize = 0x80e3_1075;
+/// `FUN_80d6a9c4(to, bytes)`: zeroes bytes (Thumb address).
+pub const ZERO_BYTES: usize = 0x80d6_a9c5;
+/// In the file system's record of an open file: the time and date of its last modified stamp,
+/// as an exFAT entry packs them (2 u16).
+pub const FILE_MODIFIED_TIME: usize = 0x250;
 /// Where command 75 leaves the clock record it read (see `clock_record`).
 pub const CLOCK_RECORD: *const [u8; 10] = 0x81e9_adc8 as *const [u8; 10];
 /// `FUN_80de7366(name, mode)` opens a file in the folder the recorder uses and returns its handle,

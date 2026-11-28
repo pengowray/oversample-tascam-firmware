@@ -2364,6 +2364,41 @@ B241 or an earlier build. All the checks in `tools/x8patch.py` pass on this file
 1. **Start and stop.** With Phone remote on and the phone page reloaded, do `Start recording` and `Stop recording` work as before?
 2. **Old phone page.** If a phone still has the old page cached, its commands should do nothing at all. Reload the page.
 
+## Step 59 test file: exFAT file times with the clock's UTC offset, and to the second (built 2026-11-28, not yet installed)
+
+`work/patch65/#PortaX8_0290.203` (B290, SHA-256 `a0178e89…8c30a41d`). This file is B289 (Step 58) plus
+[Time zone in exFAT file entries](#time-zone-in-exfat-file-entries-2026-11-28). Install it in place of B289; the checks
+of Steps 50 to 58 still apply. All the checks in `tools/x8patch.py` pass. Nothing in this step has run on a unit.
+
+- **UTC offset.** On an exFAT card (48 GB and up), every file and folder the X8 writes after a phone has set its clock
+  carries the phone's UTC offset with each of its three times. Linux then lists a take at the right time with no mount
+  option. Before any phone has set the clock, the times have no offset, as in the stock firmware.
+- **Kept over power-off.** The offset is saved with the settings at power-off and read at start-up, so takes after a
+  restart keep it, and so does GUANO's `Timestamp`. Setting the clock on the X8's own date and time screen forgets the
+  offset until the next chime.
+- **To the second.** Created and modified times are exact to 1 s (the stock firmware writes even seconds only).
+- **FAT32 cards** (32 GB and under) are unchanged: the format has no offset field.
+- **Risk.** The patch changes the code that writes every exFAT file entry, in every mode, update mode included. A
+  fault there could hide files or stop takes from being saved. Try it first on a card with nothing to lose.
+
+**Memory.** Patch region free: 5,744 bytes (1,480 fewer than B289). DTCM free: 2,216 bytes (unchanged). Three new
+stock hook sites and seven `nop`s (header version 26).
+
+**What to check.** Use a card of 64 GB or more that the X8 formatted.
+
+1. **Files still save.** Record a take from a stock app and one from a bat tile. Do both play on the X8, and do BROWSE
+   and a computer list them? A wrong entry checksum would hide them.
+2. **Offset.** Set the clock from the phone, record a take, and on Linux run
+   `sudo python3 tools/exfat_times.py /dev/sdX1`. Do the take's three offset bytes show the phone's offset (0xAC for
+   UTC+11:00)? Does `ls -l --time-style=full-iso` show the time the take was made, with no `time_offset` option?
+3. **Seconds.** Over a few takes, do some modified times have an odd second (`10ms=100` in the script's output)?
+4. **Power-off.** Turn the X8 off and on, record a take without sending a chime. Does it still have the offset bytes,
+   and does its GUANO `Timestamp` end in the offset?
+5. **Clock set by hand.** Set the time on the X8's date and time screen and record a take. Are its offset bytes 0x00,
+   and does `Timestamp` have no offset?
+6. **Older files.** Does a take from before B290 still show offset bytes 0x00 after the X8 has been used with the card?
+7. **Update mode.** Does the next update file install from the card as before?
+
 ## Step 58 test file: names for the 8 USB channels, and an input report over USB (built 2026-11-27, not yet installed)
 
 `work/patch64/#PortaX8_0289.203` (B289, SHA-256 `b71284ee…fc5500f1`). This file is B288 (Step 57) plus the design in
@@ -4685,7 +4720,8 @@ Read from V2.03 in Ghidra; not checked on a unit (Step 52 check 2).
   then puts back only + 0x14 (4 bytes), + 0x1D8, + 0x1D9 and 8 bytes at + 0xADE. So a preset carries every byte of
   the record's tail, and loading one replaced the bat app's 16 bytes until B284, which keeps its own copy from
   start-up. This also shows that the stock code copies the tail around without reading it.
-- The patch uses + 0xFE0 to + 0xFEF, the far end from the stock fields.
+- The patch uses + 0xFE0 to + 0xFEF, the far end from the stock fields, and from B290 + 0xFDE and + 0xFDF for the
+  clock's UTC offset.
 
 ## The built-in speaker (2026-11-20)
 
@@ -4982,7 +5018,7 @@ still does not run in that state: after the patch sets AUTO, the X8 takes its po
 ## Time zone in exFAT file entries (2026-11-28)
 
 Read in V2.03 with the Ghidra project. The stored bytes were checked on a 128 GB card the X8 formatted (`tools/exfat_times.py`);
-the change below is a design and has not been built.
+the change below is built in B290 ([Step 59](#step-59-test-file-exfat-file-times-with-the-clocks-utc-offset-and-to-the-second-built-2026-11-28-not-yet-installed)) and has not run on a unit.
 
 **What the card holds.** An exFAT file entry has three UTC offset bytes: +0x16 for the created time, +0x17 for modified and
 +0x18 for accessed. The top bit means the offset is valid and the low 7 bits are a signed count of 15-minute steps, so +11:00 is
@@ -4999,26 +5035,32 @@ The 10 ms bytes (+0x14, +0x15) are 0 too. FAT32 (cards of 32 GB and under) has n
 | `FUN_80dfda64`, `FUN_80e10310` | Set attributes; set sizes | Kept as read from the card |
 | `FUN_80e0fe98` | Entry set checksum. Its 5 callers are the 5 functions above, so these are all the entry writers | |
 
-Each writer checksums a copy of the sectors when volume + 0x4C is not 0, then stores the checksum in the real buffer. A hook
-on the checksum call would therefore change the copy only, and the files would disappear. The bytes have to be set before the
-copy.
+Each writer checksums a copy of the sectors when volume + 0x4C is not 0, then stores the checksum in the real buffer. A h**The change.** Each time's 10 ms and UTC offset bytes are written when that time is written, and kept otherwise. The
+offset byte is 0x80 with the offset in 15-minute steps while the clock keeps a phone's local time, and 0 when not
+(`crates/x8-patch/src/entry_times.rs`, host tests; hooks in `patch/file_times.rs`).
 
-**The design.** Each offset byte is written when its time is written, and kept otherwise. The byte is 0x80 with the offset
-in 15-minute steps when a phone has set the clock (`SET_FROM_PHONE`, `SET_TZ` in `patch/clock.rs`), and 0 when not.
+1. `FUN_80e0fcec` is replaced at its entry by `stamp_hook`. It stamps the same times, and for each one also writes the
+   10 ms byte (100 for an odd second) and the offset byte. With flag bit 3 the time comes from the file's record, which
+   has no 10 ms byte, so the patch keeps the byte of the last modified stamp and uses it when the record's time matches.
+2. In `FUN_80e0b9f8`, the five stores at 0x80e0bab6 to 0x80e0babe are `nop`, so an update keeps the bytes the card had.
+   No branch lands in that window, and the code after it (0x80e0bafc) reloads r0 to r3.
+3. In `FUN_80e0fef8`, the stores to + 0x14 and + 0x16 (0x80e10058, 0x80e10064) are `nop`, so the created time keeps the
+   two bytes the caller's template has. The `bl` at 0x80e10078 goes to `new_entry_hook`, which zeroes the 7 spare bytes
+   as before and stamps the modified and accessed times again with their bytes, from one clock read.
 
-1. Replace `FUN_80e0fcec` at its entry (an `entries` patch). The patch's version stamps the same times and sets +0x16, +0x17
-   and +0x18 for the flag bits given.
-2. In `FUN_80e0b9f8`, turn the three stores at 0x80e0baba, 0x80e0babc and 0x80e0babe into `nop`, so an update keeps the bytes
-   the card had. No branch lands in that window, and the code after it (0x80e0bafc) reloads r0 to r3.
-3. In `FUN_80e0fef8`, turn the store to +0x16 at 0x80e10064 into `nop` (the template's created offset stays), and point the
-   `bl` at 0x80e10078 at a hook that clears the 7 bytes and sets +0x17 and +0x18, the two times that function stamps.
+**The zone over power-off.** The offset byte and its inverse go in 2 more spare bytes of the settings record, + 0xFDE and
++ 0xFDF, at power-off, next to the bat app's 16 ([The settings record's spare bytes](#the-settings-records-spare-bytes-2026-11-20)).
+Task 1 reads them at its first message. Zeros, as the defaults leave, read as no offset. Files written before task 1's first
+message get no offset. A preset loaded from USER SETTINGS replaces the two bytes in the record, but power-off writes them
+again from RAM.
 
-`tools/x8patch.py` needs a new patch kind for the 4 `nop` halfwords. Tests: host tests for the byte (unknown 0x00, +11:00
-0xAC, -3:30 0xF2, +5:45 0x97); on the unit, `tools/exfat_times.py` shows the bytes, `ls` on Linux shows the local time with no
-mount option, and the files are still listed (a wrong checksum hides them).
+**A clock set on the X8.** The clock chip is set in one place: task 4's command 76 (0x80dce468) calls `FUN_80dfd8a6` for
+the date and `FUN_80dfd770` for the time, and a scan of the whole image for `bl` to either finds no other caller. The `bl`
+at 0x80dce48a goes to `set_clock_hook`. A set that the patch did not ask for comes from the X8's date and time screen, and
+the zone of the time typed there is not known, so the patch forgets the zone. GUANO's `Timestamp` then has no offset either.
 
-The offset is kept in RAM only, so files written after a power-off have no offset until the next chime, the same as GUANO's
-`Timestamp`.
+**Not covered.** FAT32 cards. A clock chip that lost power restarts at its default date, and the saved zone is still
+applied to it. A zone that is not a whole number of 15-minute steps is written as no offset.
 
 ## Firmware map (V2.03, in progress)
 

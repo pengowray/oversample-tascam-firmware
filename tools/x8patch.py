@@ -51,6 +51,7 @@ def flash(address):
 # handles: a literal holding the address of a stock image handle, replaced by a header field
 #   that is the address of a handle in the patch. The image it leads to is checked (see
 #   check_image) and its height is the header field's name with "_height" added.
+# nops: a 16-bit instruction, given as its halfword, replaced by `nop`.
 # immediates: a `movs r0, #value` (16 bits), whose value is replaced by a header field's.
 # fixed_immediates: a `movs rN, #value` (16 bits) whose value is replaced by a fixed value, not a
 #   header field. The code runs in every mode, update mode included.
@@ -78,6 +79,13 @@ BUILDS = {
             # The touch poll's only call that passes a touch to Qt,
             # `FUN_80e0364a(x, y, pressed)` (work/notes/input.md section 3).
             ("touch to Qt", 0x80DF501A, 0x80E0364A, "touch_hook"),
+            # FUN_80e0fef8's call that zeroes the 7 bytes after a new first entry's UTC offsets,
+            # straight after it has stamped the modified and accessed times and zeroed their
+            # 10 ms and offset bytes.
+            ("new exFAT entry, spare bytes zeroed", 0x80E10078, 0x80D6A9C4, "new_entry_hook"),
+            # The set-clock command (task 4's command 76, at 0x80dce468) calls FUN_80dfd8a6 to
+            # write the date to the clock chip. Nothing else calls it.
+            ("clock chip date set", 0x80DCE48A, 0x80DFD8A6, "set_clock_hook"),
             # The launcher's text bindings (out, binding, root), each called once
             # (work/notes/launcher.md sections 6 and 7).
             ("launcher title", 0x814A765C, 0x80F2326A, "title_hook"),
@@ -160,6 +168,26 @@ BUILDS = {
             # The bridge's first free slot (1 to 3, or 0 when all are in use),
             # read by the apps' save screens: `ldr.w ip,[pc,#0x2e4]`.
             ("first free slot", 0x80D6A252, (0xF8DF, 0xC2E4), "free_slot_hook"),
+            # The file system's time stamp for an exFAT entry, FUN_80e0fcec(entry, file, flags):
+            # `push.w {r4-r8,lr}`. The patch's version also writes the 10 ms and UTC offset bytes
+            # (docs/HOMEBREW.md, "Time zone in exFAT file entries").
+            ("exFAT time stamp", 0x80E0FCEC, (0xE92D, 0x41F0), "stamp_hook"),
+        ],
+        "nops": [
+            # FUN_80e0b9f8 rewrites a file's first entry (at close, for one) and zeroes its 10 ms
+            # and UTC offset bytes, + 0x14 to + 0x18, whether or not it stamped the times:
+            # `strb r0,[r7,#0x14]` to `strb r0,[r7,#0x18]`. Without them the bytes stay as the
+            # card had them, and the time stamp above writes the ones it changes.
+            ("exFAT entry update, created 10 ms", 0x80E0BAB6, 0x7538),
+            ("exFAT entry update, modified 10 ms", 0x80E0BAB8, 0x7578),
+            ("exFAT entry update, created UTC offset", 0x80E0BABA, 0x75B8),
+            ("exFAT entry update, modified UTC offset", 0x80E0BABC, 0x75F8),
+            ("exFAT entry update, accessed UTC offset", 0x80E0BABE, 0x7638),
+            # FUN_80e0fef8 writes a new file's entries from the caller's template, and zeroes the
+            # same 5 bytes. The created time's two, `strb r0,[r1,#0x14]` and `strb r1,[r2,#0x16]`,
+            # stay as the template has them; the call below writes the other three.
+            ("new exFAT entry, created 10 ms", 0x80E10058, 0x7508),
+            ("new exFAT entry, created UTC offset", 0x80E10064, 0x7591),
         ],
         "stock_pixels": [
             # The logo screen's 8-bit alpha masks for "Portacapture X8" (docs/HOMEBREW.md,
@@ -201,13 +229,13 @@ HEADER_FIELDS = ["magic", "version", "key_hook", "rec_key_hook", "touch_hook", "
                  "icon_height2_hook", "icon_height3_hook", "icon_width2_hook", "icon_width3_hook",
                  "power_off_save_hook", "open_take_hook", "file_mask_hook", "guano_hook", "usb_init_hook",
                  "usb_alt_hook", "phantom_off_hook", "usb_reset_hook", "speaker_hook", "output_power_hook",
-                 "hold_hook",
+                 "hold_hook", "stamp_hook", "new_entry_hook", "set_clock_hook",
                  "logo_lower",
                  "logo_upper_y", "logo_lower_y", "build"]
-HEADER_FORMAT = "<4s43I"
+HEADER_FORMAT = "<4s46I"
 # The packer writes the update file's build number here, for the CPU test to show.
 BUILD_OFFSET = struct.calcsize(HEADER_FORMAT) - 4
-HEADER_VERSION = 25
+HEADER_VERSION = 26
 
 B_W, BL = 0x9000, 0xD000   # bits 15, 14 and 12 of the second halfword
 
@@ -283,6 +311,12 @@ def apply(image, patch, fields, build):
         put_half(address + 2, hw2)
         print(f"{name}: entry 0x{address:08x} -> b.w 0x{target & ~1:08x}")
 
+    for name, address, stock in build["nops"]:
+        if half(address) != stock:
+            return f"{name}: 0x{address:08x} holds {half(address):04x}, expected {stock:04x}"
+        put_half(address, NOP)
+        print(f"{name}: {stock:04x} at 0x{address:08x} -> nop")
+
     for name, address, size, stock_sha256 in build["stock_pixels"]:
         at = flash(address)
         if hashlib.sha256(image[at:at + size]).hexdigest() != stock_sha256:
@@ -322,6 +356,7 @@ def apply(image, patch, fields, build):
 
 
 MOVS_R0 = 0x2000
+NOP = 0xBF00
 ALPHA8_LAYOUT = 0x1E498
 LOGO_COLOUR = 0xFF3E3E3E
 # The stock screens draw tiles of up to 5,145 pixels (245 x 21) through the PXP blend's scratch

@@ -24,10 +24,13 @@ static PHONE_BLOCKS: AtomicU32 = AtomicU32::new(0);
 static PHONE_TZ: AtomicI32 = AtomicI32::new(0);
 /// The clock is to be set from the phone's time: as soon as the recorder is stopped.
 static SET_WANTED: AtomicBool = AtomicBool::new(false);
-/// The clock has been set from a chime since the X8 started, so it keeps the phone's local time
-/// in the zone `PHONE_TZ` had then.
+/// The clock keeps a phone's local time, `SET_TZ` minutes ahead of UTC: it was last set from a
+/// chime, in this run or an earlier one (the zone is saved at power-off). Setting the clock on the
+/// X8's own date and time screen ends this (`set_clock_hook`).
 static SET_FROM_PHONE: AtomicBool = AtomicBool::new(false);
 static SET_TZ: AtomicI32 = AtomicI32::new(0);
+/// The patch has given task 4 the command that sets the clock, and task 4 has not run it yet.
+static OWN_SET: AtomicBool = AtomicBool::new(false);
 
 // The context running the app only.
 static STEP: AtomicU32 = AtomicU32::new(IDLE);
@@ -107,7 +110,30 @@ pub(super) fn take_times() -> (Option<i64>, Option<i16>) {
         let tz = PHONE_TZ.load(Relaxed) as i16;
         return (phone_ms_at(BLOCKS.load(Relaxed)).map(|ms| ms.div_euclid(1000)), Some(tz));
     }
-    (None, SET_FROM_PHONE.load(Relaxed).then(|| SET_TZ.load(Relaxed) as i16))
+    (None, zone())
+}
+
+/// The UTC offset, in minutes, of the local time the X8's clock keeps, when known.
+pub(super) fn zone() -> Option<i16> {
+    SET_FROM_PHONE.load(Relaxed).then(|| SET_TZ.load(Relaxed) as i16)
+}
+
+/// At start-up: the zone the last power-off saved.
+pub(super) fn set_zone(minutes: Option<i16>) {
+    SET_TZ.store(minutes.unwrap_or(0).into(), Relaxed);
+    SET_FROM_PHONE.store(minutes.is_some(), Relaxed);
+}
+
+/// Replaces the stock set-clock command's call that writes the date to the clock chip, the only
+/// code that sets the chip. A set that the patch did not ask for comes from the X8's own date and
+/// time screen, and the zone of the time typed there is not known.
+pub(super) unsafe extern "C" fn set_clock_hook(record: usize, b: usize, c: usize, d: usize) -> usize {
+    if !OWN_SET.swap(false, Relaxed) {
+        SET_FROM_PHONE.store(false, Relaxed);
+    }
+    // SAFETY: the stock function this call went to, with its arguments.
+    let set_date: super::Handler = unsafe { core::mem::transmute(stock::SET_CLOCK_DATE) };
+    unsafe { set_date(record, b, c, d) }
 }
 
 /// Whether a clock command is under way, so the phone remote holds back its button presses: task 1
@@ -139,6 +165,7 @@ fn go(step: u32, now: u32) {
 }
 
 fn fail(app: &mut BatApp<'static>, now: u32) {
+    OWN_SET.store(false, Relaxed);
     SET_WANTED.store(false, Relaxed);
     app.set_clock_state(ClockState::Failed);
     go(IDLE, now);
@@ -205,6 +232,7 @@ pub(super) fn run_clock(app: &mut BatApp<'static>) {
             // SAFETY: the context running the app only; task 4 reads it once it runs the command.
             let record_ptr = unsafe { (*RECORD.0.get()).as_mut_ptr() };
             unsafe { ptr::write_volatile(record_ptr, record) };
+            OWN_SET.store(true, Relaxed);
             give_task_4(stock::COMMAND_SET_CLOCK, record_ptr as usize);
             go(SETTING, now);
         }

@@ -24,7 +24,7 @@ file as before.
 | Field | Example | Notes |
 |---|---|---|
 | `GUANO|Version` | `1.0` | Always first |
-| `Timestamp` | `2026-11-06T19:07:10` or `2026-11-06T20:09:10+11:00` | The start of the file, to about 1 s: the time the file closed less its length. Local time. It has a UTC offset only once a phone has set the X8's clock, because the X8 does not know its time zone. Left out if the clock's date is not a real date |
+| `Timestamp` | `2026-11-06T19:07:10` or `2026-11-06T20:09:10+11:00` | The start of the file, to about 1 s: the time the file closed less its length. Local time. It has a UTC offset only once a phone has set the X8's clock, because the X8 does not know its time zone. From B290 the offset is kept over power-off, until the clock is set on the X8 itself. Left out if the clock's date is not a real date |
 | `Length` | `58.080000` | Seconds of audio in the file |
 | `Samplerate` | `192000` | Hz |
 | `Make` | `TASCAM` | |

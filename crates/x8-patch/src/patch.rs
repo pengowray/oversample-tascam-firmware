@@ -16,6 +16,8 @@ mod clock;
 /// The CPU test's logs: taken from the app on the DSP task, written to `CPU_TEST.TXT` as a take's
 /// files close.
 mod cpu_log;
+/// exFAT file entry times: to the second, with the clock's UTC offset when a phone set it.
+mod file_times;
 /// Adds GUANO metadata to the WAV files of takes from a bat tile as the stock recorder closes them.
 mod guano_file;
 /// Which inputs the app hears, from the track settings.
@@ -71,6 +73,8 @@ mod task;
 mod usb;
 
 use buttons::hold_hook;
+use clock::set_clock_hook;
+use file_times::{new_entry_hook, stamp_hook};
 use guano_file::guano_hook;
 use keys::{key_hook, rec_key_hook, touch_hook};
 use launcher::{
@@ -142,6 +146,12 @@ pub struct Header {
     output_power_hook: Handler,
     /// Replaces task 1's call to the HOLD getter before it hands a button press on.
     hold_hook: Handler,
+    /// Replaces the file system's time stamp function for exFAT entries (a whole function).
+    stamp_hook: Handler,
+    /// Replaces the new entry writer's call that zeroes the first entry's spare bytes.
+    new_entry_hook: Handler,
+    /// Replaces the set-clock command's call that writes the date to the clock chip.
+    set_clock_hook: Handler,
     /// The handle that the logo screen's lower image item gets, and the y positions of its upper and
     /// lower items. tools/x8patch.py reads the lower item's height from the image.
     logo_lower: &'static &'static qt::QtImage,
@@ -156,7 +166,7 @@ pub struct Header {
 #[unsafe(link_section = ".header")]
 pub static X8_PATCH_HEADER: Header = Header {
     magic: *b"BATX",
-    version: 25,
+    version: 26,
     key_hook,
     rec_key_hook,
     touch_hook,
@@ -185,6 +195,9 @@ pub static X8_PATCH_HEADER: Header = Header {
     speaker_hook,
     output_power_hook,
     hold_hook,
+    stamp_hook,
+    new_entry_hook,
+    set_clock_hook,
     logo_lower: &logo::LOWER_HANDLE,
     logo_upper_y: logo_pixels::UPPER_Y,
     logo_lower_y: logo_pixels::LOWER_Y,

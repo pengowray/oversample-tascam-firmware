@@ -5,6 +5,7 @@
 
 pub mod card;
 pub mod clock_record;
+pub mod entry_times;
 pub mod file_mask;
 pub mod handoff;
 pub mod power_source;
