@@ -6,7 +6,7 @@
 //! use only the statics here and the clock's zone.
 
 use core::ptr;
-use core::sync::atomic::{AtomicU32, Ordering::Relaxed};
+use core::sync::atomic::{AtomicBool, AtomicU32, Ordering::Relaxed};
 
 use x8_patch::entry_times::{self, ENTRY_BYTES, KEPT, MODIFIED, Stamp};
 
@@ -17,6 +17,8 @@ use super::stock;
 /// byte from here when the times match.
 static KEPT_TIME: AtomicU32 = AtomicU32::new(0);
 static KEPT_TEN_MS: AtomicU32 = AtomicU32::new(0);
+/// The saved zone has been read in this run, so power-off may write the zone back.
+static ZONE_LOADED: AtomicBool = AtomicBool::new(false);
 
 #[inline(never)]
 fn zone() -> u8 {
@@ -77,10 +79,14 @@ pub(super) fn load_zone() {
     // SAFETY: spare bytes of the settings record, loaded at start-up.
     let saved = unsafe { ptr::read_volatile(stock::CLOCK_ZONE) };
     super::clock::set_zone(entry_times::zone_minutes(entry_times::zone_from_saved(saved)));
+    ZONE_LOADED.store(true, Relaxed);
 }
 
-/// At power-off, with interrupts off, before the settings record is summed and saved.
+/// At power-off, with interrupts off, before the settings record is summed and saved. A run that
+/// never read the saved zone (power-off before task 1's first message, or update mode) leaves it.
 pub(super) fn save_zone() {
-    // SAFETY: as above; nothing else runs.
-    unsafe { ptr::write_volatile(stock::CLOCK_ZONE, entry_times::saved_zone(zone())) };
+    if ZONE_LOADED.load(Relaxed) {
+        // SAFETY: as above; nothing else runs.
+        unsafe { ptr::write_volatile(stock::CLOCK_ZONE, entry_times::saved_zone(zone())) };
+    }
 }

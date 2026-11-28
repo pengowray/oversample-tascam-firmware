@@ -248,6 +248,7 @@ pub(super) fn run_clock(app: &mut BatApp<'static>) {
                 return fail(app, now);
             }
             SET_WANTED.store(false, Relaxed);
+            OWN_SET.store(false, Relaxed);
             SET_TZ.store(PHONE_TZ.load(Relaxed), Relaxed);
             SET_FROM_PHONE.store(true, Relaxed);
             app.set_clock_state(ClockState::Set(x8));

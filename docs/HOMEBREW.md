@@ -2366,7 +2366,7 @@ B241 or an earlier build. All the checks in `tools/x8patch.py` pass on this file
 
 ## Step 59 test file: exFAT file times with the clock's UTC offset, and to the second (built 2026-11-28, not yet installed)
 
-`work/patch65/#PortaX8_0290.203` (B290, SHA-256 `a0178e89…8c30a41d`). This file is B289 (Step 58) plus
+`work/patch65/#PortaX8_0290.203` (B290, SHA-256 `5e4eca11…069f20fb`). This file is B289 (Step 58) plus
 [Time zone in exFAT file entries](#time-zone-in-exfat-file-entries-2026-11-28). Install it in place of B289; the checks
 of Steps 50 to 58 still apply. All the checks in `tools/x8patch.py` pass. Nothing in this step has run on a unit.
 
@@ -2377,11 +2377,12 @@ of Steps 50 to 58 still apply. All the checks in `tools/x8patch.py` pass. Nothin
   restart keep it, and so does GUANO's `Timestamp`. Setting the clock on the X8's own date and time screen forgets the
   offset until the next chime.
 - **To the second.** Created and modified times are exact to 1 s (the stock firmware writes even seconds only).
-- **FAT32 cards** (32 GB and under) are unchanged: the format has no offset field.
+- **FAT32 cards** (32 GB and under) are unchanged: the format has no offset field, and the stock code takes a
+  different path for them before it reaches anything the patch changes.
 - **Risk.** The patch changes the code that writes every exFAT file entry, in every mode, update mode included. A
   fault there could hide files or stop takes from being saved. Try it first on a card with nothing to lose.
 
-**Memory.** Patch region free: 5,744 bytes (1,480 fewer than B289). DTCM free: 2,216 bytes (unchanged). Three new
+**Memory.** Patch region free: 5,728 bytes (1,496 fewer than B289). DTCM free: 2,216 bytes (unchanged). Three new
 stock hook sites and seven `nop`s (header version 26).
 
 **What to check.** Use a card of 64 GB or more that the X8 formatted.
@@ -2397,7 +2398,10 @@ stock hook sites and seven `nop`s (header version 26).
 5. **Clock set by hand.** Set the time on the X8's date and time screen and record a take. Are its offset bytes 0x00,
    and does `Timestamp` have no offset?
 6. **Older files.** Does a take from before B290 still show offset bytes 0x00 after the X8 has been used with the card?
-7. **Update mode.** Does the next update file install from the card as before?
+7. **Rename, folder and log.** Rename a take in BROWSE, make a new folder, and record a take with a location from
+   the phone so `BAT_LOCATIONS.CSV` grows. Are all three still listed, each with the offset bytes?
+8. **FAT32.** On a card of 32 GB or less that the X8 formatted, does a take save, list and play as before?
+9. **Update mode.** Does the next update file install from the card as before?
 
 ## Step 58 test file: names for the 8 USB channels, and an input report over USB (built 2026-11-27, not yet installed)
 
@@ -5059,7 +5063,14 @@ the date and `FUN_80dfd770` for the time, and a scan of the whole image for `bl`
 at 0x80dce48a goes to `set_clock_hook`. A set that the patch did not ask for comes from the X8's date and time screen, and
 the zone of the time typed there is not known, so the patch forgets the zone. GUANO's `Timestamp` then has no offset either.
 
-**Not covered.** FAT32 cards. A clock chip that lost power restarts at its default date, and the saved zone is still
+**FAT32 is not touched.** Each caller of the time stamp (`FUN_80dfee58` open, `FUN_80e0b18c`, `FUN_80e0d3d6` new
+folder, `FUN_80e0df08`) is reached from a function that first checks the volume type byte (volume + 0x14 is `@` for
+exFAT) and calls a different function for FAT.
+
+**Not covered.** FAT32 cards have no offset field. Power-off writes the zone only in a run that read it, so update mode
+and a power-off before task 1's first message leave the saved zone alone. After a clock set by hand, a loss of power with
+no clean power-off leaves the old zone saved, and it comes back at the next start. `FUN_80dfdbcc`, which sets a given
+modified time, leaves the 10 ms byte, so that time can read 1 s late. A clock chip that lost power restarts at its default date, and the saved zone is still
 applied to it. A zone that is not a whole number of 15-minute steps is written as no offset.
 
 ## Firmware map (V2.03, in progress)
