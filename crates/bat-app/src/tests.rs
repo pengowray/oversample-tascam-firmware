@@ -1,6 +1,8 @@
 // `run_skipping` takes a list of ranges to skip, and most tests skip one.
 #![allow(clippy::single_range_in_vec_init)]
 
+use std::format;
+use std::string::String;
 use std::vec;
 use std::vec::Vec;
 
@@ -1735,15 +1737,9 @@ fn pause_switch_and_notice() {
     assert!(!app.pause_refused_shown());
 }
 
-/// The QR code on the settings screen's Phone page reads back as the phone page's address, from the
-/// screen as drawn.
-#[test]
-fn the_phone_page_qr_code_reads_back() {
-    let mut storage = vec![0.0f32; 1024];
-    let mut app = BatApp::new(FS, &mut storage, buffers());
-    app.set_remote_available(true);
-    app.open_settings_page(SettingsPage::Phone);
-    let pixels = draw(&app);
+/// What a phone's camera reads from the QR code on the settings screen's Phone page, as drawn.
+fn phone_page_qr_code(app: &BatApp) -> String {
+    let pixels = draw(app);
     let card = layout::qr_card(true);
     let (x0, y0) = (card.top_left.x as usize, card.top_left.y as usize);
     let mut image =
@@ -1752,8 +1748,26 @@ fn the_phone_page_qr_code_reads_back() {
         });
     let grids = image.detect_grids();
     assert_eq!(grids.len(), 1);
-    let (_, content) = grids[0].decode().expect("a readable code");
-    assert_eq!(content, "HTTPS://REMOTE.OVERSAMPLE.COM/#x8");
+    grids[0].decode().expect("a readable code").1
+}
+
+/// The QR code on the settings screen's Phone page reads back as the phone page's address, from the
+/// screen as drawn. While the phone code is in use, the address ends with the code.
+#[test]
+fn the_phone_page_qr_code_reads_back() {
+    let mut storage = vec![0.0f32; 1024];
+    let mut app = BatApp::new(FS, &mut storage, buffers());
+    app.set_remote_available(true);
+    app.open_settings_page(SettingsPage::Phone);
+    assert_eq!(phone_page_qr_code(&app), "HTTPS://REMOTE.OVERSAMPLE.COM/#x8");
+    for code in [*b"493817", *b"000000", *b"999999", *b"007040"] {
+        app.set_phone_code(code);
+        app.set_phone_code_required(true);
+        let address = format!("HTTPS://REMOTE.OVERSAMPLE.COM/#x8-{}", core::str::from_utf8(&code).unwrap());
+        assert_eq!(phone_page_qr_code(&app), address);
+    }
+    app.set_phone_code_required(false);
+    assert_eq!(phone_page_qr_code(&app), "HTTPS://REMOTE.OVERSAMPLE.COM/#x8");
 }
 
 /// On a host without the phone remote (BAT PLAYBACK on the X8), the QR code and Phone time move to

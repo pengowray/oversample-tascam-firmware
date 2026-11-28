@@ -121,9 +121,13 @@ check its SipHash against the published vector (key `00 01 .. 0f`, message `00 0
 
 From B273 the SETTINGS, Phone tab has a `Phone code` switch, off by default. It is a guard against
 other people's phones, for example where several people use X8s near each other. The first time
-the switch is turned on after power-on, the X8 makes a 6-digit code, and keeps it until power-off.
+the switch is turned on, the X8 makes a 6-digit code. Builds before B283 make a new code after each
+power-off; from B283 the code and the switch are kept over power-off.
 While the switch is on, the code is shown beside it in two groups, such as `493 817`. The person
-types it into the phone page, which then sends version 2 commands. The X8 makes the code from a
+types it into the phone page, which then sends version 2 commands. From B292 the QR code on the
+Phone tab also holds the code while the switch is on, as
+`HTTPS://REMOTE.OVERSAMPLE.COM/#x8-493817`: a phone that scans it opens the page with the code
+filled in, and the page keeps it. The part after `#` is not sent to the web server. The X8 makes the code from a
 hash of the input samples heard before the switch was turned on and the time of the press, because
 it has no random number generator.
 
@@ -190,8 +194,11 @@ not hear these.
   a few of the phone's commands can try every code against them on a computer and find the one
   that gives all their checks. The code keeps out other people's phones and chance commands. It
   does not keep out someone who records the commands and means to get in.
-- **The code changes at each power-on.** The X8 stores no settings, so the code has to be typed
-  into the phone page again after the X8 has been off, and `Phone code` turned on again.
+- **Before B283, the code changes at each power-on.** Those builds store no settings, so the code
+  has to be typed into the phone page again after the X8 has been off, and `Phone code` turned on
+  again.
+- **The code is on the X8's screen.** Anyone who can see or photograph the Phone tab has the code,
+  as digits and, from B292, in the QR code.
 - **The location is not covered by the check.** The check covers the command, the time and the UTC
   offset. A chime that repeats those and the check with another location is accepted.
 - **A recording works once more if the X8 missed the command.** The X8 refuses a time it has
@@ -218,4 +225,5 @@ not hear these.
 - The phone page: `remoteDeploymentId` in `setup.js`, in the
   [batchi-chime](https://github.com/pengowray/batchi-chime) repository, published at
   [remote.oversample.com](https://remote.oversample.com/#x8). The X8's SETTINGS, Phone tab shows a
-  QR code for it.
+  QR code for it ([crates/bat-app/src/qr.rs](../crates/bat-app/src/qr.rs)), which holds the phone
+  code while `Phone code` is on (from B292).

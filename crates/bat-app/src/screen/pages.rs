@@ -102,6 +102,8 @@ pub(super) const GUANO_HELP: &str = "Bat analysis apps read GUANO. Most audio ap
 /// Beside the QR code on the Phone page.
 pub(super) const QR_HEADING: &str = "Phone page";
 pub(super) const QR_HELP: [&str; 2] = ["Plays the chimes.", "Scan with the phone"];
+/// In place of the second line while the QR code holds the phone code.
+pub(super) const QR_HELP_WITH_CODE: &str = "Scan to give the phone the code";
 /// The clock command and the listening modes, on the remote panel's last line.
 const LAST_SET_CLOCK: &str = "Set clock";
 const LAST_MODE: [&str; 6] = ["HET mode", "COMB mode", "FD mode", "TE mode", "PITCH mode", "1:1 mode"];
@@ -249,24 +251,27 @@ pub(super) fn phone(app: &BatApp, fb: Fb) {
         switch_panel(fb, PHONE_CLOCK, CLOCK_FROM_REMOTE_NAME, &[line], app.clock_from_remote(), selected);
     }
     let card = qr_card(app.remote_available());
-    qr_code(fb, card);
+    // With a phone code in use, the QR code holds it, and the phone page takes it from there.
+    let code = if app.remote_available() { app.remote.code_shown() } else { None };
+    qr_code(fb, card, &qr::rows(code));
     let y = card.top_left.y;
     text(fb, &BODY_BOLD, QR_HEADING, QR_TEXT_X, y + 14, LEFT, TEXT);
     text(fb, &SMALL, qr::ADDRESS, QR_TEXT_X, y + 32, LEFT, TEXT);
-    for (line, y) in QR_HELP.iter().zip([y + 50, y + 64]) {
+    let scan = if code.is_some() { QR_HELP_WITH_CODE } else { QR_HELP[1] };
+    for (line, y) in [QR_HELP[0], scan].iter().zip([y + 50, y + 64]) {
         text(fb, &SMALL, *line, QR_TEXT_X, y, LEFT, TEXT_MUTED);
     }
     test_button(fb, phone_time(app.remote_available()), CHIME_TEST_NAME, &[CHIME_TEST_HELP]);
 }
 
 /// Black modules on a white card. Square corners, so the card's edge never cuts into the quiet zone.
-fn qr_code(fb: Fb, card: Rectangle) {
+fn qr_code(fb: Fb, card: Rectangle, rows: &[u32; qr::SIZE]) {
     let _ = card.into_styled(PrimitiveStyle::with_fill(Rgb565::WHITE)).draw(fb);
     let origin = card.top_left + Point::new(QR_MARGIN * QR_MODULE, QR_MARGIN * QR_MODULE);
     let module = Size::new(QR_MODULE as u32, QR_MODULE as u32);
     for y in 0..qr::SIZE {
         for x in 0..qr::SIZE {
-            if qr::dark(x, y) {
+            if rows[y] >> (qr::SIZE - 1 - x) & 1 == 1 {
                 let at = origin + Point::new(x as i32 * QR_MODULE, y as i32 * QR_MODULE);
                 let _ = Rectangle::new(at, module).into_styled(PrimitiveStyle::with_fill(Rgb565::BLACK)).draw(fb);
             }
@@ -423,7 +428,7 @@ pub(crate) fn lines_with_widths() -> std::vec::Vec<(std::string::String, i32, i3
     // Right of the QR code.
     let beside_qr = 314 - QR_TEXT_X;
     add(&BODY_BOLD, QR_HEADING, beside_qr);
-    for line in QR_HELP.iter().chain([&qr::ADDRESS]) {
+    for line in QR_HELP.iter().chain([&qr::ADDRESS, &QR_HELP_WITH_CODE]) {
         add(&SMALL, line, beside_qr);
     }
     add(&SMALL, CHIME_TEST_HELP, phone_time(true).size.width as i32 - 20 - ARROW_ROOM);

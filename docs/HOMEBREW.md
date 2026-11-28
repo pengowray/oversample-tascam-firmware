@@ -2364,6 +2364,35 @@ B241 or an earlier build. All the checks in `tools/x8patch.py` pass on this file
 1. **Start and stop.** With Phone remote on and the phone page reloaded, do `Start recording` and `Stop recording` work as before?
 2. **Old phone page.** If a phone still has the old page cached, its commands should do nothing at all. Reload the page.
 
+## Step 61 test file: the Phone tab's QR code holds the phone code (built 2026-11-28, not yet installed)
+
+`work/patch67/#PortaX8_0292.203` (B292, SHA-256 `f6c5c93d…35ddf9d4`). This file is B291 (Step 60) plus one change.
+Install it in place of B291; the checks of Steps 50 to 60 still apply. All the checks in `tools/x8patch.py` pass.
+Nothing in this step has run on a unit, and no phone camera has read the new QR code from the X8's screen.
+
+- **QR code with the phone code.** While `Phone code` is on, the QR code on the SETTINGS, Phone tab holds
+  `HTTPS://REMOTE.OVERSAMPLE.COM/#x8-493817`, where the 6 digits are the code beside the switch. The phone page takes
+  the code from the address and keeps it, so the code does not have to be typed. The line beside the QR code then
+  reads `Scan to give the phone the code` ([screens/settings-phone-code.png](screens/settings-phone-code.png), from
+  the emulator). With `Phone code` off, the QR code and its lines are as before.
+- **Same size, less error correction.** The QR code is still 25 x 25 modules. With the code it uses error correction
+  level L (about 7% of the code can be misread) where the plain address uses level M (about 15%).
+- **How the X8 makes it.** The patch stores the modules for the code 000 000 and changes the 104 modules that depend
+  on the digits: 3 data bytes and the 10 Reed-Solomon bytes (`crates/bat-app/src/qr.rs`). Tests compare it with a QR
+  encoder for 136 codes and read it back from the drawn screen with a QR reader.
+- **The commands and their check are unchanged** (format version 2, [PHONE_REMOTE.md](PHONE_REMOTE.md)).
+
+**Memory.** Patch region free: 3,248 bytes (1,328 fewer than B291). DTCM free: 2,208 bytes (unchanged). No new stock
+hook site (header version 26, as in B290).
+
+**What to check.**
+
+1. **Scan with the code on.** Turn `Phone code` on and scan the QR code with a phone. Does the phone page open on its
+   Tascam X8 tab with the X8's 6 digits in its code field, and does a command from it work?
+2. **Scans easily.** Does the phone read the QR code about as quickly as with `Phone code` off? If it is slow or
+   fails, the lower error correction may be the cause.
+3. **Code off.** Turn `Phone code` off. Does the QR code open the page as before?
+
 ## Step 60 test file: PHONE TIME shows the X8 clock and its UTC offset; a reset clock chip has no offset (built 2026-11-28, not yet installed)
 
 `work/patch66/#PortaX8_0291.203` (B291, SHA-256 `7c42ef32…9fdfe973`). This file is B290 (Step 59) plus two changes.
