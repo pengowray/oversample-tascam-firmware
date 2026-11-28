@@ -84,7 +84,7 @@ pub(super) unsafe extern "C" fn power_off_save_hook(a: usize, b: usize, c: usize
         // X8 is powering off, so the power path that the RAM byte no longer matches does not matter.
         unsafe { ptr::write_volatile(stock::POWER_SOURCE, source) };
     }
-    super::file_times::save_zone();
+    super::clock::save_zone();
     // The bat app's settings go into spare bytes of the record, only here: the save sums the
     // record next, and with interrupts off no task can be part way through either. With no bat
     // screen opened since start-up they are the bytes from start-up, whatever a preset put there.

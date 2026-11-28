@@ -118,7 +118,7 @@ unsafe fn on_message(msg: usize, via: Via) {
         if let Some(on) = bat_app::saved_cells_on_weak_usb(&saved) {
             super::switches::set_cells_on_weak_usb(on);
         }
-        super::file_times::load_zone();
+        super::clock::load_zone();
     }
     count_call();
     if AUDIO_STATE.load(Relaxed) == AUDIO_INSTALLED {

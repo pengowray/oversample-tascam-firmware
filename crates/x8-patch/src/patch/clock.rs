@@ -11,6 +11,7 @@ use core::sync::atomic::{AtomicBool, AtomicI32, AtomicU32, Ordering::Acquire, Or
 
 use bat_app::{BatApp, ClockState, PhoneTime, Screen};
 use x8_patch::clock_record::{self, ClockReading, RECORD_BYTES};
+use x8_patch::entry_times;
 
 use super::state::BLOCKS;
 use super::{Slot, blocks_per_second, read_byte, stock, system_mode};
@@ -31,6 +32,8 @@ static SET_FROM_PHONE: AtomicBool = AtomicBool::new(false);
 static SET_TZ: AtomicI32 = AtomicI32::new(0);
 /// The patch has given task 4 the command that sets the clock, and task 4 has not run it yet.
 static OWN_SET: AtomicBool = AtomicBool::new(false);
+/// The saved zone has been read in this run, so power-off may write the zone back.
+static ZONE_LOADED: AtomicBool = AtomicBool::new(false);
 
 // The context running the app only.
 static STEP: AtomicU32 = AtomicU32::new(IDLE);
@@ -118,10 +121,26 @@ pub(super) fn zone() -> Option<i16> {
     SET_FROM_PHONE.load(Relaxed).then(|| SET_TZ.load(Relaxed) as i16)
 }
 
-/// At start-up: the zone the last power-off saved.
-pub(super) fn set_zone(minutes: Option<i16>) {
+/// At task 1's first message: the zone the last power-off saved in the settings record. A clock
+/// chip that lost power restarted at its default date, and the saved zone is not its zone.
+pub(super) fn load_zone() {
+    // SAFETY: spare bytes of the settings record, loaded at start-up, and a word the stock
+    // start-up wrote before the tasks started.
+    let (saved, chip_reset) =
+        unsafe { (ptr::read_volatile(stock::CLOCK_ZONE), ptr::read_volatile(stock::CLOCK_CHIP_RESET) != 0) };
+    let minutes = entry_times::zone_minutes(entry_times::zone_from_saved(saved)).filter(|_| !chip_reset);
     SET_TZ.store(minutes.unwrap_or(0).into(), Relaxed);
     SET_FROM_PHONE.store(minutes.is_some(), Relaxed);
+    ZONE_LOADED.store(true, Relaxed);
+}
+
+/// At power-off, with interrupts off, before the settings record is summed and saved. A run that
+/// never read the saved zone (power-off before task 1's first message, or update mode) leaves it.
+pub(super) fn save_zone() {
+    if ZONE_LOADED.load(Relaxed) {
+        // SAFETY: as above; nothing else runs.
+        unsafe { ptr::write_volatile(stock::CLOCK_ZONE, entry_times::saved_zone(entry_times::zone_byte(zone()))) };
+    }
 }
 
 /// Replaces the stock set-clock command's call that writes the date to the clock chip, the only

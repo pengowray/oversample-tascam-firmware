@@ -3,10 +3,10 @@
 //! even seconds and no offset, so Linux lists a take as if its local time were UTC.
 //!
 //! These hooks run in whichever task is using the card, from start-up and in every mode. They
-//! use only the statics here and the clock's zone.
+//! use only the statics here and the clock's zone, which `clock.rs` keeps, loads and saves.
 
 use core::ptr;
-use core::sync::atomic::{AtomicBool, AtomicU32, Ordering::Relaxed};
+use core::sync::atomic::{AtomicU32, Ordering::Relaxed};
 
 use x8_patch::entry_times::{self, ENTRY_BYTES, KEPT, MODIFIED, Stamp};
 
@@ -17,8 +17,6 @@ use super::stock;
 /// byte from here when the times match.
 static KEPT_TIME: AtomicU32 = AtomicU32::new(0);
 static KEPT_TEN_MS: AtomicU32 = AtomicU32::new(0);
-/// The saved zone has been read in this run, so power-off may write the zone back.
-static ZONE_LOADED: AtomicBool = AtomicBool::new(false);
 
 #[inline(never)]
 fn zone() -> u8 {
@@ -72,25 +70,4 @@ pub(super) unsafe extern "C" fn new_entry_hook(spare: usize, bytes: usize, _: us
     let entry = unsafe { &mut *((spare - 0x19) as *mut [u8; ENTRY_BYTES]) };
     entry_times::stamp(entry, &clock_now(), MODIFIED | entry_times::ACCESSED, zone());
     0
-}
-
-/// At task 1's first message: the zone the last power-off saved in the settings record.
-pub(super) fn load_zone() {
-    // SAFETY: spare bytes of the settings record, loaded at start-up.
-    let saved = unsafe { ptr::read_volatile(stock::CLOCK_ZONE) };
-    // SAFETY: a word the stock start-up wrote before the tasks started.
-    let chip_reset = unsafe { ptr::read_volatile(stock::CLOCK_CHIP_RESET) } != 0;
-    // A clock chip that lost power restarted at its default date: the saved zone is not its zone.
-    let zone = if chip_reset { 0 } else { entry_times::zone_from_saved(saved) };
-    super::clock::set_zone(entry_times::zone_minutes(zone));
-    ZONE_LOADED.store(true, Relaxed);
-}
-
-/// At power-off, with interrupts off, before the settings record is summed and saved. A run that
-/// never read the saved zone (power-off before task 1's first message, or update mode) leaves it.
-pub(super) fn save_zone() {
-    if ZONE_LOADED.load(Relaxed) {
-        // SAFETY: as above; nothing else runs.
-        unsafe { ptr::write_volatile(stock::CLOCK_ZONE, entry_times::saved_zone(zone())) };
-    }
 }

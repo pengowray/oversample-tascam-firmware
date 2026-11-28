@@ -2366,7 +2366,7 @@ B241 or an earlier build. All the checks in `tools/x8patch.py` pass on this file
 
 ## Step 60 test file: PHONE TIME shows the X8 clock and its UTC offset; a reset clock chip has no offset (built 2026-11-28, not yet installed)
 
-`work/patch66/#PortaX8_0291.203` (B291, SHA-256 `bdfffe34…aa174fee`). This file is B290 (Step 59) plus two changes.
+`work/patch66/#PortaX8_0291.203` (B291, SHA-256 `7c42ef32…f59fdfe9`). This file is B290 (Step 59) plus two changes.
 Install it in place of B290; the checks of Steps 50 to 59 still apply. All the checks in `tools/x8patch.py` pass.
 Nothing in this step has run on a unit.
 
@@ -2378,7 +2378,7 @@ Nothing in this step has run on a unit.
   0x81D65EF0, in `FUN_80dfd67a`), and the chip counts from its default date. The patch then starts with no offset,
   whatever the last power-off saved.
 
-**Memory.** Patch region free: 4,624 bytes (1,104 fewer than B290). DTCM free: 2,208 bytes (8 fewer). No new stock
+**Memory.** Patch region free: 4,576 bytes (1,152 fewer than B290). DTCM free: 2,208 bytes (8 fewer). No new stock
 hook site (header version 26, as in B290).
 
 **What to check.**
@@ -5068,7 +5068,7 @@ The 10 ms bytes (+0x14, +0x15) are 0 too. FAT32 (cards of 32 GB and under) has n
 
 Each writer checksums a copy of the sectors when volume + 0x4C is not 0, then stores the checksum in the real buffer. A h**The change.** Each time's 10 ms and UTC offset bytes are written when that time is written, and kept otherwise. The
 offset byte is 0x80 with the offset in 15-minute steps while the clock keeps a phone's local time, and 0 when not
-(`crates/x8-patch/src/entry_times.rs`, host tests; hooks in `patch/file_times.rs`).
+(`crates/x8-patch/src/entry_times.rs`, host tests; hooks in `patch/file_times.rs`; the zone is kept, loaded and saved in `patch/clock.rs`).
 
 1. `FUN_80e0fcec` is replaced at its entry by `stamp_hook`. It stamps the same times, and for each one also writes the
    10 ms byte (100 for an odd second) and the offset byte. With flag bit 3 the time comes from the file's record, which
