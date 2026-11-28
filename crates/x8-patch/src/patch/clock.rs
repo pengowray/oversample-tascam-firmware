@@ -257,4 +257,5 @@ pub(super) fn run_clock(app: &mut BatApp<'static>) {
         _ => {}
     }
     app.set_host_clock(x8_seconds_at(now));
+    app.set_host_zone(zone());
 }

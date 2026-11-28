@@ -524,6 +524,8 @@ fn the_age_and_the_date_read_as_they_should() {
     assert_eq!(chime_text::compared(-3 * 86_400, 3), "X8 clock 3 days behind phone. Chime read 3 s ago.");
     assert_eq!(chime_text::date(UNIX as i64 + 330 * 60, 330), "2026-10-26  UTC+05:30");
     assert_eq!(chime_text::date(UNIX as i64 - 210 * 60, -210), "2026-10-26  UTC-03:30");
+    assert_eq!(chime_text::x8_clock(1_794_173_449, Some(660)), "X8 clock: 2026-11-08 21:30:49 UTC+11:00");
+    assert_eq!(chime_text::x8_clock(1_794_173_449, None), "X8 clock: 2026-11-08 21:30:49, UTC offset not set");
 }
 
 /// A chime read on the phone time screen goes to the host once, with the phone's local time now and

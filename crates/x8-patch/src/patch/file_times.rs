@@ -78,7 +78,11 @@ pub(super) unsafe extern "C" fn new_entry_hook(spare: usize, bytes: usize, _: us
 pub(super) fn load_zone() {
     // SAFETY: spare bytes of the settings record, loaded at start-up.
     let saved = unsafe { ptr::read_volatile(stock::CLOCK_ZONE) };
-    super::clock::set_zone(entry_times::zone_minutes(entry_times::zone_from_saved(saved)));
+    // SAFETY: a word the stock start-up wrote before the tasks started.
+    let chip_reset = unsafe { ptr::read_volatile(stock::CLOCK_CHIP_RESET) } != 0;
+    // A clock chip that lost power restarted at its default date: the saved zone is not its zone.
+    let zone = if chip_reset { 0 } else { entry_times::zone_from_saved(saved) };
+    super::clock::set_zone(entry_times::zone_minutes(zone));
     ZONE_LOADED.store(true, Relaxed);
 }
 

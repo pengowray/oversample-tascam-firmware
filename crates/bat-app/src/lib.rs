@@ -725,6 +725,7 @@ pub struct BatApp<'a> {
     pause_refused_until: u64,
     /// The host's clock: local seconds since 1970 at an app sample.
     host_clock: Option<(i64, u64)>,
+    host_zone: Option<i16>,
     clock_state: ClockState,
     guano_available: bool,
     guano: bool,
@@ -907,6 +908,7 @@ impl<'a> BatApp<'a> {
             field!((*this).modes_skipped).write(false);
             field!((*this).pause_refused_until).write(0);
             field!((*this).host_clock).write(None);
+            field!((*this).host_zone).write(None);
             field!((*this).clock_state).write(ClockState::Idle);
             field!((*this).guano_available).write(false);
             field!((*this).guano).write(true);
@@ -1626,6 +1628,18 @@ impl<'a> BatApp<'a> {
         self.host_clock = local_seconds.map(|s| (s, self.samples));
     }
 
+    /// The UTC offset, in minutes, of the local time the host's clock keeps, when the host knows
+    /// it: the offset of the phone that last set the clock.
+    pub fn set_host_zone(&mut self, minutes: Option<i16>) {
+        self.host_zone = minutes;
+    }
+
+    /// The host's clock now and its UTC offset, for the clock screen.
+    pub(crate) fn host_clock_now(&self) -> Option<(i64, Option<i16>)> {
+        let (host, at) = self.host_clock?;
+        Some((host + (self.samples.saturating_sub(at) as f32 / self.sample_rate) as i64, self.host_zone))
+    }
+
     /// What the host's clock is doing, for the clock screen. The outcome of a phone's clock command
     /// also beeps and shows on the main screen.
     pub fn set_clock_state(&mut self, state: ClockState) {
@@ -1840,8 +1854,7 @@ impl<'a> BatApp<'a> {
     /// The phone's time now and the host's, as local seconds since 1970, once both are known.
     pub(crate) fn clocks_now(&self) -> Option<(i64, i64)> {
         let phone = self.phone?.local_ms_at(self.samples, self.sample_rate as u32).div_euclid(1000);
-        let (host, at) = self.host_clock?;
-        Some((phone, host + (self.samples.saturating_sub(at) as f32 / self.sample_rate) as i64))
+        Some((phone, self.host_clock_now()?.0))
     }
 
     /// The readings the decoders gave this chunk, kept and queued for the host, and a listening

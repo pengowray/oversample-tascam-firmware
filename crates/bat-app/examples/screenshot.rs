@@ -267,6 +267,13 @@ fn main() {
     {
         app.set_host_clock(Some(time.local_ms.div_euclid(1000) - behind.parse::<i64>().unwrap()));
     }
+    // X8_NOW=1: the X8's clock is known with no chime read; X8_ZONE=660 gives it a UTC offset in minutes.
+    if std::env::var("X8_NOW").is_ok() {
+        app.set_host_clock(Some(1_794_173_449));
+    }
+    if let Ok(zone) = std::env::var("X8_ZONE") {
+        app.set_host_zone(zone.parse().ok());
+    }
     // PAUSE_REFUSED=1: the main screen's notice that REC did not pause the take.
     if std::env::var("PAUSE_REFUSED").is_ok() {
         app.pause_refused();

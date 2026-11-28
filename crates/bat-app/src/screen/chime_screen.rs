@@ -4,6 +4,7 @@
 use core::fmt;
 
 use chime::UnreadableReason;
+use chime::format::LocalTime;
 use embedded_graphics::prelude::*;
 use embedded_graphics::primitives::Rectangle;
 use u8g2_fonts::{FontRenderer, fonts};
@@ -117,13 +118,41 @@ impl fmt::Display for Location {
     }
 }
 
-/// The set button's line: what the X8's clock is doing.
-struct StateLine(ClockState);
+/// A UTC offset in minutes, as `UTC+11:00`.
+struct Offset(i16);
+
+impl fmt::Display for Offset {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let size = self.0.unsigned_abs();
+        write!(f, "UTC{}{:02}:{:02}", if self.0 < 0 { '-' } else { '+' }, size / 60, size % 60)
+    }
+}
+
+/// The X8's clock: its date and time, as local seconds since 1970, and its UTC offset when a
+/// phone has set the clock.
+struct X8Clock(i64, Option<i16>);
+
+impl fmt::Display for X8Clock {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let t = LocalTime::from_epoch_seconds(self.0);
+        write!(f, "X8 clock: {:04}-{:02}-{:02} {:02}:{:02}:{:02}", t.year, t.month, t.day, t.hour, t.minute, t.second)?;
+        match self.1 {
+            Some(minutes) => write!(f, " {}", Offset(minutes)),
+            None => f.write_str(", UTC offset not set"),
+        }
+    }
+}
+
+/// The set button's line: what the X8's clock is doing, or with nothing under way, what it reads.
+struct StateLine(ClockState, Option<(i64, Option<i16>)>);
 
 impl fmt::Display for StateLine {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self.0 {
-            ClockState::Idle => Ok(()),
+            ClockState::Idle => match self.1 {
+                Some((seconds, zone)) => X8Clock(seconds, zone).fmt(f),
+                None => Ok(()),
+            },
             ClockState::Setting => f.write_str(STATE_SETTING),
             ClockState::AfterTake => f.write_str(STATE_AFTER_TAKE),
             ClockState::Failed => f.write_str(STATE_FAILED),
@@ -141,9 +170,7 @@ pub(super) struct DateLine(pub(super) ChimeClock);
 impl fmt::Display for DateLine {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         let ChimeClock { local, timezone_minutes, .. } = self.0;
-        let size = timezone_minutes.unsigned_abs();
-        let sign = if timezone_minutes < 0 { '-' } else { '+' };
-        write!(f, "{:04}-{:02}-{:02}  UTC{sign}{:02}:{:02}", local.year, local.month, local.day, size / 60, size % 60)
+        write!(f, "{:04}-{:02}-{:02}  {}", local.year, local.month, local.day, Offset(timezone_minutes))
     }
 }
 
@@ -203,7 +230,8 @@ fn buttons(app: &BatApp, fb: Fb) {
     let colour = if ready { TEXT } else { TEXT_MUTED };
     text(fb, &BODY_BOLD, SET_LABEL, CLOCK_SET.center().x, CLOCK_SET.top_left.y + 28, CENTER, colour);
     let colour = if app.clock_state() == ClockState::Failed { METER_YELLOW } else { TEXT_MUTED };
-    text(fb, &SMALL, format_args!("{}", StateLine(app.clock_state())), 16, STATE_Y, LEFT, colour);
+    let line = StateLine(app.clock_state(), app.host_clock_now());
+    text(fb, &SMALL, format_args!("{line}"), 16, STATE_Y, LEFT, colour);
 }
 
 pub(super) fn draw(app: &BatApp, fb: Fb) {
@@ -312,7 +340,10 @@ pub(crate) fn lines_with_widths() -> std::vec::Vec<(std::string::String, i32, i3
     add(&SMALL, &Location(-89.99999, -179.99999).to_string(), full);
     add(&SMALL, LOCATION_NONE, full);
     for state in [ClockState::Setting, ClockState::AfterTake, ClockState::Failed, ClockState::Set(86_399)] {
-        add(&SMALL, &StateLine(state).to_string(), full);
+        add(&SMALL, &StateLine(state, None).to_string(), full);
+    }
+    for zone in [None, Some(-570)] {
+        add(&SMALL, &X8Clock(1_794_173_449, zone).to_string(), full);
     }
     add(&BODY_BOLD, SET_LABEL, CLOCK_SET.size.width as i32 - 12);
     for label in ROW_LABELS {
@@ -346,7 +377,11 @@ pub(crate) mod chime_text {
 
     use chime::format::LocalTime;
 
-    use super::{Age, ChimeClock, DateLine};
+    use super::{Age, ChimeClock, DateLine, X8Clock};
+
+    pub(crate) fn x8_clock(local_seconds: i64, zone: Option<i16>) -> String {
+        X8Clock(local_seconds, zone).to_string()
+    }
 
     pub(crate) fn age(seconds: u64) -> String {
         Age { x8_minus_phone: None, read_s_ago: seconds }.to_string()

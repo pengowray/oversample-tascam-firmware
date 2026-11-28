@@ -2364,6 +2364,33 @@ B241 or an earlier build. All the checks in `tools/x8patch.py` pass on this file
 1. **Start and stop.** With Phone remote on and the phone page reloaded, do `Start recording` and `Stop recording` work as before?
 2. **Old phone page.** If a phone still has the old page cached, its commands should do nothing at all. Reload the page.
 
+## Step 60 test file: PHONE TIME shows the X8 clock and its UTC offset; a reset clock chip has no offset (built 2026-11-28, not yet installed)
+
+`work/patch66/#PortaX8_0291.203` (B291, SHA-256 `bdfffe34…aa174fee`). This file is B290 (Step 59) plus two changes.
+Install it in place of B290; the checks of Steps 50 to 59 still apply. All the checks in `tools/x8patch.py` pass.
+Nothing in this step has run on a unit.
+
+- **PHONE TIME.** The line above the buttons shows the X8's clock when no clock set is under way:
+  `X8 clock: 2026-11-08 21:30:49 UTC+11:00`, or `X8 clock: 2026-11-08 21:30:49, UTC offset not set` when no phone has
+  set the clock since it was last set by hand. It shows with no chime read, so the offset kept from before a restart
+  can be checked ([screens/phone-time.png](screens/phone-time.png), from the emulator).
+- **Clock chip reset.** When the clock chip lost power, the stock start-up resets it and sets a flag (the word at
+  0x81D65EF0, in `FUN_80dfd67a`), and the chip counts from its default date. The patch then starts with no offset,
+  whatever the last power-off saved.
+
+**Memory.** Patch region free: 4,624 bytes (1,104 fewer than B290). DTCM free: 2,208 bytes (8 fewer). No new stock
+hook site (header version 26, as in B290).
+
+**What to check.**
+
+1. **Kept offset.** After a chime has set the clock, turn the X8 off and on and open PHONE TIME from a bat tile's
+   settings. Before any chime, does the line above the buttons show the X8's date and time with the phone's offset?
+2. **Set by hand.** Set the time on the X8's date and time screen and open PHONE TIME. Does the line end in
+   `UTC offset not set`?
+3. **After a set.** Press `Set X8 clock` after a chime. Does the line say `X8 clock set to …`, as before?
+4. **Chip reset.** If the clock ever restarts at its default date (the cells and USB both removed for long enough),
+   does the line end in `UTC offset not set`, and does a take have offset bytes 0x00?
+
 ## Step 59 test file: exFAT file times with the clock's UTC offset, and to the second (built 2026-11-28, not yet installed)
 
 `work/patch65/#PortaX8_0290.203` (B290, SHA-256 `5e4eca11…069f20fb`). This file is B289 (Step 58) plus
@@ -5067,11 +5094,14 @@ the zone of the time typed there is not known, so the patch forgets the zone. GU
 folder, `FUN_80e0df08`) is reached from a function that first checks the volume type byte (volume + 0x14 is `@` for
 exFAT) and calls a different function for FAT.
 
+**A reset clock chip (B291).** At start-up `FUN_80dfd67a` reads the chip's status and, when the power-on flag is set,
+resets the chip and stores 1 in the word at 0x81D65EF0. Task 1's first message reads that word, and with it set the
+patch starts with no zone.
+
 **Not covered.** FAT32 cards have no offset field. Power-off writes the zone only in a run that read it, so update mode
 and a power-off before task 1's first message leave the saved zone alone. After a clock set by hand, a loss of power with
 no clean power-off leaves the old zone saved, and it comes back at the next start. `FUN_80dfdbcc`, which sets a given
-modified time, leaves the 10 ms byte, so that time can read 1 s late. A clock chip that lost power restarts at its default date, and the saved zone is still
-applied to it. A zone that is not a whole number of 15-minute steps is written as no offset.
+modified time, leaves the 10 ms byte, so that time can read 1 s late. A zone that is not a whole number of 15-minute steps is written as no offset.
 
 ## Firmware map (V2.03, in progress)
 

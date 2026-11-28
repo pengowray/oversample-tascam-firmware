@@ -312,6 +312,9 @@ pub const TASK_4_COMMAND: usize = 0x80dc_9309;
 pub const TASK_4_BUSY: usize = 0x80dc_9357;
 pub const COMMAND_READ_CLOCK: i32 = 75;
 pub const COMMAND_SET_CLOCK: i32 = 76;
+/// 1 once the start-up `FUN_80dfd67a` has found the clock chip's power-on flag set and reset the
+/// chip, which then counts from its default date. 0 otherwise.
+pub const CLOCK_CHIP_RESET: *const u32 = 0x81d6_5ef0 as *const u32;
 /// `FUN_80dfd8a6(record)`: writes a clock record's date to the clock chip. Command 76 is its only
 /// caller (Thumb address).
 pub const SET_CLOCK_DATE: usize = 0x80df_d8a7;
