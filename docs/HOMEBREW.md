@@ -2366,7 +2366,7 @@ B241 or an earlier build. All the checks in `tools/x8patch.py` pass on this file
 
 ## Step 60 test file: PHONE TIME shows the X8 clock and its UTC offset; a reset clock chip has no offset (built 2026-11-28, not yet installed)
 
-`work/patch66/#PortaX8_0291.203` (B291, SHA-256 `7c42ef32…f59fdfe9`). This file is B290 (Step 59) plus two changes.
+`work/patch66/#PortaX8_0291.203` (B291, SHA-256 `7c42ef32…9fdfe973`). This file is B290 (Step 59) plus two changes.
 Install it in place of B290; the checks of Steps 50 to 59 still apply. All the checks in `tools/x8patch.py` pass.
 Nothing in this step has run on a unit.
 
