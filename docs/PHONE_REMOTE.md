@@ -156,6 +156,8 @@ GUANO metadata as `Loc Accuracy`, in metres, after `Loc Position`.
 - **With `Phone code` on,** the layout with no check is refused as a version 1 command is, and
   the layout with a check is treated as version 2 is. On PHONE TIME, a set clock command in
   either layout sets the clock.
+- **PHONE TIME shows it** from B294, at the end of the location line: `accuracy 10 m`, or
+  `accuracy over 10 km`.
 - **A later location replaces the accuracy.** A take's `Loc Accuracy` belongs to the same chime
   as its `Loc Position`. When that chime gave no accuracy, the take has none.
 

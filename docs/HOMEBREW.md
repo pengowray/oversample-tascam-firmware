@@ -2364,6 +2364,27 @@ B241 or an earlier build. All the checks in `tools/x8patch.py` pass on this file
 1. **Start and stop.** With Phone remote on and the phone page reloaded, do `Start recording` and `Stop recording` work as before?
 2. **Old phone page.** If a phone still has the old page cached, its commands should do nothing at all. Reload the page.
 
+## Step 63 test file: PHONE TIME shows the location's accuracy (built 2026-11-28, not yet installed)
+
+`work/patch69/#PortaX8_0294.203` (B294, SHA-256 `edb63082…ca060a46`). This file is B293 (Step 62) plus one change.
+Install it in place of B293; the checks of Steps 50 to 62 still apply. All the checks in `tools/x8patch.py` pass.
+Nothing in this step has run on a unit.
+
+- **PHONE TIME.** When the latest chime's phone command gave the accuracy of its location, the location line ends
+  with it: `Location: -36.12346, 146.00001, accuracy 10 m`, or `accuracy over 10 km`
+  ([screens/phone-time-accuracy.png](screens/phone-time-accuracy.png), from the emulator, which heard a chime made
+  by the phone page's encoder). So the accuracy can be checked without reading a take's metadata. The figure is the
+  largest value of the accuracy's step, as in `Loc Accuracy`.
+
+**Memory.** Patch region free: 3,032 bytes (192 fewer than B293). DTCM free: 2,176 bytes (unchanged).
+
+**What to check.**
+
+1. **Accuracy shown.** Open PHONE TIME. On the phone page, press `Use this device's location`, tick
+   `Send accuracy to the X8` and press `Set X8 clock`. Does the location line end with `accuracy` and a distance at
+   or above half the page's `Accuracy ±` figure?
+2. **No accuracy.** Untick the box and send again. Does the line end after the longitude?
+
 ## Step 62 test file: a phone command can give its location's accuracy; the code notices name the QR code (built 2026-11-28, not yet installed)
 
 `work/patch68/#PortaX8_0293.203` (B293, SHA-256 `f7c976cd…89ee6137`). This file is B292 (Step 61) plus three changes.

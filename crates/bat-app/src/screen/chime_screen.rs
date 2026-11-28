@@ -110,11 +110,17 @@ impl fmt::Display for Age {
 }
 
 /// The location from the latest chime, in degrees: 5 decimals is about 1 m, the chime's precision.
-struct Location(f64, f64);
+/// Then its accuracy in metres, when the chime's phone command gave one: `u16::MAX` is over 10 km.
+struct Location(f64, f64, Option<u16>);
 
 impl fmt::Display for Location {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "Location: {}, {}", Fixed::new(self.0, 5), Fixed::new(self.1, 5))
+        write!(f, "Location: {}, {}", Fixed::new(self.0, 5), Fixed::new(self.1, 5))?;
+        match self.2 {
+            None => Ok(()),
+            Some(u16::MAX) => f.write_str(", accuracy over 10 km"),
+            Some(metres) => write!(f, ", accuracy {metres} m"),
+        }
     }
 }
 
@@ -257,11 +263,11 @@ pub(super) fn draw(app: &BatApp, fb: Fb) {
             text(fb, &VALUE, format_args!("{}", DateLine(clock)), 160, DATE_Y, CENTER, TEXT);
             let x8_minus_phone = app.clocks_now().map(|(phone, x8)| x8 - phone);
             text(fb, &SMALL, format_args!("{}", Age { x8_minus_phone, read_s_ago }), 160, AGE_Y, CENTER, TEXT_MUTED);
-            match app.phone.and_then(|reading| reading.location) {
-                Some((latitude, longitude)) => text(
+            match app.phone.and_then(|reading| reading.location.map(|location| (location, reading.accuracy_m))) {
+                Some(((latitude, longitude), accuracy_m)) => text(
                     fb,
                     &SMALL,
-                    format_args!("{}", Location(latitude, longitude)),
+                    format_args!("{}", Location(latitude, longitude, accuracy_m)),
                     160,
                     LOCATION_Y,
                     CENTER,
@@ -337,7 +343,9 @@ pub(crate) fn lines_with_widths() -> std::vec::Vec<(std::string::String, i32, i3
     for x8_minus_phone in [None, Some(0), Some(-59), Some(-3599), Some(-172_799), Some(999 * 86_400)] {
         add(&SMALL, &Age { x8_minus_phone, read_s_ago: 3599 }.to_string(), full);
     }
-    add(&SMALL, &Location(-89.99999, -179.99999).to_string(), full);
+    for accuracy_m in [None, Some(10_000), Some(u16::MAX)] {
+        add(&SMALL, &Location(-89.99999, -179.99999, accuracy_m).to_string(), full);
+    }
     add(&SMALL, LOCATION_NONE, full);
     for state in [ClockState::Setting, ClockState::AfterTake, ClockState::Failed, ClockState::Set(86_399)] {
         add(&SMALL, &StateLine(state, None).to_string(), full);
