@@ -326,7 +326,7 @@ mod tests {
                 file_name: Some("260315_0065.wav"),
                 phone_now: None,
                 utc_offset_minutes: None,
-                location_e6: Some((-36_123_456, 146_000_007)),
+                location_e6: Some((-36_123_456, 146_000_007, 0)),
                 pauses: None,
                 xri: crate::take_guano::xri_in_header(&f[..5548]),
                 inputs: None,

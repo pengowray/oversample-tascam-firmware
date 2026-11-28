@@ -70,10 +70,13 @@ pub(super) const CLOCK_FROM_REMOTE_STATE: [&str; 2] =
 pub(super) const CODE_NAME: &str = "Phone code";
 /// The on line is short, because the code is at its right.
 pub(super) const CODE_STATE: [&str; 2] = ["The X8 obeys commands from any phone", "Phone commands need a code"];
-/// On the main screen when a command was refused. The code is the line after these, grouped
-/// as on the Phone page.
-pub(super) const CODE_NEEDED_LINES: [&str; 2] = ["Phone page needs the X8's code.", "Type it, then send again:"];
-pub(super) const CODE_WRONG_LINES: [&str; 2] = ["Phone page has a different code.", "Type this code, then send again:"];
+/// On the main screen when a command was refused: what is wrong, then [`CODE_FIX_LINES`], then
+/// the code, grouped as on the Phone page.
+pub(super) const CODE_NEEDED_LINE: &str = "Phone page needs the X8's code.";
+pub(super) const CODE_WRONG_LINE: &str = "Phone page has a different code.";
+/// The QR code holds the code while the code is required (`qr.rs`).
+pub(super) const CODE_FIX_LINES: [&str; 2] =
+    ["Scan the QR code on the Phone tab,", "or type this code, then send again:"];
 pub(super) const CODE_OLD_LINES: [&str; 2] = ["Phone command has an old time.", "Send again. Check phone's clock."];
 pub(super) const CPU_TEST_NAME: &str = "CPU test";
 pub(super) const CPU_TEST_HELP: [&str; 2] =
@@ -336,7 +339,7 @@ fn remote_panel(app: &BatApp, fb: Fb) {
     );
     match remote.last {
         Some(last) => {
-            let name = command_name(last.message.known());
+            let name = command_name(last.message.command());
             let seconds = app.samples.saturating_sub(last.read_at) / app.sample_rate as u64;
             let line = format_args!("Last: {name}, {seconds} s ago, carrier {} dBFS", Fixed::new(last.level_dbfs, 0));
             text(fb, &SMALL, line, x, y + 114, LEFT, TEXT);
@@ -364,13 +367,14 @@ fn grouped(code: &Grouped) -> &str {
 /// A command's outcome, in the corner of the waterfall. A refusal over the code gives the code
 /// to type into the phone page.
 pub(super) fn result_notice(app: &BatApp, fb: Fb, result: RemoteResult) {
-    let [first, second] = match result {
-        RemoteResult::CodeNeeded => CODE_NEEDED_LINES,
-        RemoteResult::CodeWrong => CODE_WRONG_LINES,
+    let first = match result {
+        RemoteResult::CodeNeeded => CODE_NEEDED_LINE,
+        RemoteResult::CodeWrong => CODE_WRONG_LINE,
         _ => return corner_notice_lines(fb, result_lines(result)),
     };
+    let [second, third] = CODE_FIX_LINES;
     let code = Grouped::new(&app.remote.code.unwrap_or(*b"------"));
-    corner_notice_lines(fb, &[first, second, grouped(&code)]);
+    corner_notice_lines(fb, &[first, second, third, grouped(&code)]);
 }
 
 /// A phone remote message from a newer phone page than this build reads.
@@ -441,7 +445,7 @@ pub(crate) fn lines_with_widths() -> std::vec::Vec<(std::string::String, i32, i3
         add(&SMALL, line, 240);
     }
     add(&BODY, CODE_NAME, PHONE_CODE_RIGHT - code_width - 8 - 16);
-    for line in CODE_NEEDED_LINES.iter().chain(&CODE_WRONG_LINES) {
+    for line in [CODE_NEEDED_LINE, CODE_WRONG_LINE].iter().chain(&CODE_FIX_LINES) {
         add(&BODY, line, crate::layout::WF_W as i32 - 20);
     }
     let states =

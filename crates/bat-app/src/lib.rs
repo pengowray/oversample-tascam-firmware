@@ -1618,6 +1618,7 @@ impl<'a> BatApp<'a> {
             local_ms: reading.local_ms_at(self.samples, self.sample_rate as u32),
             timezone_minutes: reading.timezone_minutes,
             location: reading.location,
+            location_accuracy_m: reading.accuracy_m,
             set_clock,
         })
     }

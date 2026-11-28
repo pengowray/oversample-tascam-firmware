@@ -21,8 +21,9 @@ pub struct Recorder<'a> {
     /// the clock keeps the phone's time.
     pub utc_offset_minutes: Option<i16>,
     /// The phone's location from a chime, in millionths of a degree (latitude, longitude), when
-    /// recent enough for this take.
-    pub location_e6: Option<(i32, i32)>,
+    /// recent enough for this take, and its accuracy in metres: 0 when the chime gave none, and
+    /// `u16::MAX` when it is over 10 km.
+    pub location_e6: Option<(i32, i32, u16)>,
     /// For a take from a bat tile: how many times it was paused, and for how long in all, in ms.
     pub pauses: Option<(u32, u32)>,
     /// The XRI text the X8 has just written in the file's header (the `bext` chunk's
@@ -195,8 +196,15 @@ pub fn write_chunk(header: &Header, recorder: &Recorder, out: &mut [u8]) -> Opti
     if let Some(name) = recorder.file_name {
         chunk.field("Original Filename", name);
     }
-    if let Some((latitude, longitude)) = recorder.location_e6 {
+    if let Some((latitude, longitude, accuracy_m)) = recorder.location_e6 {
         chunk.field("Loc Position", format_args!("{} {}", Degrees(latitude), Degrees(longitude)));
+        // GUANO's field is a number, so an accuracy that is only known to be over 10 km goes in
+        // the bat patch's own field.
+        match accuracy_m {
+            0 => {}
+            u16::MAX => _ = chunk.field("X8Bat|Loc Accuracy Over", 10_000),
+            _ => _ = chunk.field("Loc Accuracy", accuracy_m),
+        }
     }
     // The bat patch's own fields, in its namespace after the standard ones. A take with no pauses
     // says so, since that is what tells a reader the audio has no gaps.
@@ -311,9 +319,17 @@ mod tests {
 
     #[test]
     fn a_recent_location_goes_in_and_log_lines_read_as_csv() {
-        let recorder = Recorder { location_e6: Some((-36_123_456, 146_000_007)), ..RECORDER };
+        let recorder = Recorder { location_e6: Some((-36_123_456, 146_000_007, 0)), ..RECORDER };
         let t = text(&header(192_000 * 8, 8, b"2026-11-06", b"19:08:08"), &recorder);
         assert!(t.contains("Loc Position: -36.123456 146.000007\n"), "{t}");
+        assert!(!t.contains("Loc Accuracy"), "{t}");
+        let recorder = Recorder { location_e6: Some((-36_123_456, 146_000_007, 10)), ..RECORDER };
+        let t = text(&header(192_000 * 8, 8, b"2026-11-06", b"19:08:08"), &recorder);
+        assert!(t.contains("Loc Position: -36.123456 146.000007\nLoc Accuracy: 10\n"), "{t}");
+        let recorder = Recorder { location_e6: Some((-36_123_456, 146_000_007, u16::MAX)), ..RECORDER };
+        let t = text(&header(192_000 * 8, 8, b"2026-11-06", b"19:08:08"), &recorder);
+        assert!(t.contains("Loc Position: -36.123456 146.000007\nX8Bat|Loc Accuracy Over: 10000\n"), "{t}");
+        assert!(!t.contains("\nLoc Accuracy:"), "{t}");
         let line = LogLine { local_seconds: 1_794_173_449, utc_offset_minutes: 660, location_e6: (-500_000, 0) };
         assert_eq!(std::format!("{line}"), "2026-11-08T21:30:49+11:00,-0.500000,0.000000\n");
     }
@@ -429,7 +445,7 @@ INPUT GAIN=5:HIGH,6:HIGH;LEVEL=5:70,6:70;AUTO_LEVEL=5:OFF,6:OFF;,";
             file_name: Some("261106_0090F_5-6.wav"),
             phone_now: Some(1_793_995_808),
             utc_offset_minutes: Some(-210),
-            location_e6: Some((-36_123_456, -146_000_007)),
+            location_e6: Some((-36_123_456, -146_000_007, 10_000)),
             pauses: Some((u32::MAX, u32::MAX)),
             xri: Some(xri),
             inputs: Some(Inputs { phantom: [1; 4], mic_trim: [0, 0], ..INPUTS }),

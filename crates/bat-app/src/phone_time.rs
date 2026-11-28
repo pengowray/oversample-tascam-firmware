@@ -15,6 +15,9 @@ pub(crate) struct Reading {
     /// The app's sample where the decoder finished the chime.
     pub(crate) end_sample: u64,
     pub(crate) location: Option<(f64, f64)>,
+    /// How accurate the location is, in metres, when the chime's phone command says: `u16::MAX`
+    /// for over 10 km.
+    pub(crate) accuracy_m: Option<u16>,
 }
 
 impl Reading {
@@ -25,6 +28,7 @@ impl Reading {
             start_sample,
             end_sample,
             location: message.latitude_longitude(),
+            accuracy_m: message.remote().and_then(|remote| remote.accuracy_m()),
         }
     }
 
@@ -44,6 +48,9 @@ pub struct PhoneTime {
     pub timezone_minutes: i16,
     /// Latitude and longitude in degrees, when the chime carried them.
     pub location: Option<(f64, f64)>,
+    /// The location's accuracy in metres (the radius that 68% of readings are within), when the
+    /// chime's phone command gave it: `u16::MAX` for over 10 km.
+    pub location_accuracy_m: Option<u16>,
     /// Set the host's clock from it: the clock screen's button was pressed, or a phone remote
     /// chime was read with the setting for that on.
     pub set_clock: bool,

@@ -1,4 +1,4 @@
-//! The phone's location from chimes: kept for a take's GUANO `Loc Position`, and logged to
+//! The phone's location from chimes: kept for a take's GUANO `Loc Position` and `Loc Accuracy`, and logged to
 //! `BAT_LOCATIONS.CSV` beside the takes (docs/HOMEBREW.md, "Setting the clock").
 //!
 //! The context running the app adds locations; the GUANO hook (task 4, the recorder's own task)
@@ -23,6 +23,8 @@ static SEQ: AtomicU32 = AtomicU32::new(0);
 static LATITUDE_E6: AtomicI32 = AtomicI32::new(0);
 static LONGITUDE_E6: AtomicI32 = AtomicI32::new(0);
 static READ_AT: AtomicU32 = AtomicU32::new(0);
+/// The location's accuracy in metres: 0 when its chime gave none, `u16::MAX` when over 10 km.
+static ACCURACY_M: AtomicU32 = AtomicU32::new(0);
 /// The block count when the take in progress started (set by `open_take_hook`).
 pub(super) static TAKE_STARTED: AtomicU32 = AtomicU32::new(0);
 /// The log has not been written for the take in progress yet.
@@ -45,6 +47,7 @@ pub(super) fn keep(time: &PhoneTime) {
     SEQ.fetch_add(1, Release);
     LATITUDE_E6.store(latitude, Relaxed);
     LONGITUDE_E6.store(longitude, Relaxed);
+    ACCURACY_M.store(time.location_accuracy_m.unwrap_or(0).into(), Relaxed);
     READ_AT.store(BLOCKS.load(Relaxed), Relaxed);
     SEQ.fetch_add(1, Release);
     let added = ADDED.load(Relaxed);
@@ -59,15 +62,16 @@ pub(super) fn keep(time: &PhoneTime) {
     ADDED.store(added.wrapping_add(1), Release);
 }
 
-/// The location for the take whose files are closing: one read during the take, or up to
-/// `RECENT_S` before it started.
-pub(super) fn for_take() -> Option<(i32, i32)> {
+/// The location for the take whose files are closing, and its accuracy in metres (0 when its
+/// chime gave none, `u16::MAX` when over 10 km): one read during the take, or up to `RECENT_S` before it started.
+pub(super) fn for_take() -> Option<(i32, i32, u16)> {
     loop {
         let seq = SEQ.load(Acquire);
         if seq == 0 {
             return None;
         }
         let (latitude, longitude, at) = (LATITUDE_E6.load(Relaxed), LONGITUDE_E6.load(Relaxed), READ_AT.load(Relaxed));
+        let accuracy = ACCURACY_M.load(Relaxed) as u16;
         if !seq.is_multiple_of(2) || SEQ.load(Acquire) != seq {
             continue;
         }
@@ -77,7 +81,7 @@ pub(super) fn for_take() -> Option<(i32, i32)> {
         let since_read = now.wrapping_sub(at);
         let since_start = now.wrapping_sub(started);
         let recent = since_read <= since_start || since_read - since_start <= RECENT_S * blocks_per_second();
-        return recent.then_some((latitude, longitude));
+        return recent.then_some((latitude, longitude, accuracy));
     }
 }
 

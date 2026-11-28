@@ -2364,6 +2364,42 @@ B241 or an earlier build. All the checks in `tools/x8patch.py` pass on this file
 1. **Start and stop.** With Phone remote on and the phone page reloaded, do `Start recording` and `Stop recording` work as before?
 2. **Old phone page.** If a phone still has the old page cached, its commands should do nothing at all. Reload the page.
 
+## Step 62 test file: a phone command can give its location's accuracy; the code notices name the QR code (built 2026-11-28, not yet installed)
+
+`work/patch68/#PortaX8_0293.203` (B293, SHA-256 `f7c976cd…89ee6137`). This file is B292 (Step 61) plus three changes.
+Install it in place of B292; the checks of Steps 50 to 61 still apply. All the checks in `tools/x8patch.py` pass.
+Nothing in this step has run on a unit.
+
+- **Location accuracy.** A phone command can say how accurate its chime's location is, in two more layouts of the
+  deployment ID ([PHONE_REMOTE.md](PHONE_REMOTE.md), "Location accuracy"). A take then has `Loc Accuracy: 10` after
+  `Loc Position` in its GUANO metadata: the accuracy in metres, as the largest value of one of 14 steps from 3 m to
+  10 km. For an accuracy over 10 km the take has `X8Bat|Loc Accuracy Over: 10000` in its place. The phone page sends
+  these layouts only with its `Send accuracy to the X8` box ticked, which is off by default. `BAT_LOCATIONS.CSV` is
+  unchanged.
+- **Code notices.** When a command is refused over the phone code, the notice on the main screen is
+  `Phone page needs the X8's code.` or `Phone page has a different code.`, then `Scan the QR code on the Phone tab,`
+  `or type this code, then send again:` and the code
+  ([screens/remote-code-needed.png](screens/remote-code-needed.png), from the emulator).
+- **Last command.** The Phone tab's `Last:` line names a command sent with a code. Before, it read
+  `Unknown command` for every command that was not version 1.
+
+The chime decoder is at Oversample commit `54291d79`.
+
+**Memory.** Patch region free: 3,224 bytes (24 fewer than B292). DTCM free: 2,176 bytes (32 fewer). ITCM code:
+84,704 bytes (56 more). No new stock hook site (header version 26, as in B290).
+
+**What to check.**
+
+1. **Accuracy in a take.** On the phone page, press `Use this device's location`, tick `Send accuracy to the X8`,
+   and send Start recording and then Stop recording. Does the take's GUANO metadata have `Loc Accuracy` after
+   `Loc Position`, with a value at or above half the page's `Accuracy ±` figure?
+2. **Without the box.** Untick `Send accuracy to the X8` and record again. Does the take have `Loc Position` and no
+   `Loc Accuracy`?
+3. **Code notice.** With `Phone code` on, send a command from a phone page with no code. Does the notice name the
+   QR code and show the code?
+4. **Older builds.** A build before B293 that hears a command with an accuracy should play one low note and show
+   `Unknown phone command.`
+
 ## Step 61 test file: the Phone tab's QR code holds the phone code (built 2026-11-28, not yet installed)
 
 `work/patch67/#PortaX8_0292.203` (B292, SHA-256 `f6c5c93d…35ddf9d4`). This file is B291 (Step 60) plus one change.

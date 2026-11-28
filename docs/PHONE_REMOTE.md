@@ -8,7 +8,8 @@ and 2. Builds from B249 read version 1: start and stop are in every version 1 bu
 listening mode are in B257 and later. Builds from B273 also read version 2, which adds a check made
 from a 6-digit code that the X8 shows. With their `Phone code` switch on, they act only on
 version 2 commands with the right check (see [Phone code](#phone-code)); the switch is off by
-default. Builds B239 to B248 read an earlier layout, `BATXREC`
+default. Builds from B293 also read two layouts that give the accuracy of the chime's location
+(see [Location accuracy](#location-accuracy)). Builds B239 to B248 read an earlier layout, `BATXREC`
 followed by a command byte, which is no longer sent; they ignore version 1 and version 2 commands.
 
 The X8 acts on these chimes on its main screen only while Phone remote is on (SETTINGS, Phone tab;
@@ -84,7 +85,16 @@ Version 2, from B273:
 | 5 | Command in the high 4 bits, argument in the low 4 bits |
 | 6 and 7 | Check: bits 0 to 7 of the hash in byte 6, bits 8 to 15 in byte 7 |
 
-The commands and their arguments are the same in both versions.
+With the location's accuracy, from B293:
+
+| Byte | Contents |
+|---|---|
+| 0 to 3 | `BATX` |
+| 4 | 0x30 with a check, or 0x40 with no check, plus the accuracy step in the low 4 bits |
+| 5 | Command in the high 4 bits, argument in the low 4 bits, as in version 2 |
+| 6 and 7 | With a check: the check, as in version 2. With no check: 0 and 0 |
+
+The commands and their arguments are the same in every layout.
 
 ### The check in version 2
 
@@ -103,7 +113,16 @@ The check is the low 16 bits of a SipHash-2-4 hash (64-bit result) of a 12-byte 
 | 493 817 | 1794700801 | -300 | Listening mode 1:1 | 0x3f47b56145d0adb0 | `42 41 54 58 02 46 b0 ad` |
 | 000 000 | 0 | 0 | Set clock | 0x82c37daff2bd0a6b | `42 41 54 58 02 30 6b 0a` |
 
-The `chime` crate's tests and the phone page's tests use these three, and the `chime` crate's also
+With the location's accuracy, the message's fifth byte is byte 4 of the deployment ID (0x30 plus
+the step) in place of 0x02, so the check covers the step:
+
+| Code | Accuracy step | Unix time | UTC offset | Command | Deployment ID |
+|---|---|---|---|---|---|
+| 493 817 | 4 (up to 10 m) | 1794700800 | 600 | Start recording | `42 41 54 58 34 10 f2 c8` |
+| 493 817 | 0 (not known) | 1794700801 | -300 | Listening mode 1:1 | `42 41 54 58 30 46 25 7f` |
+| none | 15 (over 10 km) | 1794700800 | 600 | Stop recording | `42 41 54 58 4f 20 00 00` |
+
+The `chime` crate's tests and the phone page's tests use these six, and the `chime` crate's also
 check its SipHash against the published vector (key `00 01 .. 0f`, message `00 01 .. 0e`, hash
 0xa129ca6149be45e5).
 
@@ -116,6 +135,29 @@ check its SipHash against the published vector (key `00 01 .. 0f`, message `00 0
 | 2 | Stop recording | 0 | Ends the take, also with HOLD on (from B287). If it is already stopped, it beeps as if it had stopped. |
 | 3 | Set clock | 0 | Sets the clock to the chime's time, whatever the `Set X8 clock from chimes` setting. During a take, it sets the clock when the take ends. From B257. |
 | 4 | Listening mode | The mode: 1 HET, 2 COMB, 3 FD, 4 TE, 5 PITCH, 6 1:1 | Plays that mode in the headphones, as if its mode button had been pressed. A mode that the build hides, such as PITCH on the X8, gets one low note and changes nothing. From B257. |
+
+## Location accuracy
+
+From B293 a command can say how accurate its chime's location is. The X8 writes it to a take's
+GUANO metadata as `Loc Accuracy`, in metres, after `Loc Position`.
+
+- **Steps.** The low 4 bits of byte 4 are a step. Steps 1 to 14 are an accuracy of up to
+  3, 5, 7, 10, 15, 20, 30, 50, 100, 200, 500, 1,000, 3,000 or 10,000 m. The X8 writes that
+  largest value, so `Loc Accuracy: 10` means 7 to 10 m. Step 15 is an accuracy over 10 km: GUANO's
+  field is a number, so the X8 writes `X8Bat|Loc Accuracy Over: 10000` and no `Loc Accuracy`.
+  Step 0 is an accuracy that is not known, and the X8 then writes neither.
+- **What the accuracy is.** GUANO's `Loc Accuracy` is the radius that 68% of readings are within.
+  A browser gives the radius for 95%, and the phone page sends half of it, as GUANO's definition
+  has it.
+- **What the phone page sends.** It uses these layouts only when `Send accuracy to the X8` is
+  ticked (off by default) and the location came from the phone. Any other command goes in
+  version 1 or 2. Builds before B293 answer these layouts with
+  the unknown notice and do nothing.
+- **With `Phone code` on,** the layout with no check is refused as a version 1 command is, and
+  the layout with a check is treated as version 2 is. On PHONE TIME, a set clock command in
+  either layout sets the clock.
+- **A later location replaces the accuracy.** A take's `Loc Accuracy` belongs to the same chime
+  as its `Loc Position`. When that chime gave no accuracy, the take has none.
 
 ## Phone code
 
@@ -135,11 +177,13 @@ While `Phone code` is on, on the main screen:
 
 - **A version 2 command with the right check** is acted on, if its time is later than the time of
   the last version 2 command acted on.
-- **A version 1 command** is refused: one low note, and the notice `Phone page needs the X8's code.`
-  `Type it, then send again:` and the code on a third line.
-- **A version 2 command with another check** is refused: one low note, and the notice
-  `Phone page has a different code.` `Type this code, then send again:` and the code on a third
-  line.
+- **A version 1 command** is refused: one low note, and a notice with the code on its last line.
+  From B293 the notice is `Phone page needs the X8's code.` `Scan the QR code on the Phone tab,`
+  `or type this code, then send again:`. Before B293 its second line is
+  `Type it, then send again:`.
+- **A version 2 command with another check** is refused: one low note, and the same notice with
+  the first line `Phone page has a different code.` Before B293 its second line is
+  `Type this code, then send again:`.
 - **A version 2 command with the right check and a time no later than the last one acted on** is
   refused, because it may be a recording played again: one low note, and the notice
   `Phone command has an old time.` `Send again. Check phone's clock.` A chime with the deployment ID and the
@@ -161,7 +205,9 @@ whatever their check and time, and every chime's time and location are used as b
   second reading with the same deployment ID and the same Unix time as the same chime.
 - **Adding to the format.** A new command gets a new code and keeps the version numbers. A command
   can also give a meaning to a new argument value. Version 2 has room for commands 1 to 15 and
-  arguments 0 to 15. A new version number means that bytes 5 to 7 have a different layout.
+  arguments 0 to 15. A new version number means that bytes 5 to 7 have a different layout. In
+  byte 4, values from 0x30 to 0x4f are the layouts with an accuracy, so a version 3 would take
+  another value.
 - **Unknown messages.** A receiver acts on a message only if it knows the version, the command and
   the argument value. Any other deployment ID that starts with `BATX` is an unknown command: the X8
   plays one low note, shows `Unknown phone command.` and `Update the bat firmware.` on the main screen,
@@ -211,14 +257,15 @@ not hear these.
 - **`Phone code` off, the default, means no authentication.** Anyone who can play the sound near
   the X8 can start or stop it.
 - **Little data.** Version 1 carries one command and a 16-bit argument, version 2 one command and a
-  4-bit argument. A chime lasts up to 3.4 s.
+  4-bit argument. The accuracy has 14 steps and one for over 10 km. A chime lasts up to 3.4 s.
 - **No answer.** The page cannot tell whether the X8 heard a command. The person listens for the
   beeps.
 
 ## Code
 
 - The `chime` crate in the Oversample repository: `RemoteMessage`, `RemoteCommand`, `REMOTE_MAGIC`,
-  `REMOTE_VERSION`, `REMOTE_VERSION_CODED` and `remote_check` in `chime/src/format.rs`.
+  `REMOTE_VERSION`, `REMOTE_VERSION_CODED`, `REMOTE_ACCURATE_CODED`, `REMOTE_ACCURATE`,
+  `ACCURACY_STEPS_M` and `remote_check` in `chime/src/format.rs`.
 - The X8: [crates/bat-app/src/remote.rs](../crates/bat-app/src/remote.rs) reads the tone and the
   chime, and [crates/x8-patch/src/patch/remote.rs](../crates/x8-patch/src/patch/remote.rs) presses
   the buttons.

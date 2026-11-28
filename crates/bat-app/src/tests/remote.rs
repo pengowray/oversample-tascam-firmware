@@ -419,6 +419,72 @@ fn a_command_made_with_the_code_is_acted_on() {
     assert!(app.remote.clock_pending);
 }
 
+/// What the phone plays for a command whose chime has a location: as `press`, with the 7 bytes
+/// of a location before the deployment ID.
+fn press_with_location(id: [u8; 8], unix: u32) -> Vec<f32> {
+    let mut bytes = chime_gen::time_payload(unix, 600);
+    bytes.extend_from_slice(&[1, 2, 3, 4, 5, 6, 7]);
+    bytes.extend_from_slice(&id);
+    let render = chime_gen::render(FS as u32, &bytes, chime_gen::tune_for_payload(bytes.len()));
+    let chime: Vec<f32> = render.mix().iter().map(|&v| v as f32 * 0.1).collect();
+    let tone = page_tone(500, 0.1);
+    let mut seed = unix;
+    let mut x = noise(SECOND + tone.len() + SECOND + chime.len() + SECOND, 1e-4, &mut seed);
+    add_at(&mut x, SECOND, &tone);
+    add_at(&mut x, SECOND + tone.len() + SECOND, &chime);
+    x
+}
+
+/// A command can give the accuracy of its chime's location (step 4 is up to 10 m), with or
+/// without a check. A later command without one gives a location with no accuracy.
+#[test]
+fn a_command_can_give_the_accuracy_of_its_location() {
+    let mut storage = vec![0.0f32; SECOND];
+    let mut buffers = Box::new(Buffers::new());
+    let mut app = remote_app(&mut storage, &mut buffers);
+    let start = crate::RemoteCommand::Start.accurate_deployment_id(None, 4, UNIX, 600);
+    assert_eq!(run(&mut app, &press_with_location(start, UNIX)), [RecorderCommand::Start]);
+    let time = app.take_phone_time().expect("the chime's time");
+    assert!(time.location.is_some());
+    assert_eq!(time.location_accuracy_m, Some(10));
+    // With a check, which is not looked at while the code is not required; step 0 is not known.
+    let stop = crate::RemoteCommand::Stop.accurate_deployment_id(Some(b"000000"), 0, UNIX + 10, 600);
+    assert_eq!(run(&mut app, &press_with_location(stop, UNIX + 10)), [RecorderCommand::Stop]);
+    assert_eq!(app.take_phone_time().expect("the chime's time").location_accuracy_m, None);
+    assert_eq!(run(&mut app, &press_with_location(START, UNIX + 20)), [RecorderCommand::Start]);
+    let time = app.take_phone_time().expect("the chime's time");
+    assert!(time.location.is_some());
+    assert_eq!(time.location_accuracy_m, None);
+}
+
+/// While the code is required, a command with an accuracy needs the right check too.
+#[test]
+fn a_command_with_an_accuracy_needs_the_code_while_it_is_required() {
+    let mut storage = vec![0.0f32; SECOND];
+    let mut buffers = Box::new(Buffers::new());
+    let mut app = coded_app(&mut storage, &mut buffers);
+    let no_check = crate::RemoteCommand::Start.accurate_deployment_id(None, 4, UNIX, 600);
+    assert_eq!(run(&mut app, &press_with_location(no_check, UNIX)), []);
+    assert_eq!(app.remote.result_shown(app.samples), Some(RemoteResult::CodeNeeded));
+    assert_eq!(app.take_phone_time(), None);
+    let other_code = crate::RemoteCommand::Start.accurate_deployment_id(Some(b"493818"), 4, UNIX + 10, 600);
+    assert_eq!(run(&mut app, &press_with_location(other_code, UNIX + 10)), []);
+    assert_eq!(app.remote.result_shown(app.samples), Some(RemoteResult::CodeWrong));
+    // The check covers the accuracy: the same check with another step is refused.
+    let mut other_step = crate::RemoteCommand::Start.accurate_deployment_id(Some(&CODE), 4, UNIX + 20, 600);
+    other_step[4] ^= 1;
+    assert_eq!(run(&mut app, &press_with_location(other_step, UNIX + 20)), []);
+    assert_eq!(app.remote.result_shown(app.samples), Some(RemoteResult::CodeWrong));
+    let start = crate::RemoteCommand::Start.accurate_deployment_id(Some(&CODE), 4, UNIX + 30, 600);
+    assert_eq!(run(&mut app, &press_with_location(start, UNIX + 30)), [RecorderCommand::Start]);
+    assert_eq!(app.take_phone_time().expect("the chime's time").location_accuracy_m, Some(10));
+    // The same command sent again with its old time is refused.
+    assert_eq!(run(&mut app, &press_with_location(start, UNIX + 30)), []);
+    let stop = crate::RemoteCommand::Stop.accurate_deployment_id(Some(&CODE), 4, UNIX + 25, 600);
+    assert_eq!(run(&mut app, &press_with_location(stop, UNIX + 25)), []);
+    assert_eq!(app.remote.result_shown(app.samples), Some(RemoteResult::CodeOld));
+}
+
 #[test]
 fn a_version_1_command_is_refused_while_the_code_is_required() {
     for id in [START, SET_CLOCK, LISTEN_FD] {
@@ -522,7 +588,7 @@ fn with_the_code_not_required_any_check_is_accepted() {
 fn only_a_command_made_with_the_code_gives_the_phone_time() {
     let unknown_with_the_code = {
         let mut id = *b"BATX\x02\x50\x00\x00";
-        let check = chime::format::remote_check(&CODE, id[5], UNIX, 600);
+        let check = chime::format::remote_check(&CODE, id[4], id[5], UNIX, 600);
         id[6..].copy_from_slice(&check);
         id
     };
