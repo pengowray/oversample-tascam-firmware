@@ -4979,6 +4979,47 @@ back to AUTO only after 100 kind 3 events in a row with a level that is not abov
 low battery count, against its lower threshold, so the patch acts 6 levels before the stock power-off would start counting. The patch writes nothing to the stock firmware's memory for this. The stock low battery power-off
 still does not run in that state: after the patch sets AUTO, the X8 takes its power from USB.
 
+## Time zone in exFAT file entries (2026-11-28)
+
+Read in V2.03 with the Ghidra project. The stored bytes were checked on a 128 GB card the X8 formatted (`tools/exfat_times.py`);
+the change below is a design and has not been built.
+
+**What the card holds.** An exFAT file entry has three UTC offset bytes: +0x16 for the created time, +0x17 for modified and
++0x18 for accessed. The top bit means the offset is valid and the low 7 bits are a signed count of 15-minute steps, so +11:00 is
+0xAC. The X8 writes the clock's local time and leaves all three bytes 0 (no offset given). Windows and macOS then show the
+local time. Linux assumes UTC unless the card is mounted with `time_offset=660`, so a 17:47 take lists as 04:47 the next day.
+The 10 ms bytes (+0x14, +0x15) are 0 too. FAT32 (cards of 32 GB and under) has no offset field.
+
+| Address | What it does | Offset bytes |
+|---|---|---|
+| `FUN_80e0fcec` | Stamp times: `(entry, file, flags)`. Flag bit 0 created, bit 1 modified, bit 2 accessed; bit 3 reuses the time kept at file + 0x250. Reads the clock with `FUN_80e31074`. 7 call sites | Not touched |
+| `FUN_80e0fef8` | Write a new entry set (create, and the new name in a rename), from a template the caller stamped with flags 7. Stamps modified and accessed again itself | Zeroes +0x14 to +0x18 at 0x80e10058 to 0x80e10070, then `bl FUN_80d6a9c4` at 0x80e10078 clears the 7 bytes from +0x19 |
+| `FUN_80e0b9f8` | Rewrite an entry set (close, and other updates). Calls `FUN_80e0fcec` only when the size changed, with flags 6 or 0xE, so the created time is kept | Zeroes +0x14 to +0x18 at 0x80e0bab4 to 0x80e0babe on every call |
+| `FUN_80dfdbcc` | Set the modified time to a given time | Kept as read from the card |
+| `FUN_80dfda64`, `FUN_80e10310` | Set attributes; set sizes | Kept as read from the card |
+| `FUN_80e0fe98` | Entry set checksum. Its 5 callers are the 5 functions above, so these are all the entry writers | |
+
+Each writer checksums a copy of the sectors when volume + 0x4C is not 0, then stores the checksum in the real buffer. A hook
+on the checksum call would therefore change the copy only, and the files would disappear. The bytes have to be set before the
+copy.
+
+**The design.** Each offset byte is written when its time is written, and kept otherwise. The byte is 0x80 with the offset
+in 15-minute steps when a phone has set the clock (`SET_FROM_PHONE`, `SET_TZ` in `patch/clock.rs`), and 0 when not.
+
+1. Replace `FUN_80e0fcec` at its entry (an `entries` patch). The patch's version stamps the same times and sets +0x16, +0x17
+   and +0x18 for the flag bits given.
+2. In `FUN_80e0b9f8`, turn the three stores at 0x80e0baba, 0x80e0babc and 0x80e0babe into `nop`, so an update keeps the bytes
+   the card had. No branch lands in that window, and the code after it (0x80e0bafc) reloads r0 to r3.
+3. In `FUN_80e0fef8`, turn the store to +0x16 at 0x80e10064 into `nop` (the template's created offset stays), and point the
+   `bl` at 0x80e10078 at a hook that clears the 7 bytes and sets +0x17 and +0x18, the two times that function stamps.
+
+`tools/x8patch.py` needs a new patch kind for the 4 `nop` halfwords. Tests: host tests for the byte (unknown 0x00, +11:00
+0xAC, -3:30 0xF2, +5:45 0x97); on the unit, `tools/exfat_times.py` shows the bytes, `ls` on Linux shows the local time with no
+mount option, and the files are still listed (a wrong checksum hides them).
+
+The offset is kept in RAM only, so files written after a power-off have no offset until the next chime, the same as GUANO's
+`Timestamp`.
+
 ## Firmware map (V2.03, in progress)
 
 Found with `tools/x8ram.py` (unpacks the RAM runs) and a headless Ghidra 10.4
